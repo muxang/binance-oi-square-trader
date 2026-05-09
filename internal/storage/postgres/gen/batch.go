@@ -11,12 +11,148 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	decimal "github.com/shopspring/decimal"
 )
 
 var (
 	ErrBatchAlreadyClosed = errors.New("batch already closed")
 )
+
+const batchInsertSquareMentions = `-- name: BatchInsertSquareMentions :batchexec
+INSERT INTO square_mentions (post_id, symbol, weight, ts)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (post_id, symbol) DO NOTHING
+`
+
+type BatchInsertSquareMentionsBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchInsertSquareMentionsParams struct {
+	PostID string
+	Symbol string
+	Weight decimal.Decimal
+	Ts     time.Time
+}
+
+// T2 writes one row per (post_id, symbol) cashtag mention. Weight is a
+// placeholder 1.0 in v0.1; future versions can score by recency / engagement.
+// ON CONFLICT DO NOTHING — collector pre-dedups within a post, so collisions
+// here only happen across re-fetches of the same post (handled by posts
+// DO NOTHING upstream too).
+func (q *Queries) BatchInsertSquareMentions(ctx context.Context, arg []BatchInsertSquareMentionsParams) *BatchInsertSquareMentionsBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.PostID,
+			a.Symbol,
+			a.Weight,
+			a.Ts,
+		}
+		batch.Queue(batchInsertSquareMentions, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchInsertSquareMentionsBatchResults{br, len(arg), false}
+}
+
+func (b *BatchInsertSquareMentionsBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *BatchInsertSquareMentionsBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const batchInsertSquarePosts = `-- name: BatchInsertSquarePosts :batchexec
+INSERT INTO square_posts (
+  id, content_text, author_id, author_name, author_type, title,
+  view_count, like_count, comment_count, raw_json, fetched_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+ON CONFLICT (id) DO NOTHING
+`
+
+type BatchInsertSquarePostsBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchInsertSquarePostsParams struct {
+	ID           string
+	ContentText  pgtype.Text
+	AuthorID     pgtype.Text
+	AuthorName   pgtype.Text
+	AuthorType   pgtype.Text
+	Title        pgtype.Text
+	ViewCount    pgtype.Int8
+	LikeCount    pgtype.Int8
+	CommentCount pgtype.Int8
+	RawJson      []byte
+	FetchedAt    time.Time
+}
+
+// T2 writes ~50-100 posts per 1h tick. ON CONFLICT DO NOTHING — Square posts
+// are write-once snapshots; live counters (view/like) are tracked separately
+// via T3's square_hashtag_history (per ARCHITECTURE §7).
+func (q *Queries) BatchInsertSquarePosts(ctx context.Context, arg []BatchInsertSquarePostsParams) *BatchInsertSquarePostsBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.ID,
+			a.ContentText,
+			a.AuthorID,
+			a.AuthorName,
+			a.AuthorType,
+			a.Title,
+			a.ViewCount,
+			a.LikeCount,
+			a.CommentCount,
+			a.RawJson,
+			a.FetchedAt,
+		}
+		batch.Queue(batchInsertSquarePosts, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchInsertSquarePostsBatchResults{br, len(arg), false}
+}
+
+func (b *BatchInsertSquarePostsBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *BatchInsertSquarePostsBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
 
 const batchUpsertKlines = `-- name: BatchUpsertKlines :batchexec
 INSERT INTO klines (symbol, timeframe, open_time, open, high, low, close, volume, quote_volume)

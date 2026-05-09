@@ -28,6 +28,7 @@ import (
 	"trader/internal/pkg/logger"
 	"trader/internal/pkg/ratelimit"
 	"trader/internal/pkg/timez"
+	"trader/internal/square"
 )
 
 func main() {
@@ -122,6 +123,17 @@ func run() error {
 	})
 	if err := runner.Register(klinesCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register klines collector")
+	}
+	symbolService := binance.NewSymbolService(client, log)
+	log.Info().Msg("symbol service ready")
+	squareClient, err := square.NewSquareClient(ctx, proxy, limiter, rdb, cfg.Square.UseProxy, log)
+	if err != nil {
+		log.Fatal().Err(err).Msg("init square client")
+	}
+	log.Info().Msg("square client ready")
+	squareCol := collector.NewSquareCollector(squareClient, symbolService, pgPool, log, collector.SquareCollectorConfig{})
+	if err := runner.Register(squareCol, "0 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register square collector")
 	}
 	runner.Start()
 

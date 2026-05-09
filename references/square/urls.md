@@ -64,12 +64,15 @@ Content-Type:   application/json
 User-Agent:     Mozilla/5.0
 Bnc-Uuid:       <UUID v4, 启动时生成>
 Clienttype:     web
+Versioncode:    web
 Origin:         https://www.binance.com
 Referer:        https://www.binance.com/zh-CN/square
 Cookie:         bnc-uid=<同 Bnc-Uuid>; lang=zh-CN
 ```
 
 > Bnc-Uuid 是匿名标识,本项目**自己生成 UUID v4**,不复用 GitHub 项目里的固定值,降低被批量限流的风险。
+>
+> `Versioncode: web` 在 1.4 Round 2 web_fetch `fetch_data.ps1` raw 时发现,跟 `Clienttype` 是两个独立 header(浏览器请求里都会带),缺它可能被识别为脚本流量。
 
 ### 解析必须宽松
 
