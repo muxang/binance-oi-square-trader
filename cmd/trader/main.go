@@ -163,6 +163,17 @@ func run() error {
 	if err := runner.Register(watchlistCol, "0 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register watchlist collector")
 	}
+	posPriceCol := collector.NewPositionPriceCollector(client, gen.New(pgPool), rdb, log, collector.PositionPriceConfig{
+		PerTickTimeout:   25 * time.Second,
+		PerSymbolTimeout: 8 * time.Second,
+		Concurrency:      5,
+		RetryCount:       2,
+		RetryInterval:    1 * time.Second,
+		RedisTTL:         5 * time.Minute,
+	})
+	if err := runner.Register(posPriceCol, "* * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register position_price collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.
