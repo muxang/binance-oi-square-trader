@@ -22,6 +22,7 @@ type exchangeInfoResp struct {
 		Status       string `json:"status"`
 		QuoteAsset   string `json:"quoteAsset"`
 		MarginAsset  string `json:"marginAsset"`
+		OnboardDate  int64  `json:"onboardDate"` // ms unix; T4 uses for listing-age filter
 	} `json:"symbols"`
 }
 
@@ -34,10 +35,11 @@ type SymbolService struct {
 	ttl     time.Duration
 	nowFunc func() time.Time
 
-	mu       sync.Mutex
-	set      map[string]struct{}
-	list     []string
-	cachedAt time.Time
+	mu           sync.Mutex
+	set          map[string]struct{}
+	list         []string
+	onboardDates map[string]int64
+	cachedAt     time.Time
 }
 
 func NewSymbolService(client *Client, log zerolog.Logger) *SymbolService {
@@ -73,6 +75,23 @@ func (s *SymbolService) ListSymbols(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// GetOnboardDates returns a snapshot of symbol → onboardDate (ms unix) for
+// the cached active perpetuals. T4 uses this for the 7-day listing filter.
+// Reuses the same exchangeInfo cache as IsValidPerpetual / ListSymbols —
+// no extra API call.
+func (s *SymbolService) GetOnboardDates(ctx context.Context) (map[string]int64, error) {
+	if err := s.refreshIfStale(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]int64, len(s.onboardDates))
+	for k, v := range s.onboardDates {
+		out[k] = v
+	}
+	return out, nil
+}
+
 // refreshIfStale double-checks cache age and re-fetches outside the lock so
 // readers don't block on the network call.
 func (s *SymbolService) refreshIfStale(ctx context.Context) error {
@@ -92,15 +111,18 @@ func (s *SymbolService) refreshIfStale(ctx context.Context) error {
 	}
 	set := make(map[string]struct{}, len(resp.Symbols))
 	list := make([]string, 0, len(resp.Symbols))
+	dates := make(map[string]int64, len(resp.Symbols))
 	for _, sym := range resp.Symbols {
 		if sym.ContractType == "PERPETUAL" && sym.QuoteAsset == "USDT" && sym.MarginAsset == "USDT" && sym.Status == "TRADING" {
 			set[sym.Symbol] = struct{}{}
 			list = append(list, sym.Symbol)
+			dates[sym.Symbol] = sym.OnboardDate
 		}
 	}
 	s.mu.Lock()
 	s.set = set
 	s.list = list
+	s.onboardDates = dates
 	s.cachedAt = s.nowFunc()
 	s.mu.Unlock()
 	return nil

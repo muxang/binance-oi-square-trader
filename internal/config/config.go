@@ -82,10 +82,15 @@ type HTTPConfig struct {
 	DashboardPort int `mapstructure:"DASHBOARD_PORT"`
 }
 type WatchlistConfig struct {
-	MaxSize      int             `mapstructure:"WATCHLIST_MAX_SIZE"`
-	MinVolumeUSD decimal.Decimal `mapstructure:"WATCHLIST_MIN_VOLUME_USD"`
-	MinListDays  int             `mapstructure:"WATCHLIST_MIN_LIST_DAYS"`
-	Blacklist    []string        `mapstructure:"WATCHLIST_BLACKLIST"`
+	MaxSize               int             `mapstructure:"WATCHLIST_MAX_SIZE"`
+	MinSize               int             `mapstructure:"WATCHLIST_MIN_SIZE"`
+	MinVolumeUSD          decimal.Decimal `mapstructure:"WATCHLIST_MIN_VOLUME_USD"`
+	MinListDays           int             `mapstructure:"WATCHLIST_MIN_LIST_DAYS"`
+	Blacklist             []string        `mapstructure:"WATCHLIST_BLACKLIST"`
+	LeverageTokenSuffixes []string        `mapstructure:"WATCHLIST_LEVERAGE_TOKEN_SUFFIXES"`
+	SquareTopN            int             `mapstructure:"WATCHLIST_SQUARE_TOP_N"`
+	OITopN                int             `mapstructure:"WATCHLIST_OI_TOP_N"`
+	PriceTopN             int             `mapstructure:"WATCHLIST_PRICE_TOP_N"`
 }
 type OISurgeConfig struct {
 	FromLowPct      decimal.Decimal `mapstructure:"OI_SURGE_FROM_LOW_PCT"`
@@ -204,7 +209,11 @@ func setDefaults(v *viper.Viper) {
 		"BINANCE_PROXY_FAILURE_THRESHOLD": 5, "BINANCE_PROXY_RECOVERY_MINUTES": 5,
 		"HTTP_PORT": 8080, "DASHBOARD_PORT": 3000,
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
-		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_VOLUME_USD": "10000000",
+		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
+		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,
+		"WATCHLIST_SQUARE_TOP_N": 50, "WATCHLIST_OI_TOP_N": 30, "WATCHLIST_PRICE_TOP_N": 20,
+		"WATCHLIST_BLACKLIST":                   "USDC,BUSD,FDUSD,DAI,TUSD,PAX,USDP",
+		"WATCHLIST_LEVERAGE_TOKEN_SUFFIXES":     "UPUSDT,DOWNUSDT,BULLUSDT,BEARUSDT",
 		"SQUARE_HASHTAG_CONCURRENCY":            10,
 		"SQUARE_HASHTAG_RETRY_COUNT":            2,
 		"SQUARE_HASHTAG_TIMEOUT_SECONDS":        8,

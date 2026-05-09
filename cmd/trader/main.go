@@ -29,6 +29,7 @@ import (
 	"trader/internal/pkg/ratelimit"
 	"trader/internal/pkg/timez"
 	"trader/internal/square"
+	"trader/internal/storage/postgres/gen"
 )
 
 func main() {
@@ -146,6 +147,21 @@ func run() error {
 	})
 	if err := runner.Register(hashtagCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register square hashtag collector")
+	}
+	watchlistCol := collector.NewWatchlistCollector(symbolService, client, gen.New(pgPool), rdb, log, collector.WatchlistCollectorConfig{
+		SquareTopN:            cfg.Watchlist.SquareTopN,
+		OITopN:                cfg.Watchlist.OITopN,
+		PriceTopN:             cfg.Watchlist.PriceTopN,
+		MaxSize:               cfg.Watchlist.MaxSize,
+		MinSize:               cfg.Watchlist.MinSize,
+		MinListingDays:        cfg.Watchlist.MinListDays,  // env: WATCHLIST_MIN_LIST_DAYS
+		MinQuoteVolume:        cfg.Watchlist.MinVolumeUSD, // env: WATCHLIST_MIN_VOLUME_USD
+		Blacklist:             cfg.Watchlist.Blacklist,
+		LeverageTokenSuffixes: cfg.Watchlist.LeverageTokenSuffixes,
+		RedisKey:              "watchlist:current",
+	})
+	if err := runner.Register(watchlistCol, "0 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register watchlist collector")
 	}
 	runner.Start()
 
