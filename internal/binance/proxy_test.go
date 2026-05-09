@@ -39,7 +39,7 @@ func poolFromURLs(t *testing.T, urls []string, strategy string) *Pool {
 	t.Helper()
 	cfg := cfgWithProxy("pool", urls)
 	cfg.Proxy.PoolStrategy = strategy
-	pm, err := New(cfg)
+	pm, err := NewProxyManager(cfg)
 	require.NoError(t, err)
 	p, ok := pm.(*Pool)
 	require.True(t, ok)
@@ -47,7 +47,7 @@ func poolFromURLs(t *testing.T, urls []string, strategy string) *Pool {
 }
 
 func TestNew_NoneMode(t *testing.T) {
-	pm, err := New(cfgWithProxy("none", nil))
+	pm, err := NewProxyManager(cfgWithProxy("none", nil))
 	require.NoError(t, err)
 	_, ok := pm.(*noopManager)
 	assert.True(t, ok)
@@ -59,7 +59,7 @@ func TestNew_NoneMode(t *testing.T) {
 }
 
 func TestNew_SingleMode(t *testing.T) {
-	pm, err := New(cfgWithProxy("single", nil))
+	pm, err := NewProxyManager(cfgWithProxy("single", nil))
 	require.NoError(t, err)
 	_, raw, err := pm.HTTPClient(context.Background())
 	require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestNew_PoolMode_Random(t *testing.T) {
 }
 
 func TestNew_PoolMode_EmptyURLs_Error(t *testing.T) {
-	_, err := New(cfgWithProxy("pool", nil))
+	_, err := NewProxyManager(cfgWithProxy("pool", nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one proxy URL")
 }

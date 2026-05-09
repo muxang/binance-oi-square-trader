@@ -47,10 +47,10 @@ type proxyEntry struct {
 	evictedAt time.Time
 }
 
-// New returns the ProxyManager matching cfg.Proxy.Mode.
+// NewProxyManager returns the ProxyManager matching cfg.Proxy.Mode.
 // Errors here are configuration errors; runtime proxy failures surface via
 // HTTPClient/WSDialer returning errors and ReportFailure feedback.
-func New(cfg *config.Config) (ProxyManager, error) {
+func NewProxyManager(cfg *config.Config) (ProxyManager, error) {
 	switch cfg.Proxy.Mode {
 	case "none":
 		return &noopManager{}, nil
