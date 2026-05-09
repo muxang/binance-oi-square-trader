@@ -1,23 +1,132 @@
-// Package main is the trader entry point.
+// binance-oi-square-trader entry point.
 //
-// Phase 0 占位实现:
-//   - 验证 .env 加载
-//   - 输出运行模式与配置
-//   - 启动一个最小 HTTP server (/health)
-//
-// 真实实现由 Claude Code 按 Phase 顺序补充:
-//   Phase 0  → 配置加载 + DB/Redis 连接 + /health 端点
-//   Phase 1  → Collectors 启动
-//   ...
+// Phase 0 wiring: config → logger → proxy → rate-limiter → binance client →
+// PG / Redis connectivity → Echo /health server → graceful shutdown. No
+// collector / signal / decision / position wiring lives here yet — those
+// arrive in Phase 1+.
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+
+	"trader/internal/api"
+	"trader/internal/api/handlers"
+	"trader/internal/binance"
+	"trader/internal/config"
+	"trader/internal/pkg/logger"
+	"trader/internal/pkg/timez"
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "binance-oi-square-trader: skeleton, awaiting Phase 0 implementation")
-	fmt.Fprintln(os.Stderr, "Read CLAUDE.md and start with Phase 0.")
-	os.Exit(0)
+	if err := run(); err != nil {
+		// Logger may not be ready yet on early failure — emit a minimal
+		// structured line to stderr so container logs still capture it.
+		fmt.Fprintf(os.Stderr, `{"level":"fatal","error":%q}`+"\n", err.Error())
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config load: %w", err)
+	}
+	log := logger.Init(cfg)
+	logger.StartupBanner(log, cfg) // mainnet 5⚠️ + 5s pause inside
+
+	// Lifecycle context: cancelled on SIGINT/SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	startTime := timez.NowUTC()
+
+	// 5+6+7. Proxy → noop limiter → Binance client.
+	proxy, err := binance.NewProxyManager(cfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("proxy manager init failed")
+	}
+	log.Info().Str("mode", cfg.Proxy.Mode).Msg("proxy manager ready")
+
+	limiter := binance.NewNoopRateLimiter()
+	client, err := binance.New(cfg, proxy, limiter, log)
+	if err != nil {
+		log.Fatal().Err(err).Msg("binance client init failed")
+	}
+	_ = client // consumed by collector / execution layers in Phase 1+
+	log.Info().Msg("binance client ready")
+
+	// 8a. Postgres pool + ping.
+	pgCtx, pgCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pgCancel()
+	pgPool, err := pgxpool.New(pgCtx, cfg.DB.PostgresURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("postgres pool init failed")
+	}
+	if err := pgPool.Ping(pgCtx); err != nil {
+		log.Fatal().Err(err).Msg("postgres ping failed")
+	}
+	log.Info().Msg("postgres ready")
+
+	// 8b. Redis client + ping.
+	redisOpts, err := redis.ParseURL(cfg.DB.RedisURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("redis URL parse failed")
+	}
+	rdb := redis.NewClient(redisOpts)
+	rdsCtx, rdsCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer rdsCancel()
+	if err := rdb.Ping(rdsCtx).Err(); err != nil {
+		log.Fatal().Err(err).Msg("redis ping failed")
+	}
+	log.Info().Msg("redis ready")
+
+	// 9. HTTP server with /health backed by real ping closures.
+	deps := handlers.HealthDeps{
+		PingPG:    pgPool.Ping,
+		PingRedis: func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+		Version:   logger.Version,
+		Mode:      cfg.Mode,
+		StartTime: startTime,
+	}
+	e := api.New(deps)
+	addr := ":" + strconv.Itoa(cfg.HTTP.Port)
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+	log.Info().Int("port", cfg.HTTP.Port).Msg("http server listening")
+
+	// 10. Wait for signal or fatal server error.
+	select {
+	case <-ctx.Done():
+		log.Info().Msg("shutdown signal received")
+	case err := <-serverErr:
+		log.Error().Err(err).Msg("http server crashed")
+	}
+
+	// Graceful shutdown in reverse dependency order.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := e.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("http server shutdown failed")
+	}
+	log.Info().Msg("http server stopped")
+	if err := rdb.Close(); err != nil {
+		log.Error().Err(err).Msg("redis close failed")
+	}
+	pgPool.Close()
+	log.Info().Msg("shutdown complete")
+	return nil
 }

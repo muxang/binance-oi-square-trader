@@ -40,6 +40,11 @@ type noopRateLimiter struct{}
 
 func (noopRateLimiter) Acquire(_ context.Context, _ int) error { return nil }
 
+// NewNoopRateLimiter returns the Phase 0 placeholder limiter — every Acquire
+// returns nil immediately. Phase 1 swaps the *RateLimiter argument to New for a
+// real token-bucket implementation; business code stays unchanged.
+func NewNoopRateLimiter() RateLimiter { return noopRateLimiter{} }
+
 // Client encapsulates Binance USDⓈ-M Futures REST access. Read base and write
 // base are separate so testnet mode can pull real OI from production while
 // hard-blocking writes onto testnet (SPEC §11.5).
