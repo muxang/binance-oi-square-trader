@@ -2,7 +2,7 @@
 # binance-oi-square-trader Makefile
 # =============================================================================
 
-.PHONY: help bootstrap dev build test typecheck lint migrate migrate-down \
+.PHONY: help bootstrap dev build test test-race typecheck lint migrate migrate-down \
         sqlc docker-up docker-down docker-logs clean
 
 GO          ?= go
@@ -17,7 +17,8 @@ help:
 	@echo "  bootstrap     首次安装依赖 (Go modules + 工具链)"
 	@echo "  dev           启动 trader (testnet 默认)"
 	@echo "  build         编译 binary 到 bin/"
-	@echo "  test          运行测试 (含 -race)"
+	@echo "  test          运行测试 (无 race detector, Windows 直连可用)"
+	@echo "  test-race     运行测试 + race detector (Windows 自动经 WSL)"
 	@echo "  typecheck     go vet"
 	@echo "  lint          golangci-lint"
 	@echo "  migrate       跑 DB 迁移到最新"
@@ -45,7 +46,14 @@ build:
 	@echo "Built $(TRADER_BIN)"
 
 test:
-	$(GO) test -race -timeout 120s ./...
+	$(GO) test -timeout 120s ./...
+
+test-race:
+ifeq ($(OS),Windows_NT)
+	wsl -e bash -lc "cd $$(wslpath -a '$(CURDIR)') && go test -race -timeout 180s ./..."
+else
+	$(GO) test -race -timeout 180s ./...
+endif
 
 typecheck:
 	$(GO) vet ./...
