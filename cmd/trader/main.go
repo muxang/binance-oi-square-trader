@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 
 	"trader/internal/api"
@@ -194,6 +195,22 @@ func run() error {
 	}()
 	log.Info().Int("port", cfg.HTTP.Port).Msg("http server listening")
 
+	// 9b. Dedicated Prometheus /metrics on :2112. Internal-only — separate port
+	// keeps scrape traffic off the dashboard server and lets us enforce a
+	// different bind/firewall policy on the metrics endpoint later.
+	metricsServer := &http.Server{
+		Addr:         ":2112",
+		Handler:      promhttp.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	go func() {
+		log.Info().Str("addr", metricsServer.Addr).Msg("metrics server starting")
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error().Err(err).Msg("metrics server error")
+		}
+	}()
+
 	// 10. Wait for signal or fatal server error.
 	select {
 	case <-ctx.Done():
@@ -202,16 +219,23 @@ func run() error {
 		log.Error().Err(err).Msg("http server crashed")
 	}
 
-	// Graceful shutdown in reverse dependency order.
+	// Graceful shutdown order: collector → api(:8080) → metrics(:2112) →
+	// redis → postgres. Metrics goes last among HTTP servers so Prometheus's
+	// final scrape captures terminal counters (collector stop bumps panic /
+	// error counters that we want recorded).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if err := runner.Stop(10 * time.Second); err != nil {
+		log.Error().Err(err).Msg("collector runner stop failed")
+	}
 	if err := e.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("http server shutdown failed")
 	}
 	log.Info().Msg("http server stopped")
-	if err := runner.Stop(10 * time.Second); err != nil {
-		log.Error().Err(err).Msg("collector runner stop failed")
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("metrics server shutdown failed")
 	}
+	log.Info().Msg("metrics server stopped")
 	if err := rdb.Close(); err != nil {
 		log.Error().Err(err).Msg("redis close failed")
 	}

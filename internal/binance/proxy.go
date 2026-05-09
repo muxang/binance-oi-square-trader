@@ -76,14 +76,16 @@ func NewProxyManager(cfg *config.Config) (ProxyManager, error) {
 			}
 			entries = append(entries, &proxyEntry{raw: raw, parsed: parsed, kind: kind})
 		}
-		return &Pool{
+		pool := &Pool{
 			entries:          entries,
 			strategy:         cfg.Proxy.PoolStrategy,
 			failureThreshold: cfg.Proxy.FailureThreshold,
 			recoveryDuration: time.Duration(cfg.Proxy.RecoveryMinutes) * time.Minute,
 			nowFunc:          timez.NowUTC,
 			rng:              rand.New(rand.NewSource(timez.NowUTC().UnixNano())),
-		}, nil
+		}
+		registerPoolMetrics(pool)
+		return pool, nil
 	default:
 		return nil, fmt.Errorf("unknown proxy mode %q", cfg.Proxy.Mode)
 	}
@@ -156,7 +158,9 @@ func (p *Pool) WSDialer(_ context.Context) (*websocket.Dialer, string, error) {
 	return d, e.raw, nil
 }
 
-func (p *Pool) ReportFailure(proxyURL string, _ error) {
+func (p *Pool) ReportFailure(proxyURL string, err error) {
+	proxyRequestsTotal.WithLabelValues(proxyURL, "failure").Inc()
+	proxyFailuresTotal.WithLabelValues(proxyURL, classifyError(err)).Inc()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, e := range p.entries {
@@ -171,6 +175,7 @@ func (p *Pool) ReportFailure(proxyURL string, _ error) {
 }
 
 func (p *Pool) ReportSuccess(proxyURL string) {
+	proxyRequestsTotal.WithLabelValues(proxyURL, "success").Inc()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, e := range p.entries {

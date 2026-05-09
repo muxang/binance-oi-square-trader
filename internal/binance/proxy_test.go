@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -309,4 +314,98 @@ func TestNewProxyManager_Pool_FromFile_EmptyFile_ReturnsError(t *testing.T) {
 	_, err := NewProxyManager(cfg)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no proxy URLs")
+}
+
+// --- Prometheus metrics integration (post-1.8) ---
+//
+// Counter tests use unique proxy_url per test to avoid label-set
+// contamination. Gauge tests bypass the global registry and call Collect()
+// directly on a per-test proxyMetricsCollector.
+
+func TestProxy_ReportSuccess_IncrementsCounter(t *testing.T) {
+	url := "http://test-success.example.com:8080"
+	p := poolFromURLs(t, []string{url}, "round_robin")
+	before := testutil.ToFloat64(proxyRequestsTotal.WithLabelValues(url, "success"))
+	p.ReportSuccess(url)
+	after := testutil.ToFloat64(proxyRequestsTotal.WithLabelValues(url, "success"))
+	assert.EqualValues(t, before+1, after)
+}
+
+func TestProxy_ReportFailure_IncrementsCounters(t *testing.T) {
+	url := "http://test-failure.example.com:8080"
+	p := poolFromURLs(t, []string{url}, "round_robin")
+	beforeReq := testutil.ToFloat64(proxyRequestsTotal.WithLabelValues(url, "failure"))
+	beforeFail := testutil.ToFloat64(proxyFailuresTotal.WithLabelValues(url, "other"))
+	p.ReportFailure(url, errors.New("boom"))
+	assert.EqualValues(t, beforeReq+1, testutil.ToFloat64(proxyRequestsTotal.WithLabelValues(url, "failure")))
+	assert.EqualValues(t, beforeFail+1, testutil.ToFloat64(proxyFailuresTotal.WithLabelValues(url, "other")))
+}
+
+func TestProxy_ClassifyError_AllTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, "other"},
+		{"ctx_deadline", context.DeadlineExceeded, "timeout"},
+		{"url_timeout", &url.Error{Op: "Get", URL: "x", Err: &timeoutErr{}}, "timeout"},
+		{"api_500", &APIError{HTTPCode: 500, Message: "boom"}, "5xx"},
+		{"api_429", &APIError{HTTPCode: 429, Message: "rate"}, "4xx"},
+		{"api_400", &APIError{HTTPCode: 400, Message: "bad"}, "4xx"},
+		{"text_http5", errors.New("http 503: gateway"), "5xx"},
+		{"text_http4", errors.New("http 404: not found"), "4xx"},
+		{"net_error", &net.OpError{Op: "dial", Err: errors.New("refused")}, "network"},
+		{"plain", errors.New("something else"), "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifyError(tc.err))
+		})
+	}
+}
+
+// timeoutErr is a tiny net.Error stub that reports Timeout()=true.
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return false }
+
+func TestProxy_GaugeCollector_ReflectsActiveAndEvicted(t *testing.T) {
+	urls := []string{"http://gauge-a.example.com:8080", "http://gauge-b.example.com:8080", "http://gauge-c.example.com:8080"}
+	p := poolFromURLs(t, urls, "round_robin")
+	// Initially all 3 active.
+	pmc := &proxyMetricsCollector{pool: p}
+	active, evicted := readGauges(t, pmc)
+	assert.EqualValues(t, 3, active, "fresh pool: all proxies active")
+	assert.EqualValues(t, 0, evicted)
+
+	// Evict one by reaching failure threshold.
+	for i := 0; i < p.failureThreshold; i++ {
+		p.ReportFailure(urls[0], errors.New("x"))
+	}
+	active, evicted = readGauges(t, pmc)
+	assert.EqualValues(t, 2, active, "after evict: 2 active")
+	assert.EqualValues(t, 1, evicted, "after evict: 1 evicted")
+}
+
+// readGauges synchronously collects the 2 gauge values from a per-test
+// proxyMetricsCollector (bypasses the global registry).
+func readGauges(t *testing.T, pmc *proxyMetricsCollector) (active, evicted float64) {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 4)
+	pmc.Collect(ch)
+	close(ch)
+	for m := range ch {
+		dto := &dto.Metric{}
+		require.NoError(t, m.Write(dto))
+		switch m.Desc() {
+		case activeCountDesc:
+			active = dto.GetGauge().GetValue()
+		case evictedCountDesc:
+			evicted = dto.GetGauge().GetValue()
+		}
+	}
+	return
 }

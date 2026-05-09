@@ -31,10 +31,13 @@ func TestServer_HealthRoute(t *testing.T) {
 	assert.Equal(t, "testnet", body["mode"])
 }
 
-func TestServer_MetricsPlaceholder(t *testing.T) {
+// /metrics is served on the dedicated :2112 server (cmd/trader/main.go), NOT
+// here — verify the API server no longer carries a /metrics route, so a future
+// accidental re-add doesn't silently shadow the real Prometheus handler.
+func TestServer_MetricsRoute_NotMounted(t *testing.T) {
 	e := New(handlers.HealthDeps{Version: "x", Mode: "testnet"})
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 )
 
@@ -20,12 +21,20 @@ import (
 // block the next tick.
 const PerTickTimeout = 4 * time.Minute
 
-// Metric hooks — Phase 1.0 placeholders. Phase 1.9 swaps these for real
-// Prometheus counters via package-var assignment (no API change).
+// Metric hooks. Default impls call the Prometheus collectors registered in
+// internal/pkg/metrics; tests swap these vars to atomic counters via the
+// captureMetrics helper. Caller passes wall-clock duration so the hook is
+// stateless (no started-at registry).
 var (
 	metricStarted = func(string) {}
-	metricSuccess = func(string) {}
-	metricFailed  = func(string, string) {}
+	metricSuccess = func(name string, duration time.Duration) {
+		metrics.CollectorRunsTotal.WithLabelValues(name, "success").Inc()
+		metrics.CollectorDurationSeconds.WithLabelValues(name).Observe(duration.Seconds())
+	}
+	metricFailed = func(name, outcome string, duration time.Duration) {
+		metrics.CollectorRunsTotal.WithLabelValues(name, outcome).Inc()
+		metrics.CollectorDurationSeconds.WithLabelValues(name).Observe(duration.Seconds())
+	}
 )
 
 // Runner wraps a single robfig/cron instance and dispatches collectors with
@@ -102,17 +111,17 @@ func (r *Runner) run(c Collector) {
 
 	defer func() {
 		if rec := recover(); rec != nil {
-			metricFailed(name, "panic")
+			metricFailed(name, "panic", timez.NowUTC().Sub(started))
 			log.Error().Interface("panic", rec).Msg("collector panicked")
 		}
 	}()
 
 	if err := c.Run(ctx); err != nil {
-		metricFailed(name, "error")
+		metricFailed(name, "error", timez.NowUTC().Sub(started))
 		log.Error().Err(err).Dur("elapsed", timez.NowUTC().Sub(started)).Msg("collector failed")
 		return
 	}
-	metricSuccess(name)
+	metricSuccess(name, timez.NowUTC().Sub(started))
 	log.Info().Dur("elapsed", timez.NowUTC().Sub(started)).Msg("collector completed")
 }
 
