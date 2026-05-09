@@ -135,6 +135,18 @@ func run() error {
 	if err := runner.Register(squareCol, "0 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register square collector")
 	}
+	hashtagCol := collector.NewSquareHashtagCollector(squareClient, rdb, pgPool, log, collector.SquareHashtagConfig{
+		PerTickTimeout:    cfg.Square.HashtagBatchDeadline,
+		PerSymbolTimeout:  cfg.Square.HashtagTimeout,
+		Concurrency:       cfg.Square.HashtagConcurrency,
+		RetryCount:        cfg.Square.HashtagRetryCount,
+		RetryInterval:     1 * time.Second,
+		HighFailureRate:   0.30,
+		WatchlistRedisKey: "watchlist:current",
+	})
+	if err := runner.Register(hashtagCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register square hashtag collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.

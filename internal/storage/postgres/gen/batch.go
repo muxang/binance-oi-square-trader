@@ -19,6 +19,64 @@ var (
 	ErrBatchAlreadyClosed = errors.New("batch already closed")
 )
 
+const batchInsertSquareHashtag = `-- name: BatchInsertSquareHashtag :batchexec
+INSERT INTO square_hashtag_history (symbol, ts, content_count, view_count)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (symbol, ts) DO NOTHING
+`
+
+type BatchInsertSquareHashtagBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchInsertSquareHashtagParams struct {
+	Symbol       string
+	Ts           time.Time
+	ContentCount int64
+	ViewCount    int64
+}
+
+// T3 writes 1 row per watchlist symbol per 5min tick (~150 rows). The batch
+// variant matches T1/T2/T7 — pgx.Batch in one round-trip per chunk.
+// ON CONFLICT (symbol, ts) DO NOTHING — same-tick re-runs (rare) won't dup.
+func (q *Queries) BatchInsertSquareHashtag(ctx context.Context, arg []BatchInsertSquareHashtagParams) *BatchInsertSquareHashtagBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.Symbol,
+			a.Ts,
+			a.ContentCount,
+			a.ViewCount,
+		}
+		batch.Queue(batchInsertSquareHashtag, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchInsertSquareHashtagBatchResults{br, len(arg), false}
+}
+
+func (b *BatchInsertSquareHashtagBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *BatchInsertSquareHashtagBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
 const batchInsertSquareMentions = `-- name: BatchInsertSquareMentions :batchexec
 INSERT INTO square_mentions (post_id, symbol, weight, ts)
 VALUES ($1, $2, $3, $4)

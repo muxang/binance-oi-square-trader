@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,6 +97,32 @@ func (c *SquareClient) DoPost(ctx context.Context, path string, body any) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	return c.do(ctx, req)
+}
+
+// DoGet issues a GET to baseURL+path with optional query params. Returns
+// raw bytes for gjson parsing. Same headers / proxy / rate-limit / error
+// handling as DoPost — they share the do() helper.
+func (c *SquareClient) DoGet(ctx context.Context, path string, params url.Values) ([]byte, error) {
+	full := c.baseURL + path
+	if len(params) > 0 {
+		full += "?" + params.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	return c.do(ctx, req)
+}
+
+// do executes the prepared request: rate limit → proxy/direct client →
+// header injection → status classification → proxy success/failure report.
+// Internal helper used by DoPost / DoGet to keep behavior identical.
+func (c *SquareClient) do(ctx context.Context, req *http.Request) ([]byte, error) {
 	if err := c.rateLimiter.Acquire(ctx, 1); err != nil {
 		return nil, fmt.Errorf("rate limit: %w", err)
 	}
@@ -108,10 +135,6 @@ func (c *SquareClient) DoPost(ctx context.Context, path string, body any) ([]byt
 		}
 		httpClient, proxyURL = client, pURL
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
 	c.applyHeaders(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -121,17 +144,17 @@ func (c *SquareClient) DoPost(ctx context.Context, path string, body any) ([]byt
 		return nil, fmt.Errorf("http: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode/100 != 2 {
 		if c.useProxy {
 			c.proxy.ReportFailure(proxyURL, fmt.Errorf("http %d", resp.StatusCode))
 		}
-		return nil, &SquareError{HTTPCode: resp.StatusCode, Body: string(respBody)}
+		return nil, &SquareError{HTTPCode: resp.StatusCode, Body: string(body)}
 	}
 	if c.useProxy {
 		c.proxy.ReportSuccess(proxyURL)
 	}
-	return respBody, nil
+	return body, nil
 }
 
 // applyHeaders sets the 8 headers per fetch_data.ps1 (references/square/urls.md).

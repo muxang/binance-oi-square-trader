@@ -192,3 +192,63 @@ func TestDoPost_NoProxy_DirectClient(t *testing.T) {
 	assert.EqualValues(t, 0, fp.successes.Load(), "proxy must not be touched when useProxy=false")
 	assert.EqualValues(t, 0, fp.failures.Load())
 }
+
+// --- DoGet ---
+
+func TestDoGet_SendsAllHeaders(t *testing.T) {
+	captured := http.Header{}
+	var method string
+	srv := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		for k, v := range r.Header {
+			captured[k] = v
+		}
+		_, _ = w.Write([]byte(`{}`))
+	})
+	c, _, _, _ := newTestClient(t, srv, true)
+	_, err := c.DoGet(context.Background(), "/bapi/test", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "GET", method)
+	assert.Equal(t, "application/json", captured.Get("Content-Type"))
+	assert.Equal(t, c.bncUUID, captured.Get("Bnc-Uuid"))
+	assert.Equal(t, "web", captured.Get("Versioncode"))
+	assert.Contains(t, captured.Get("Cookie"), "bnc-uid="+c.bncUUID)
+}
+
+func TestDoGet_QueryParamsEncoded(t *testing.T) {
+	var rawQuery string
+	srv := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		rawQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{}`))
+	})
+	c, _, _, _ := newTestClient(t, srv, true)
+	params := url.Values{"hashtag": []string{"btc"}, "pageSize": []string{"1"}, "orderBy": []string{"HOT"}}
+	_, err := c.DoGet(context.Background(), "/bapi/test", params)
+	require.NoError(t, err)
+	// url.Values.Encode sorts keys alphabetically.
+	assert.Equal(t, "hashtag=btc&orderBy=HOT&pageSize=1", rawQuery)
+}
+
+func TestDoGet_2xx_ReturnsBody(t *testing.T) {
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"hashtag":{"contentCount":42}}}`))
+	})
+	c, _, _, _ := newTestClient(t, srv, true)
+	body, err := c.DoGet(context.Background(), "/bapi/test", nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"data":{"hashtag":{"contentCount":42}}}`, string(body))
+}
+
+func TestDoGet_NonOK_ReturnsSquareError(t *testing.T) {
+	for _, code := range []int{500, 429} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) })
+			c, fp, _, _ := newTestClient(t, srv, true)
+			_, err := c.DoGet(context.Background(), "/bapi/test", nil)
+			var sqErr *SquareError
+			require.True(t, errors.As(err, &sqErr))
+			assert.Equal(t, code, sqErr.HTTPCode)
+			assert.EqualValues(t, 1, fp.failures.Load(), "5xx/429 must report proxy failure")
+		})
+	}
+}
