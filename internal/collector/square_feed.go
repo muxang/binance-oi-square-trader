@@ -160,12 +160,16 @@ func setKeys(s map[string]struct{}) []string {
 	return out
 }
 
-// parsePosts walks `data.contents[]` via gjson; missing id or content drops
-// the post (per references/square/urls.md "key fields critical").
+// parsePosts walks `data.vos[]` via gjson; missing id or content drops the
+// post (per references/square/urls.md "key fields critical").
+//
+// Field names verified against live BAPI 2026-05-09 (1.4 真数据 catch):
+//   - posts live under data.vos (not data.contents as initially assumed)
+//   - author identity is squareAuthorId + authorRole (not authorId + authorType)
 func (c *SquareCollector) parsePosts(rawBody []byte) []ParsedPost {
 	now := c.nowFunc()
 	var posts []ParsedPost
-	gjson.GetBytes(rawBody, "data.contents").ForEach(func(_, v gjson.Result) bool {
+	gjson.GetBytes(rawBody, "data.vos").ForEach(func(_, v gjson.Result) bool {
 		id := v.Get("id").String()
 		content := v.Get("content").String()
 		if id == "" || content == "" {
@@ -175,9 +179,9 @@ func (c *SquareCollector) parsePosts(rawBody []byte) []ParsedPost {
 		posts = append(posts, ParsedPost{
 			ID:           id,
 			ContentText:  content,
-			AuthorID:     v.Get("authorId").String(),
+			AuthorID:     v.Get("squareAuthorId").String(),
 			AuthorName:   v.Get("authorName").String(),
-			AuthorType:   v.Get("authorType").String(),
+			AuthorType:   v.Get("authorRole").String(),
 			Title:        v.Get("title").String(),
 			ViewCount:    v.Get("viewCount").Int(),
 			LikeCount:    v.Get("likeCount").Int(),

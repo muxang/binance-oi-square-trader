@@ -128,9 +128,9 @@ func newSquareTestCollector(t *testing.T, srv *httptest.Server, validator Symbol
 func postFixture(ids ...string) string {
 	parts := make([]string, len(ids))
 	for i, id := range ids {
-		parts[i] = fmt.Sprintf(`{"id":%q,"content":"watching $BTC","authorId":"a%d","authorName":"alice","authorType":"USER","title":"t","viewCount":100,"likeCount":50,"commentCount":10}`, id, i)
+		parts[i] = fmt.Sprintf(`{"id":%q,"content":"watching $BTC","squareAuthorId":"a%d","authorName":"alice","authorRole":"USER","title":"t","viewCount":100,"likeCount":50,"commentCount":10}`, id, i)
 	}
-	return fmt.Sprintf(`{"data":{"contents":[%s]}}`, strings.Join(parts, ","))
+	return fmt.Sprintf(`{"data":{"vos":[%s]}}`, strings.Join(parts, ","))
 }
 
 func passingValidator() *fakeValidator {
@@ -204,7 +204,7 @@ func newParseCollector() *SquareCollector {
 }
 
 func TestSquareParsePosts_ValidResponse(t *testing.T) {
-	body := []byte(`{"data":{"contents":[{"id":"p1","content":"hello","authorId":"a","authorName":"n","authorType":"u","title":"t","viewCount":42,"likeCount":7,"commentCount":3}]}}`)
+	body := []byte(`{"data":{"vos":[{"id":"p1","content":"hello","squareAuthorId":"a","authorName":"n","authorRole":"u","title":"t","viewCount":42,"likeCount":7,"commentCount":3}]}}`)
 	posts := newParseCollector().parsePosts(body)
 	require.Len(t, posts, 1)
 	p := posts[0]
@@ -220,21 +220,21 @@ func TestSquareParsePosts_ValidResponse(t *testing.T) {
 }
 
 func TestSquareParsePosts_MissingId_Skips(t *testing.T) {
-	body := []byte(`{"data":{"contents":[{"content":"x"},{"id":"p2","content":"y"}]}}`)
+	body := []byte(`{"data":{"vos":[{"content":"x"},{"id":"p2","content":"y"}]}}`)
 	posts := newParseCollector().parsePosts(body)
 	require.Len(t, posts, 1)
 	assert.Equal(t, "p2", posts[0].ID)
 }
 
 func TestSquareParsePosts_MissingContent_Skips(t *testing.T) {
-	body := []byte(`{"data":{"contents":[{"id":"p1"},{"id":"p2","content":"y"}]}}`)
+	body := []byte(`{"data":{"vos":[{"id":"p1"},{"id":"p2","content":"y"}]}}`)
 	posts := newParseCollector().parsePosts(body)
 	require.Len(t, posts, 1)
 	assert.Equal(t, "p2", posts[0].ID)
 }
 
 func TestSquareParsePosts_OptionalFieldsMissing_FillsZero(t *testing.T) {
-	body := []byte(`{"data":{"contents":[{"id":"p1","content":"x"}]}}`)
+	body := []byte(`{"data":{"vos":[{"id":"p1","content":"x"}]}}`)
 	posts := newParseCollector().parsePosts(body)
 	require.Len(t, posts, 1)
 	assert.Empty(t, posts[0].AuthorID)
@@ -242,7 +242,7 @@ func TestSquareParsePosts_OptionalFieldsMissing_FillsZero(t *testing.T) {
 }
 
 func TestSquareParsePosts_RawJSONPreserved(t *testing.T) {
-	body := []byte(`{"data":{"contents":[{"id":"p1","content":"x","extraField":"keepMe","unknown":99}]}}`)
+	body := []byte(`{"data":{"vos":[{"id":"p1","content":"x","extraField":"keepMe","unknown":99}]}}`)
 	posts := newParseCollector().parsePosts(body)
 	require.Len(t, posts, 1)
 	var raw map[string]interface{}
