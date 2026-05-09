@@ -26,7 +26,7 @@
 
 | 层 | 选型 | 理由 |
 |---|---|---|
-| 语言 | Go 1.23+ | 静态编译、协程并发干净、长跑稳定 |
+| 语言 | Go 1.25+ | 静态编译、协程并发干净、长跑稳定 |
 | 架构 | 模块化单体 | 单进程,内部 channel + 接口隔离 |
 | HTTP | Echo v4 | Dashboard API,中间件生态稳 |
 | 币安 SDK | 自封装 (resty + gorilla/websocket) | adshao/go-binance 滞后,自封装可控 |

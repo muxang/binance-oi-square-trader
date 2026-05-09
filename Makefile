@@ -41,7 +41,7 @@ dev:
 
 build:
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=1 $(GO) build -trimpath -ldflags="-s -w" -o $(TRADER_BIN) ./cmd/trader
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o $(TRADER_BIN) ./cmd/trader
 	@echo "Built $(TRADER_BIN)"
 
 test:

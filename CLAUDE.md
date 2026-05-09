@@ -183,7 +183,7 @@ Phase 0 → 1 → 2 → 3 → 4 → 5 → 6
 
 ### 16. 基础
 
-- Go 1.23+,启用 `-race` 跑测试
+- Go 1.25+,启用 `-race` 跑测试
 - `golangci-lint` 必须通过
 - 错误:永不丢 error,自定义 error 用 `fmt.Errorf("...: %w", err)` 包裹
 - panic 仅用于"绝不应发生"的不变式,正常错误一律返回 error
