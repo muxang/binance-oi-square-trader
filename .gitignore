@@ -18,6 +18,9 @@ vendor/
 .env.local
 .env.*.local
 
+# Production proxy URLs (敏感) — see deploy/proxies.example.txt
+deploy/proxies.txt
+
 # IDE
 .vscode/
 .idea/

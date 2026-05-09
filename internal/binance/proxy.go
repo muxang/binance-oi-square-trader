@@ -1,6 +1,7 @@
 package binance
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,11 +64,12 @@ func NewProxyManager(cfg *config.Config) (ProxyManager, error) {
 		}
 		return &singleManager{raw: cfg.Proxy.URL, parsed: parsed, kind: kind}, nil
 	case "pool":
-		if len(cfg.Proxy.PoolURLs) == 0 {
-			return nil, errors.New("pool mode requires at least one proxy URL")
+		urls, err := resolvePoolURLs(cfg.Proxy.PoolFile, cfg.Proxy.PoolURLs)
+		if err != nil {
+			return nil, err
 		}
-		entries := make([]*proxyEntry, 0, len(cfg.Proxy.PoolURLs))
-		for _, raw := range cfg.Proxy.PoolURLs {
+		entries := make([]*proxyEntry, 0, len(urls))
+		for _, raw := range urls {
 			parsed, kind, err := ParseProxyURL(raw)
 			if err != nil {
 				return nil, fmt.Errorf("pool proxy URL %q: %w", raw, err)
@@ -268,4 +272,47 @@ func wsDialerFor(parsed *url.URL, kind ProxyKind) (*websocket.Dialer, error) {
 		return nil, fmt.Errorf("unsupported proxy kind: %v", kind)
 	}
 	return d, nil
+}
+
+// resolvePoolURLs returns the proxy URLs to use for pool mode. PoolFile
+// takes precedence — if both are set, PoolURLs is silently ignored (the
+// .env.example documents this).
+func resolvePoolURLs(poolFile string, poolURLs []string) ([]string, error) {
+	if poolFile != "" {
+		urls, err := loadPoolFromFile(poolFile)
+		if err != nil {
+			return nil, fmt.Errorf("load pool file %q: %w", poolFile, err)
+		}
+		if len(urls) == 0 {
+			return nil, fmt.Errorf("pool file %q has no proxy URLs", poolFile)
+		}
+		return urls, nil
+	}
+	if len(poolURLs) == 0 {
+		return nil, errors.New("pool mode requires PoolFile or PoolURLs")
+	}
+	return poolURLs, nil
+}
+
+// loadPoolFromFile reads URLs from a file: one URL per line, # comments
+// and blank lines skipped.
+func loadPoolFromFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var urls []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		urls = append(urls, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return urls, nil
 }

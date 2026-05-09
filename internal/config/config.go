@@ -54,6 +54,7 @@ type ProxyConfig struct {
 	Mode             string   `mapstructure:"BINANCE_PROXY_MODE"`
 	URL              string   `mapstructure:"BINANCE_PROXY_URL"`
 	PoolURLs         []string `mapstructure:"BINANCE_PROXY_POOL_URLS"`
+	PoolFile         string   `mapstructure:"BINANCE_PROXY_POOL_FILE"` // takes precedence over PoolURLs
 	PoolStrategy     string   `mapstructure:"BINANCE_PROXY_POOL_STRATEGY"`
 	FailureThreshold int      `mapstructure:"BINANCE_PROXY_FAILURE_THRESHOLD"`
 	RecoveryMinutes  int      `mapstructure:"BINANCE_PROXY_RECOVERY_MINUTES"`
@@ -252,8 +253,8 @@ func (c *Config) validate() error {
 			return errors.New("BINANCE_PROXY_MODE=single requires BINANCE_PROXY_URL")
 		}
 	case "pool":
-		if len(c.Proxy.PoolURLs) == 0 {
-			return errors.New("BINANCE_PROXY_MODE=pool requires BINANCE_PROXY_POOL_URLS")
+		if len(c.Proxy.PoolURLs) == 0 && c.Proxy.PoolFile == "" {
+			return errors.New("BINANCE_PROXY_MODE=pool requires BINANCE_PROXY_POOL_URLS or BINANCE_PROXY_POOL_FILE")
 		}
 		if c.Proxy.PoolStrategy != "round_robin" && c.Proxy.PoolStrategy != "random" {
 			return fmt.Errorf("BINANCE_PROXY_POOL_STRATEGY must be round_robin or random, got %q", c.Proxy.PoolStrategy)

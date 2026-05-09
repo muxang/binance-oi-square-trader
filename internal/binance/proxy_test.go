@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,7 +110,7 @@ func TestNew_PoolMode_Random(t *testing.T) {
 func TestNew_PoolMode_EmptyURLs_Error(t *testing.T) {
 	_, err := NewProxyManager(cfgWithProxy("pool", nil))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one proxy URL")
+	assert.Contains(t, err.Error(), "PoolFile or PoolURLs")
 }
 
 func TestPool_ReportFailure_Eviction(t *testing.T) {
@@ -246,4 +248,65 @@ func TestPool_Concurrent_HTTPClient_Race(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// --- pool-from-file tests ---
+
+// writePoolFile writes lines to a temp file and returns its path.
+func writePoolFile(t *testing.T, lines string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "proxies.txt")
+	require.NoError(t, os.WriteFile(path, []byte(lines), 0o600))
+	return path
+}
+
+func TestNewProxyManager_Pool_FromFile_LoadsURLs(t *testing.T) {
+	path := writePoolFile(t, "http://a.example.com:8080\nhttp://b.example.com:8080\n")
+	cfg := cfgWithProxy("pool", nil)
+	cfg.Proxy.PoolFile = path
+	pm, err := NewProxyManager(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 2, pm.Stats().Total)
+}
+
+func TestNewProxyManager_Pool_FromFile_SkipsCommentsAndBlanks(t *testing.T) {
+	path := writePoolFile(t, "# comment\n\nhttp://a.example.com:8080\n   \n# another comment\nhttp://b.example.com:8080\n")
+	cfg := cfgWithProxy("pool", nil)
+	cfg.Proxy.PoolFile = path
+	pm, err := NewProxyManager(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 2, pm.Stats().Total, "comments and blanks must be skipped")
+}
+
+func TestNewProxyManager_Pool_FromFile_NotFound_ReturnsError(t *testing.T) {
+	cfg := cfgWithProxy("pool", nil)
+	cfg.Proxy.PoolFile = "/nonexistent/proxies.txt"
+	_, err := NewProxyManager(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load pool file")
+}
+
+func TestNewProxyManager_Pool_FromFile_PrefersOverURLs(t *testing.T) {
+	path := writePoolFile(t, "http://from-file.example.com:8080\n")
+	cfg := cfgWithProxy("pool", []string{"http://from-env-1.example.com:8080", "http://from-env-2.example.com:8080"})
+	cfg.Proxy.PoolFile = path
+	pm, err := NewProxyManager(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pm.Stats().Total, "PoolFile must take precedence (1 URL from file, not 2 from env)")
+}
+
+func TestNewProxyManager_Pool_NoFileNoURLs_ReturnsError(t *testing.T) {
+	cfg := cfgWithProxy("pool", nil) // PoolURLs empty, PoolFile empty
+	_, err := NewProxyManager(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PoolFile or PoolURLs")
+}
+
+func TestNewProxyManager_Pool_FromFile_EmptyFile_ReturnsError(t *testing.T) {
+	path := writePoolFile(t, "# only comments\n\n# nothing else\n")
+	cfg := cfgWithProxy("pool", nil)
+	cfg.Proxy.PoolFile = path
+	_, err := NewProxyManager(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no proxy URLs")
 }

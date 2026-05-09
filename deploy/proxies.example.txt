@@ -1,0 +1,17 @@
+# Production proxy pool — example template.
+# Copy to deploy/proxies.txt and fill in real proxies.
+# deploy/proxies.txt is git-ignored.
+#
+# Format: http(s)://[user:pass@]host:port  or  socks5://[user:pass@]host:port
+# - one URL per line
+# - lines starting with `#` are comments
+# - blank lines are skipped
+
+# US East cluster
+# http://user1:pass1@proxy-us-east-1.example.com:8080
+
+# EU West cluster
+# http://user2:pass2@proxy-eu-west-1.example.com:8080
+
+# Asia Pacific
+# socks5://user3:pass3@proxy-ap-1.example.com:1080
