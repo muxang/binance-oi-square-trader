@@ -123,7 +123,11 @@ func TestRunner_Stop_WaitsForRunningCollectors(t *testing.T) {
 }
 
 func TestRunner_Stop_TimeoutCutsOff(t *testing.T) {
-	captureMetrics(t)
+	// captureMetrics intentionally NOT used: this test starts a goroutine
+	// that ignores ctx and runs past Stop's timeout (then unblocks via
+	// `defer close(block)`). It eventually calls metricSuccess; if the
+	// metric vars were swapped via t.Cleanup, that would race with the
+	// late call. We only assert Stop's return value here, no counters.
 	r := New(zerolog.Nop())
 	started := make(chan struct{}, 1)
 	block := make(chan struct{})

@@ -109,6 +109,20 @@ func run() error {
 	if err := runner.Register(btcCol, "* * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register btc_regime collector")
 	}
+	klinesCol := collector.NewKlinesCollector(client, pgPool, rdb, log, collector.KlinesCollectorConfig{
+		Concurrency:     cfg.Collector.OIConcurrency,
+		SymbolCacheTTL:  1 * time.Hour,
+		KlineLimit:      30,
+		KlineInterval:   "15m",
+		ATRPeriod:       14,
+		EMAPeriod:       20,
+		ATRRedisTTL:     30 * time.Minute,
+		EMARedisTTL:     30 * time.Minute,
+		HighFailureRate: 0.30,
+	})
+	if err := runner.Register(klinesCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register klines collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.

@@ -18,6 +18,81 @@ var (
 	ErrBatchAlreadyClosed = errors.New("batch already closed")
 )
 
+const batchUpsertKlines = `-- name: BatchUpsertKlines :batchexec
+INSERT INTO klines (symbol, timeframe, open_time, open, high, low, close, volume, quote_volume)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (symbol, timeframe, open_time) DO UPDATE
+  SET open = EXCLUDED.open,
+      high = EXCLUDED.high,
+      low  = EXCLUDED.low,
+      close = EXCLUDED.close,
+      volume = EXCLUDED.volume,
+      quote_volume = EXCLUDED.quote_volume
+`
+
+type BatchUpsertKlinesBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchUpsertKlinesParams struct {
+	Symbol      string
+	Timeframe   string
+	OpenTime    time.Time
+	Open        decimal.Decimal
+	High        decimal.Decimal
+	Low         decimal.Decimal
+	Close       decimal.Decimal
+	Volume      decimal.Decimal
+	QuoteVolume decimal.Decimal
+}
+
+// T7 writes ~529 symbols × 30 bars = ~15870 rows per 5-min tick. The batch
+// variant lets sqlc generate a pgx.Batch wrapper that pings the server in a
+// single round-trip per chunk. ON CONFLICT DO UPDATE refreshes the
+// in-progress bar (last of `limit=30` rolls forward each tick).
+func (q *Queries) BatchUpsertKlines(ctx context.Context, arg []BatchUpsertKlinesParams) *BatchUpsertKlinesBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.Symbol,
+			a.Timeframe,
+			a.OpenTime,
+			a.Open,
+			a.High,
+			a.Low,
+			a.Close,
+			a.Volume,
+			a.QuoteVolume,
+		}
+		batch.Queue(batchUpsertKlines, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchUpsertKlinesBatchResults{br, len(arg), false}
+}
+
+func (b *BatchUpsertKlinesBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *BatchUpsertKlinesBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
 const insertOIHistory = `-- name: InsertOIHistory :batchexec
 INSERT INTO oi_history (symbol, ts, oi, oi_value_usd)
 VALUES ($1, $2, $3, $4)

@@ -24,9 +24,12 @@ func TestParseKlines_ValidResponse(t *testing.T) {
 	assert.True(t, bars[0].Low.Equal(decimal.RequireFromString("79900.00")))
 	assert.True(t, bars[0].Close.Equal(decimal.RequireFromString("80050.00")))
 	assert.True(t, bars[0].Volume.Equal(decimal.RequireFromString("100.5")))
+	// row[7] — quote_asset_volume (USDT-denominated). T7 / Phase 2 use this.
+	assert.True(t, bars[0].QuoteVolume.Equal(decimal.RequireFromString("8050000.00")))
 
 	assert.Equal(t, time.UnixMilli(1700000300000).UTC(), bars[1].OpenTime)
 	assert.True(t, bars[1].Close.Equal(decimal.RequireFromString("80100.00")))
+	assert.True(t, bars[1].QuoteVolume.Equal(decimal.RequireFromString("16000000.00")))
 }
 
 // TestParseKlines_DecimalPrecision uses values float64 cannot represent

@@ -8,19 +8,20 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// KlineBar is a parsed Binance kline / candlestick. Fields beyond Volume
-// (close_time, trades, taker_buy_*, etc.) are not exposed — add them only
-// when a caller needs them (YAGNI).
+// KlineBar is a parsed Binance kline / candlestick. Fields beyond
+// QuoteVolume (close_time, trades, taker_buy_*, etc.) are not exposed —
+// add them only when a caller needs them (YAGNI).
 //
 // ref: references/binance/urls.md §「Kline / Candlestick」
 // docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data
 type KlineBar struct {
-	OpenTime time.Time
-	Open     decimal.Decimal
-	High     decimal.Decimal
-	Low      decimal.Decimal
-	Close    decimal.Decimal
-	Volume   decimal.Decimal
+	OpenTime    time.Time
+	Open        decimal.Decimal
+	High        decimal.Decimal
+	Low         decimal.Decimal
+	Close       decimal.Decimal
+	Volume      decimal.Decimal
+	QuoteVolume decimal.Decimal // row[7] — quote asset volume, USDT-denominated for USDⓈ-M perp
 }
 
 // ParseKlines parses the raw JSON body of /fapi/v1/klines into a slice of
@@ -47,10 +48,11 @@ func ParseKlines(raw []byte) ([]KlineBar, error) {
 }
 
 // parseKlineBar decodes one heterogeneous tuple. Indices 0-5 cover
-// open_time / OHLCV; later indices are unused by Phase 1 collectors.
+// open_time / OHLCV; index 7 is quote_asset_volume (T7 + Phase 2 use it).
+// Indices 6, 8-11 (close_time, trades, taker_buy_*, ignore) are unused.
 func parseKlineBar(row []json.RawMessage) (KlineBar, error) {
-	if len(row) < 6 {
-		return KlineBar{}, fmt.Errorf("kline fields=%d, want ≥6", len(row))
+	if len(row) < 8 {
+		return KlineBar{}, fmt.Errorf("kline fields=%d, want ≥8", len(row))
 	}
 	var openMS int64
 	if err := json.Unmarshal(row[0], &openMS); err != nil {
@@ -87,12 +89,17 @@ func parseKlineBar(row []json.RawMessage) (KlineBar, error) {
 	if err != nil {
 		return KlineBar{}, err
 	}
+	quoteVol, err := parseDec(7, "quote_volume")
+	if err != nil {
+		return KlineBar{}, err
+	}
 	return KlineBar{
-		OpenTime: time.UnixMilli(openMS).UTC(),
-		Open:     open,
-		High:     high,
-		Low:      low,
-		Close:    closePx,
-		Volume:   volume,
+		OpenTime:    time.UnixMilli(openMS).UTC(),
+		Open:        open,
+		High:        high,
+		Low:         low,
+		Close:       closePx,
+		Volume:      volume,
+		QuoteVolume: quoteVol,
 	}, nil
 }

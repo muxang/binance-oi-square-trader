@@ -82,6 +82,27 @@ bash scripts/healthcheck.sh
 
 切换到 `mainnet` 必须同时设置 `TRADER_MAINNET_CONFIRM=I_UNDERSTAND`,否则进程立即退出。
 
+## 实盘部署 — 代理池强制要求
+
+Phase 1 collector 单 IP 5 分钟总请求量(全采集 ~529 USDⓈ-M perp):
+
+| Collector | 频率 | 单 IP 5min 请求量 |
+|---|---|---|
+| T1 OI history (`openInterestHist`) | 5min | ~529(占 1000 req/5min/IP 限的 53%) |
+| T7 K线 + ATR/EMA (`klines`) | 5min | ~529(weight=1,占 12000 weight/5min 的 4.4%) |
+| T6 BTC regime | 1min | ~5 |
+| **合计** | | **~1063 req/5min/IP** |
+
+实盘部署**强制要求** `BINANCE_PROXY_MODE=pool` 且代理池 ≥ 2 个代理:
+
+```env
+BINANCE_PROXY_MODE=pool
+BINANCE_PROXY_POOL_URLS=http://proxy1.example.com:8080,http://proxy2.example.com:8080
+BINANCE_PROXY_POOL_STRATEGY=round_robin
+```
+
+开发/测试环境可用 `BINANCE_PROXY_MODE=none` 直连,但需要降低采集范围或频率(如 T1 改 `*/10 * * * *`)避免撞 IP 限流。
+
 ## 项目结构
 
 详见 [`ARCHITECTURE.md`](./ARCHITECTURE.md#6-目录结构)。
