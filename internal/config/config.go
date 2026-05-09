@@ -1,0 +1,241 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"reflect"
+	"strings"
+	"time"
+
+	"github.com/go-viper/mapstructure/v2"
+	"github.com/shopspring/decimal"
+	"github.com/spf13/viper"
+)
+
+// Config holds all runtime configuration. Each leaf field carries a mapstructure tag
+// that names the env var it reads from. Sub-structs use ",squash" so all fields share
+// one flat namespace (matching the flat env var layout in .env.example).
+type Config struct {
+	Mode           string         `mapstructure:"TRADER_MODE"`
+	MainnetConfirm string         `mapstructure:"TRADER_MAINNET_CONFIRM"`
+	TZ             string         `mapstructure:"TZ"`
+	DailyResetTZ   string         `mapstructure:"DAILY_RESET_TZ"`
+	AppLocation    *time.Location `mapstructure:"-"` // derived from TZ
+	DailyResetLoc  *time.Location `mapstructure:"-"` // derived from DailyResetTZ
+
+	Log       LogConfig       `mapstructure:",squash"`
+	Binance   BinanceConfig   `mapstructure:",squash"`
+	Proxy     ProxyConfig     `mapstructure:",squash"`
+	Square    SquareConfig    `mapstructure:",squash"`
+	DB        DBConfig        `mapstructure:",squash"`
+	TG        TGConfig        `mapstructure:",squash"`
+	Sentry    SentryConfig    `mapstructure:",squash"`
+	HTTP      HTTPConfig      `mapstructure:",squash"`
+	Watchlist WatchlistConfig `mapstructure:",squash"`
+	OISurge   OISurgeConfig   `mapstructure:",squash"`
+	SquareHot SquareHotConfig `mapstructure:",squash"`
+	Position  PositionConfig  `mapstructure:",squash"`
+	Exit      ExitConfig      `mapstructure:",squash"`
+	Risk      RiskConfig      `mapstructure:",squash"`
+	Collector CollectorConfig `mapstructure:",squash"`
+}
+
+type LogConfig struct {
+	Level  string `mapstructure:"LOG_LEVEL"`
+	Format string `mapstructure:"LOG_FORMAT"`
+}
+type BinanceConfig struct {
+	APIKey            string    `mapstructure:"BINANCE_API_KEY"`
+	APISecret         string    `mapstructure:"BINANCE_API_SECRET"`
+	AlgoMigrationDate time.Time `mapstructure:"BINANCE_ALGO_MIGRATION_DATE"`
+}
+type ProxyConfig struct {
+	Mode             string   `mapstructure:"BINANCE_PROXY_MODE"`
+	URL              string   `mapstructure:"BINANCE_PROXY_URL"`
+	PoolURLs         []string `mapstructure:"BINANCE_PROXY_POOL_URLS"`
+	PoolStrategy     string   `mapstructure:"BINANCE_PROXY_POOL_STRATEGY"`
+	FailureThreshold int      `mapstructure:"BINANCE_PROXY_FAILURE_THRESHOLD"`
+	RecoveryMinutes  int      `mapstructure:"BINANCE_PROXY_RECOVERY_MINUTES"`
+}
+type SquareConfig struct {
+	UseProxy bool `mapstructure:"SQUARE_USE_PROXY"`
+}
+type DBConfig struct {
+	PostgresURL string `mapstructure:"DATABASE_URL"`
+	RedisURL    string `mapstructure:"REDIS_URL"`
+}
+type TGConfig struct {
+	BotToken string `mapstructure:"TG_BOT_TOKEN"`
+	ChatID   int64  `mapstructure:"TG_CHAT_ID"`
+}
+type SentryConfig struct {
+	DSN string `mapstructure:"SENTRY_DSN"`
+}
+type HTTPConfig struct {
+	Port          int `mapstructure:"HTTP_PORT"`
+	DashboardPort int `mapstructure:"DASHBOARD_PORT"`
+}
+type WatchlistConfig struct {
+	MaxSize      int             `mapstructure:"WATCHLIST_MAX_SIZE"`
+	MinVolumeUSD decimal.Decimal `mapstructure:"WATCHLIST_MIN_VOLUME_USD"`
+	MinListDays  int             `mapstructure:"WATCHLIST_MIN_LIST_DAYS"`
+	Blacklist    []string        `mapstructure:"WATCHLIST_BLACKLIST"`
+}
+type OISurgeConfig struct {
+	FromLowPct      float64 `mapstructure:"OI_SURGE_FROM_LOW_PCT"`
+	RecentGrowthPct float64 `mapstructure:"OI_SURGE_RECENT_GROWTH_PCT"`
+	LookbackPeriods int     `mapstructure:"OI_SURGE_LOOKBACK_PERIODS"`
+	RecentPeriods   int     `mapstructure:"OI_SURGE_RECENT_PERIODS"`
+	MinGrowingRatio float64 `mapstructure:"OI_SURGE_MIN_GROWING_RATIO"`
+}
+type SquareHotConfig struct {
+	Multiplier            float64 `mapstructure:"SQUARE_HOT_MULTIPLIER"`
+	LookbackMin           int     `mapstructure:"SQUARE_HOT_LOOKBACK_MIN"`
+	BaselineLookbackHours int     `mapstructure:"SQUARE_BASELINE_LOOKBACK_HOURS"`
+}
+type PositionConfig struct {
+	MarginPerTradeFull      decimal.Decimal `mapstructure:"MARGIN_PER_TRADE_FULL"`
+	MarginPerTradeHalf      decimal.Decimal `mapstructure:"MARGIN_PER_TRADE_HALF"`
+	Leverage                int             `mapstructure:"LEVERAGE"`
+	MaxConcurrent           int             `mapstructure:"MAX_CONCURRENT_POSITIONS"`
+	SameSymbolCooldownHours int             `mapstructure:"SAME_SYMBOL_COOLDOWN_HOURS"`
+}
+type ExitConfig struct {
+	DisasterStopPct             float64 `mapstructure:"DISASTER_STOP_PCT"`
+	ATRPeriod                   int     `mapstructure:"ATR_PERIOD"`
+	ATRTimeframe                string  `mapstructure:"ATR_TIMEFRAME"`
+	SignalFailOIDropPct         float64 `mapstructure:"SIGNAL_FAIL_OI_DROP_PCT"`
+	SignalFailPriceLowBufferPct float64 `mapstructure:"SIGNAL_FAIL_PRICE_LOW_BUFFER_PCT"`
+	TPStage1Pct                 float64 `mapstructure:"TP_STAGE1_PCT"`
+	TPStage1Ratio               float64 `mapstructure:"TP_STAGE1_RATIO"`
+	TPStage2Pct                 float64 `mapstructure:"TP_STAGE2_PCT"`
+	TPStage2Ratio               float64 `mapstructure:"TP_STAGE2_RATIO"`
+	TrailingActivatePct         float64 `mapstructure:"TRAILING_ACTIVATE_PCT"`
+	TrailingDistanceATRMult     float64 `mapstructure:"TRAILING_DISTANCE_ATR_MULT"`
+	SoftTimeoutHours            int     `mapstructure:"SOFT_TIMEOUT_HOURS"`
+	HardTimeoutHours            int     `mapstructure:"HARD_TIMEOUT_HOURS"`
+}
+type RiskConfig struct {
+	DailyLossHaltPct         float64 `mapstructure:"DAILY_LOSS_HALT_PCT"`
+	ConsecutiveLossHaltCount int     `mapstructure:"CONSECUTIVE_LOSS_HALT_COUNT"`
+	ConsecutiveLossHaltHours int     `mapstructure:"CONSECUTIVE_LOSS_HALT_HOURS"`
+	BTCCrashHaltPct          float64 `mapstructure:"BTC_CRASH_HALT_PCT"`
+	BTCCrashHaltMinutes      int     `mapstructure:"BTC_CRASH_HALT_MINUTES"`
+	TotalFloatLossHaltPct    float64 `mapstructure:"TOTAL_FLOAT_LOSS_HALT_PCT"`
+	APIErrorRateLimit        int     `mapstructure:"API_ERROR_RATE_LIMIT"`
+}
+type CollectorConfig struct {
+	OIConcurrency            int `mapstructure:"OI_COLLECTOR_CONCURRENCY"`
+	SquareHashtagConcurrency int `mapstructure:"SQUARE_HASHTAG_CONCURRENCY"`
+}
+
+// Load reads .env (if present) and environment variables, applies defaults,
+// and returns a validated Config. Env vars override .env file; defaults are lowest.
+func Load() (*Config, error) {
+	v := viper.New()
+	v.SetConfigFile(".env")
+	v.SetConfigType("env")
+	if err := v.ReadInConfig(); err != nil {
+		var fnf viper.ConfigFileNotFoundError
+		if !errors.As(err, &fnf) && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read .env: %w", err)
+		}
+	}
+	v.AutomaticEnv()
+	bindEnvFromTags(v, reflect.TypeOf(Config{}))
+	setDefaults(v)
+
+	var c Config
+	if err := v.Unmarshal(&c, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+		decimalHook(), rfc3339Hook(), trimmedSliceHook(),
+	)), func(dc *mapstructure.DecoderConfig) { dc.WeaklyTypedInput = true }); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	var err error
+	if c.AppLocation, err = time.LoadLocation(c.TZ); err != nil {
+		return nil, fmt.Errorf("TZ %q: %w", c.TZ, err)
+	}
+	if c.DailyResetLoc, err = time.LoadLocation(c.DailyResetTZ); err != nil {
+		return nil, fmt.Errorf("DAILY_RESET_TZ %q: %w", c.DailyResetTZ, err)
+	}
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// bindEnvFromTags walks the Config type and registers BindEnv for every leaf field's
+// mapstructure tag. A named tag (e.g. "BINANCE_API_KEY") is a leaf, even when the field
+// type is itself a struct (decimal.Decimal, time.Time). Only ",squash" or empty tags
+// trigger recursion into nested config sub-structs.
+func bindEnvFromTags(v *viper.Viper, t reflect.Type) {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag, _, _ := strings.Cut(f.Tag.Get("mapstructure"), ",")
+		if tag == "-" {
+			continue
+		}
+		if tag != "" {
+			_ = v.BindEnv(tag)
+			continue
+		}
+		if f.Type.Kind() == reflect.Struct {
+			bindEnvFromTags(v, f.Type)
+		}
+	}
+}
+
+func setDefaults(v *viper.Viper) {
+	for k, val := range map[string]any{
+		"TRADER_MODE": "testnet", "TZ": "Asia/Shanghai", "DAILY_RESET_TZ": "Asia/Shanghai",
+		"LOG_LEVEL": "info", "LOG_FORMAT": "pretty",
+		"BINANCE_PROXY_MODE": "none", "BINANCE_PROXY_POOL_STRATEGY": "round_robin",
+		"BINANCE_PROXY_FAILURE_THRESHOLD": 5, "BINANCE_PROXY_RECOVERY_MINUTES": 5,
+		"HTTP_PORT": 8080, "DASHBOARD_PORT": 3000,
+		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
+	} {
+		v.SetDefault(k, val)
+	}
+}
+
+func (c *Config) validate() error {
+	switch c.Mode {
+	case "testnet", "mainnet":
+	default:
+		return fmt.Errorf("TRADER_MODE must be testnet or mainnet, got %q", c.Mode)
+	}
+	if c.Mode == "mainnet" && c.MainnetConfirm != "I_UNDERSTAND" {
+		return errors.New("TRADER_MODE=mainnet requires TRADER_MAINNET_CONFIRM=I_UNDERSTAND")
+	}
+	for _, e := range []struct{ key, val string }{
+		{"BINANCE_API_KEY", c.Binance.APIKey}, {"BINANCE_API_SECRET", c.Binance.APISecret},
+		{"DATABASE_URL", c.DB.PostgresURL}, {"REDIS_URL", c.DB.RedisURL},
+		{"TG_BOT_TOKEN", c.TG.BotToken},
+	} {
+		if e.val == "" {
+			return fmt.Errorf("%s is required", e.key)
+		}
+	}
+	if c.TG.ChatID == 0 {
+		return errors.New("TG_CHAT_ID is required and must be a non-zero integer")
+	}
+	switch c.Proxy.Mode {
+	case "none":
+	case "single":
+		if c.Proxy.URL == "" {
+			return errors.New("BINANCE_PROXY_MODE=single requires BINANCE_PROXY_URL")
+		}
+	case "pool":
+		if len(c.Proxy.PoolURLs) == 0 {
+			return errors.New("BINANCE_PROXY_MODE=pool requires BINANCE_PROXY_POOL_URLS")
+		}
+		if c.Proxy.PoolStrategy != "round_robin" && c.Proxy.PoolStrategy != "random" {
+			return fmt.Errorf("BINANCE_PROXY_POOL_STRATEGY must be round_robin or random, got %q", c.Proxy.PoolStrategy)
+		}
+	default:
+		return fmt.Errorf("BINANCE_PROXY_MODE must be none/single/pool, got %q", c.Proxy.Mode)
+	}
+	return nil
+}
