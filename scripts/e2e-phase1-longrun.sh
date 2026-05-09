@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Go 不在 WSL 默认 login shell PATH (装在 /usr/local/go/bin), 显式补上
+# 这样无论调用环境 (cron / CI / 直接交互) 都能找到 go.
+export PATH="/usr/local/go/bin:$PATH"
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
