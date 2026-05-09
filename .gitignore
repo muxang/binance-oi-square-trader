@@ -1,0 +1,59 @@
+# Binary
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+coverage.txt
+
+# Go
+vendor/
+
+# Env (敏感)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Web
+web/node_modules/
+web/dist/
+web/.vite/
+
+# DuckDB / SQLite
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+
+# Local data
+data/
+*.dump
+*.sql.gz
+
+# DB backups
+backups/
+
+# Docker volumes
+deploy/data/

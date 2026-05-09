@@ -1,0 +1,59 @@
+version: '3.9'
+
+# =============================================================================
+# 生产部署 — 与 docker-compose.yml 叠加使用
+# Usage:
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+# =============================================================================
+
+services:
+  trader:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: trader-app
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      TZ: Asia/Shanghai
+      # 容器内连接基础设施用容器名
+      DATABASE_URL: postgres://trader:trader@postgres:5432/trader?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: trader-caddy
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config
+    depends_on:
+      - trader
+
+  # Dashboard 静态文件由 caddy 直接 serve, 不单独起容器
+  # 如需要单独前端容器, 在此追加 dashboard service

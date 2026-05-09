@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: trader
+          POSTGRES_PASSWORD: trader
+          POSTGRES_DB: trader
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://trader:trader@localhost:5432/trader?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
+      TRADER_MODE: testnet
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Install migrate
+        run: go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+      - name: Run migrations
+        run: migrate -path internal/storage/postgres/migrations -database "$DATABASE_URL" up || true
+      - name: Test
+        run: go test -race -timeout 120s ./...
+
+  safety-check:
+    name: Mainnet config guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forbid TRADER_MODE=mainnet in test files
+        run: |
+          if grep -RE 'TRADER_MODE\s*=\s*"?mainnet"?' \
+              --include='*_test.go' \
+              --include='*.yml' \
+              --include='*.yaml' \
+              .; then
+            echo "::error::TRADER_MODE=mainnet must NOT appear in test/CI files"
+            exit 1
+          fi
+      - name: Ensure .env not committed
+        run: |
+          if [ -f .env ]; then
+            echo "::error::.env file must not be committed"
+            exit 1
+          fi

@@ -1,0 +1,113 @@
+version: '3.9'
+
+# =============================================================================
+# 开发环境基础设施 (PG + Redis + Prometheus + Grafana + Loki)
+# 启动: make docker-up
+#
+# 生产环境 trader 容器化 → 配合 docker-compose.prod.yml 一起用:
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+# =============================================================================
+
+x-tz: &tz
+  TZ: Asia/Shanghai
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: trader-postgres
+    restart: unless-stopped
+    environment:
+      <<: *tz
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: trader
+      POSTGRES_DB: trader
+    ports:
+      - "127.0.0.1:5432:5432"      # 仅本地暴露
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: trader-redis
+    restart: unless-stopped
+    environment:
+      <<: *tz
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: trader-prometheus
+    restart: unless-stopped
+    environment:
+      <<: *tz
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./data/prometheus:/prometheus
+
+  loki:
+    image: grafana/loki:latest
+    container_name: trader-loki
+    restart: unless-stopped
+    environment:
+      <<: *tz
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./data/loki:/loki
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: trader-promtail
+    restart: unless-stopped
+    environment:
+      <<: *tz
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: trader-grafana
+    restart: unless-stopped
+    environment:
+      <<: *tz
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./data/grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
+# 注意: trader 主程序在生产部署时(docker-compose.prod.yml)加入此 compose,
+# 开发期(本地 Windows + Docker Desktop)用 `make dev` 直接跑 go run,不通过容器。

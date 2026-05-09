@@ -1,0 +1,31 @@
+# =============================================================================
+# Caddyfile - 生产部署反向代理
+# =============================================================================
+# 开发期不用,生产 VPS 上用 caddy 做 HTTPS 终端 + 路由。
+# =============================================================================
+
+# 替换为你的域名:
+# trader.example.com {
+#     reverse_proxy /api/* trader:8080
+#     reverse_proxy /metrics trader:8080
+#     handle /grafana/* {
+#         reverse_proxy grafana:3000
+#     }
+#     handle /* {
+#         root * /srv/dashboard
+#         file_server
+#         try_files {path} /index.html
+#     }
+#
+#     basicauth /grafana/* {
+#         admin <bcrypt-password-hash>
+#     }
+#
+#     log {
+#         output file /var/log/caddy/access.log
+#     }
+# }
+
+:80 {
+	respond "binance-oi-square-trader (placeholder, configure domain)" 200
+}
