@@ -84,3 +84,5 @@ jobs:
             echo "::error::.env file must not be committed"
             exit 1
           fi
+      - name: Forbid bare time.Now() in business code
+        run: bash scripts/check-time-now.sh
