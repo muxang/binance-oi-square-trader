@@ -105,6 +105,10 @@ func run() error {
 	if err := runner.Register(oiCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register oi collector")
 	}
+	btcCol := collector.NewBTCRegimeCollector(client, rdb, log, collector.BTCRegimeConfig{})
+	if err := runner.Register(btcCol, "* * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register btc_regime collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.
