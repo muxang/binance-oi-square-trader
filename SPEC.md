@@ -31,10 +31,10 @@
 
 **过滤**:
 - 币安 USDT 永续上线 ≥ 7 天
-- 24h `quoteVolume` ≥ 5000 万 USDT
+- 24h `quoteVolume` ≥ 1000 万 USDT
 - 不在黑名单(稳定币 / 杠杆代币 UP/DOWN/BULL/BEAR / 已知下架风险)
 
-**上限**:80 个币种(避免 Square 跟踪接口限流)
+**上限**:150 个币种(配合代理 pool + 并发 + 重试,详见 ARCHITECTURE §9.5)
 
 每个 symbol 入池时打 source 标签 `['square','oi','price','position']`,可同时多源。
 
@@ -192,8 +192,8 @@ OI 不触发            → 不交易
 |---|---|---|---|
 | T1 OI 全量扫描 | 5min | 全部 USDT 永续 | period=5m, limit=15 |
 | T2 Square 推荐流 | 1h | feed-recommend, 8 次分页 ≤100 帖 | cashtag 发现 |
-| T3 Square 热度跟踪 | 5min | queryByHashtag, 池内每币 | 时序入库 |
-| T4 监控池刷新 | 1h | 合并 A/B/C/D + 过滤 | 上限 80 |
+| T3 Square 热度跟踪 | 5min | queryByHashtag, 池内每币 | 时序入库;走代理(`SQUARE_USE_PROXY=true`),并发 10,单币重试 2 次,整轮 4min 硬超时,失败的币本轮跳过下轮补 |
+| T4 监控池刷新 | 1h | 合并 A/B/C/D + 过滤 | 上限 150 |
 | T5 持仓价格追踪 | 30s | 已开仓币种 ticker/price | |
 | T6 BTC regime | 1min | BTCUSDT 5min K 线跌幅 | 黑天鹅熔断 |
 | T7 K 线 + ATR 缓存 | 5min | 池内每币 15min K 线 | ATR(14) + EMA(20) |
@@ -259,7 +259,7 @@ OI 不触发            → 不交易
 □ oi_history 表数据正常增长 (5min 一批, ~400 行/批)
 □ square_posts 表 1h 一批新数据
 □ square_mentions 抽样 50 个 cashtag 的正确率 ≥ 90%
-□ watchlist_snapshots 每小时新快照, 池中 20-80 个币
+□ watchlist_snapshots 每小时新快照, 池中 20-150 个币
 □ Redis 各缓存 key 都有数据且 TTL 正确
 □ api_errors 表错误率 < 1%
 □ 没有任何决策/下单代码被运行

@@ -59,7 +59,12 @@ type ProxyConfig struct {
 	RecoveryMinutes  int      `mapstructure:"BINANCE_PROXY_RECOVERY_MINUTES"`
 }
 type SquareConfig struct {
-	UseProxy bool `mapstructure:"SQUARE_USE_PROXY"`
+	UseProxy             bool          `mapstructure:"SQUARE_USE_PROXY"`
+	HashtagConcurrency   int           `mapstructure:"SQUARE_HASHTAG_CONCURRENCY"`
+	HashtagRetryCount    int           `mapstructure:"SQUARE_HASHTAG_RETRY_COUNT"`
+	HashtagTimeout       time.Duration `mapstructure:"-"` // derived from SQUARE_HASHTAG_TIMEOUT_SECONDS
+	HashtagRetryInterval time.Duration `mapstructure:"-"` // derived from SQUARE_HASHTAG_RETRY_INTERVAL_MS
+	HashtagBatchDeadline time.Duration `mapstructure:"-"` // derived from SQUARE_HASHTAG_BATCH_DEADLINE_MINUTES
 }
 type DBConfig struct {
 	PostgresURL string `mapstructure:"DATABASE_URL"`
@@ -83,16 +88,16 @@ type WatchlistConfig struct {
 	Blacklist    []string        `mapstructure:"WATCHLIST_BLACKLIST"`
 }
 type OISurgeConfig struct {
-	FromLowPct      float64 `mapstructure:"OI_SURGE_FROM_LOW_PCT"`
-	RecentGrowthPct float64 `mapstructure:"OI_SURGE_RECENT_GROWTH_PCT"`
-	LookbackPeriods int     `mapstructure:"OI_SURGE_LOOKBACK_PERIODS"`
-	RecentPeriods   int     `mapstructure:"OI_SURGE_RECENT_PERIODS"`
-	MinGrowingRatio float64 `mapstructure:"OI_SURGE_MIN_GROWING_RATIO"`
+	FromLowPct      decimal.Decimal `mapstructure:"OI_SURGE_FROM_LOW_PCT"`
+	RecentGrowthPct decimal.Decimal `mapstructure:"OI_SURGE_RECENT_GROWTH_PCT"`
+	LookbackPeriods int             `mapstructure:"OI_SURGE_LOOKBACK_PERIODS"`
+	RecentPeriods   int             `mapstructure:"OI_SURGE_RECENT_PERIODS"`
+	MinGrowingRatio decimal.Decimal `mapstructure:"OI_SURGE_MIN_GROWING_RATIO"`
 }
 type SquareHotConfig struct {
-	Multiplier            float64 `mapstructure:"SQUARE_HOT_MULTIPLIER"`
-	LookbackMin           int     `mapstructure:"SQUARE_HOT_LOOKBACK_MIN"`
-	BaselineLookbackHours int     `mapstructure:"SQUARE_BASELINE_LOOKBACK_HOURS"`
+	Multiplier            decimal.Decimal `mapstructure:"SQUARE_HOT_MULTIPLIER"`
+	LookbackMin           int             `mapstructure:"SQUARE_HOT_LOOKBACK_MIN"`
+	BaselineLookbackHours int             `mapstructure:"SQUARE_BASELINE_LOOKBACK_HOURS"`
 }
 type PositionConfig struct {
 	MarginPerTradeFull      decimal.Decimal `mapstructure:"MARGIN_PER_TRADE_FULL"`
@@ -102,32 +107,31 @@ type PositionConfig struct {
 	SameSymbolCooldownHours int             `mapstructure:"SAME_SYMBOL_COOLDOWN_HOURS"`
 }
 type ExitConfig struct {
-	DisasterStopPct             float64 `mapstructure:"DISASTER_STOP_PCT"`
-	ATRPeriod                   int     `mapstructure:"ATR_PERIOD"`
-	ATRTimeframe                string  `mapstructure:"ATR_TIMEFRAME"`
-	SignalFailOIDropPct         float64 `mapstructure:"SIGNAL_FAIL_OI_DROP_PCT"`
-	SignalFailPriceLowBufferPct float64 `mapstructure:"SIGNAL_FAIL_PRICE_LOW_BUFFER_PCT"`
-	TPStage1Pct                 float64 `mapstructure:"TP_STAGE1_PCT"`
-	TPStage1Ratio               float64 `mapstructure:"TP_STAGE1_RATIO"`
-	TPStage2Pct                 float64 `mapstructure:"TP_STAGE2_PCT"`
-	TPStage2Ratio               float64 `mapstructure:"TP_STAGE2_RATIO"`
-	TrailingActivatePct         float64 `mapstructure:"TRAILING_ACTIVATE_PCT"`
-	TrailingDistanceATRMult     float64 `mapstructure:"TRAILING_DISTANCE_ATR_MULT"`
-	SoftTimeoutHours            int     `mapstructure:"SOFT_TIMEOUT_HOURS"`
-	HardTimeoutHours            int     `mapstructure:"HARD_TIMEOUT_HOURS"`
+	DisasterStopPct             decimal.Decimal `mapstructure:"DISASTER_STOP_PCT"`
+	ATRPeriod                   int             `mapstructure:"ATR_PERIOD"`
+	ATRTimeframe                string          `mapstructure:"ATR_TIMEFRAME"`
+	SignalFailOIDropPct         decimal.Decimal `mapstructure:"SIGNAL_FAIL_OI_DROP_PCT"`
+	SignalFailPriceLowBufferPct decimal.Decimal `mapstructure:"SIGNAL_FAIL_PRICE_LOW_BUFFER_PCT"`
+	TPStage1Pct                 decimal.Decimal `mapstructure:"TP_STAGE1_PCT"`
+	TPStage1Ratio               decimal.Decimal `mapstructure:"TP_STAGE1_RATIO"`
+	TPStage2Pct                 decimal.Decimal `mapstructure:"TP_STAGE2_PCT"`
+	TPStage2Ratio               decimal.Decimal `mapstructure:"TP_STAGE2_RATIO"`
+	TrailingActivatePct         decimal.Decimal `mapstructure:"TRAILING_ACTIVATE_PCT"`
+	TrailingDistanceATRMult     decimal.Decimal `mapstructure:"TRAILING_DISTANCE_ATR_MULT"`
+	SoftTimeoutHours            int             `mapstructure:"SOFT_TIMEOUT_HOURS"`
+	HardTimeoutHours            int             `mapstructure:"HARD_TIMEOUT_HOURS"`
 }
 type RiskConfig struct {
-	DailyLossHaltPct         float64 `mapstructure:"DAILY_LOSS_HALT_PCT"`
-	ConsecutiveLossHaltCount int     `mapstructure:"CONSECUTIVE_LOSS_HALT_COUNT"`
-	ConsecutiveLossHaltHours int     `mapstructure:"CONSECUTIVE_LOSS_HALT_HOURS"`
-	BTCCrashHaltPct          float64 `mapstructure:"BTC_CRASH_HALT_PCT"`
-	BTCCrashHaltMinutes      int     `mapstructure:"BTC_CRASH_HALT_MINUTES"`
-	TotalFloatLossHaltPct    float64 `mapstructure:"TOTAL_FLOAT_LOSS_HALT_PCT"`
-	APIErrorRateLimit        int     `mapstructure:"API_ERROR_RATE_LIMIT"`
+	DailyLossHaltPct         decimal.Decimal `mapstructure:"DAILY_LOSS_HALT_PCT"`
+	ConsecutiveLossHaltCount int             `mapstructure:"CONSECUTIVE_LOSS_HALT_COUNT"`
+	ConsecutiveLossHaltHours int             `mapstructure:"CONSECUTIVE_LOSS_HALT_HOURS"`
+	BTCCrashHaltPct          decimal.Decimal `mapstructure:"BTC_CRASH_HALT_PCT"`
+	BTCCrashHaltMinutes      int             `mapstructure:"BTC_CRASH_HALT_MINUTES"`
+	TotalFloatLossHaltPct    decimal.Decimal `mapstructure:"TOTAL_FLOAT_LOSS_HALT_PCT"`
+	APIErrorRateLimit        int             `mapstructure:"API_ERROR_RATE_LIMIT"`
 }
 type CollectorConfig struct {
-	OIConcurrency            int `mapstructure:"OI_COLLECTOR_CONCURRENCY"`
-	SquareHashtagConcurrency int `mapstructure:"SQUARE_HASHTAG_CONCURRENCY"`
+	OIConcurrency int `mapstructure:"OI_COLLECTOR_CONCURRENCY"`
 }
 
 // Load reads .env (if present) and environment variables, applies defaults,
@@ -152,6 +156,11 @@ func Load() (*Config, error) {
 	)), func(dc *mapstructure.DecoderConfig) { dc.WeaklyTypedInput = true }); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+
+	// Derived Duration fields: env var carries unit in its name.
+	c.Square.HashtagTimeout = time.Duration(v.GetInt("SQUARE_HASHTAG_TIMEOUT_SECONDS")) * time.Second
+	c.Square.HashtagRetryInterval = time.Duration(v.GetInt("SQUARE_HASHTAG_RETRY_INTERVAL_MS")) * time.Millisecond
+	c.Square.HashtagBatchDeadline = time.Duration(v.GetInt("SQUARE_HASHTAG_BATCH_DEADLINE_MINUTES")) * time.Minute
 
 	var err error
 	if c.AppLocation, err = time.LoadLocation(c.TZ); err != nil {
@@ -195,6 +204,12 @@ func setDefaults(v *viper.Viper) {
 		"BINANCE_PROXY_FAILURE_THRESHOLD": 5, "BINANCE_PROXY_RECOVERY_MINUTES": 5,
 		"HTTP_PORT": 8080, "DASHBOARD_PORT": 3000,
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
+		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_VOLUME_USD": "10000000",
+		"SQUARE_HASHTAG_CONCURRENCY":            10,
+		"SQUARE_HASHTAG_RETRY_COUNT":            2,
+		"SQUARE_HASHTAG_TIMEOUT_SECONDS":        8,
+		"SQUARE_HASHTAG_RETRY_INTERVAL_MS":      1000,
+		"SQUARE_HASHTAG_BATCH_DEADLINE_MINUTES": 4,
 	} {
 		v.SetDefault(k, val)
 	}
