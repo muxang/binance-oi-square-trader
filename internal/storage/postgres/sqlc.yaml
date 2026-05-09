@@ -14,3 +14,15 @@ sql:
         package:     gen
         out:         ./gen
         sql_package: pgx/v5
+        # Map all NUMERIC columns to shopspring/decimal.Decimal — money-safety
+        # path (CLAUDE.md §19). Default sqlc maps numeric → pgtype.Numeric
+        # which is awkward for arithmetic; decimal.Decimal is the project's
+        # canonical money type.
+        overrides:
+          - db_type: pg_catalog.numeric
+            go_type:
+              import: github.com/shopspring/decimal
+              package: decimal
+              type:    Decimal
+          - db_type: timestamptz
+            go_type: time.Time

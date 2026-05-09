@@ -97,8 +97,14 @@ func run() error {
 	}
 	log.Info().Msg("redis ready")
 
-	// 8c. Collector runner. Empty registry at 1.0 — T1-T7 register here in 1.1+.
+	// 8c. Collector runner. T1 (OI history) registered in 1.1; T2-T7 follow in 1.2+.
 	runner := collector.New(log)
+	oiCol := collector.NewOICollector(client, pgPool, log, collector.OICollectorConfig{
+		Concurrency: cfg.Collector.OIConcurrency,
+	})
+	if err := runner.Register(oiCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register oi collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.

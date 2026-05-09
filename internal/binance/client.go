@@ -101,9 +101,9 @@ func New(cfg *config.Config, proxy ProxyManager, limiter RateLimiter, log zerolo
 	return c, nil
 }
 
-// doRead issues a signed GET against the read base (production in either mode).
+// DoRead issues a signed GET against the read base (production in either mode).
 // All read paths are weight-counted via the limiter.
-func (c *Client) doRead(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
+func (c *Client) DoRead(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
 	return c.doRequest(ctx, http.MethodGet, c.restBaseRead, path, params, weight)
 }
 

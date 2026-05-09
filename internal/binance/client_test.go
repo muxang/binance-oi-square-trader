@@ -150,7 +150,7 @@ func TestNew_RejectsUnknownMode(t *testing.T) {
 func TestDoRead_GoesToMainnet_InTestnetMode(t *testing.T) {
 	fp := newFakeProxy()
 	c := mustNewTestnet(t, fp)
-	_, err := c.doRead(context.Background(), "/fapi/v1/exchangeInfo", nil, 1)
+	_, err := c.DoRead(context.Background(), "/fapi/v1/exchangeInfo", nil, 1)
 	require.NoError(t, err)
 	require.Len(t, fp.rec.requests, 1)
 	assert.Equal(t, "fapi.binance.com", fp.rec.requests[0].URL.Host)
@@ -230,7 +230,7 @@ func TestDoRequest_GET_SignsInQueryString(t *testing.T) {
 	c.nowFunc = func() time.Time { return time.Unix(0, 1499827319559*int64(time.Millisecond)) }
 	v := url.Values{}
 	v.Set("symbol", "BTCUSDT")
-	_, err := c.doRead(context.Background(), "/fapi/v1/ping", v, 1)
+	_, err := c.DoRead(context.Background(), "/fapi/v1/ping", v, 1)
 	require.NoError(t, err)
 	require.Len(t, fp.rec.requests, 1)
 	q := fp.rec.requests[0].URL.RawQuery
@@ -256,7 +256,7 @@ func TestDoRequest_5XX_TriggersReportFailure(t *testing.T) {
 	fp := newFakeProxy()
 	fp.rec.status = 503
 	c := mustNewTestnet(t, fp)
-	_, err := c.doRead(context.Background(), "/fapi/v1/ping", nil, 1)
+	_, err := c.DoRead(context.Background(), "/fapi/v1/ping", nil, 1)
 	require.Error(t, err)
 	assert.Equal(t, 1, fp.failures, "5XX must call ReportFailure")
 	assert.Equal(t, 0, fp.successes)
@@ -265,7 +265,7 @@ func TestDoRequest_5XX_TriggersReportFailure(t *testing.T) {
 func TestDoRequest_200_TriggersReportSuccess(t *testing.T) {
 	fp := newFakeProxy()
 	c := mustNewTestnet(t, fp)
-	_, err := c.doRead(context.Background(), "/fapi/v1/ping", nil, 1)
+	_, err := c.DoRead(context.Background(), "/fapi/v1/ping", nil, 1)
 	require.NoError(t, err)
 	assert.Equal(t, 0, fp.failures)
 	assert.Equal(t, 1, fp.successes)
