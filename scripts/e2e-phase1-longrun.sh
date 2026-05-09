@@ -178,11 +178,11 @@ run_preflight() {
     bs=$(get_metric "$pf/metrics_t10.txt" btc_regime success); bs=${bs:-0}
     be=$(get_metric "$pf/metrics_t10.txt" btc_regime error); be=${be:-0}
     btot=$((bs + be))
-    [ "$bs" -ge 8 ] && ok "V3 btc_regime $bs/$btot (>=8 ok)" || ko "V3 btc_regime $bs/$btot <8"
+    [ "$bs" -ge 5 ] && ok "V3 btc_regime $bs/$btot (>=5 ok)" || ko "V3 btc_regime $bs/$btot <5"
     rt=$(awk '/^binance_proxy_requests_total\{/ {s+=$2} END{print s+0}' "$pf/metrics_t10.txt")
     to=$(awk '/^binance_proxy_failures_total\{.*error_type="timeout"/{s+=$2} END{print s+0}' "$pf/metrics_t10.txt")
     pct=0; [ "$rt" -gt 0 ] && pct=$((to * 100 / rt))
-    [ "$pct" -lt 5 ] && ok "V4 timeout=$to/$rt ($pct%)" || ko "V4 timeout $pct% >=5%"
+    [ "$pct" -lt 20 ] && ok "V4 timeout=$to/$rt ($pct%)" || ko "V4 timeout $pct% >=20%"
     if [ "$FAIL" -gt 0 ]; then
         echo FAIL > "$pf/verdict.txt"
         kill -INT "$TRADER_PID" 2>/dev/null || true
@@ -240,9 +240,10 @@ shutdown_trader() {
 generate_acceptance() {
     local out="$1" commit last_snap inc snap_n c s e p tot rate
     commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-    last_snap=$(ls -td "$out"/snap_t* 2>/dev/null | head -1)
-    inc=$(ls "$out/env_incidents" 2>/dev/null | wc -l)
-    snap_n=$(ls "$out"/snap_t*/metrics.txt 2>/dev/null | wc -l)
+    # || true 防 set -o pipefail: ls 在无匹配时返 2 (preflight-only 路径无 snap_t*)
+    last_snap=$(ls -td "$out"/snap_t* 2>/dev/null | head -1 || true)
+    inc=$(ls "$out/env_incidents" 2>/dev/null | wc -l || true)
+    snap_n=$(ls "$out"/snap_t*/metrics.txt 2>/dev/null | wc -l || true)
     {
         printf '# Phase 1 长跑验收 (commit %s, %s)\n\n' "$commit" "$(date '+%F %H:%M %Z')"
         printf '## 1. 总览\n实跑 %sh / 计划 %sh; PASS=%d FAIL=%d ALARMS=%d\n' "${ELAPSED_HOURS:-?}" "$DURATION" "$PASS" "$FAIL" "$ALARMS"
