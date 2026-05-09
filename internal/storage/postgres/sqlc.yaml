@@ -1,0 +1,16 @@
+version: "2"
+
+# sqlc generates type-safe Go from raw SQL. Run via `make sqlc`. CI runs
+# `make sqlc-check` to assert the generated code is in sync with the source.
+#
+# Layout: schema files under ./migrations (read by sqlc only for column types),
+# queries under ./queries (one .sql per table), generated code under ./gen.
+sql:
+  - schema:  ./migrations
+    queries: ./queries
+    engine:  postgresql
+    gen:
+      go:
+        package:     gen
+        out:         ./gen
+        sql_package: pgx/v5

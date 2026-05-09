@@ -23,8 +23,10 @@ import (
 	"trader/internal/api"
 	"trader/internal/api/handlers"
 	"trader/internal/binance"
+	"trader/internal/collector"
 	"trader/internal/config"
 	"trader/internal/pkg/logger"
+	"trader/internal/pkg/ratelimit"
 	"trader/internal/pkg/timez"
 )
 
@@ -57,7 +59,12 @@ func run() error {
 	}
 	log.Info().Str("mode", cfg.Proxy.Mode).Msg("proxy manager ready")
 
-	limiter := binance.NewNoopRateLimiter()
+	// Token bucket: 80% of Binance IP weight (2400/min) → 1920 burst, 32/sec
+	// refill (ARCHITECTURE §9). Replaces the Phase 0 noop without changing the
+	// binance.RateLimiter contract.
+	limiter := ratelimit.NewTokenBucket(1920, 32)
+	log.Info().Int("capacity", 1920).Int("refill_per_sec", 32).Msg("rate limiter ready")
+
 	client, err := binance.New(cfg, proxy, limiter, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("binance client init failed")
@@ -89,6 +96,10 @@ func run() error {
 		log.Fatal().Err(err).Msg("redis ping failed")
 	}
 	log.Info().Msg("redis ready")
+
+	// 8c. Collector runner. Empty registry at 1.0 — T1-T7 register here in 1.1+.
+	runner := collector.New(log)
+	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.
 	deps := handlers.HealthDeps{
@@ -123,6 +134,9 @@ func run() error {
 		log.Error().Err(err).Msg("http server shutdown failed")
 	}
 	log.Info().Msg("http server stopped")
+	if err := runner.Stop(10 * time.Second); err != nil {
+		log.Error().Err(err).Msg("collector runner stop failed")
+	}
 	if err := rdb.Close(); err != nil {
 		log.Error().Err(err).Msg("redis close failed")
 	}
