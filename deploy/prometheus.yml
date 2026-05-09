@@ -11,10 +11,11 @@ scrape_configs:
 
   # 开发期: trader 跑在 host 上, 通过 host.docker.internal 访问
   # 生产期: 同时存在 trader 容器(走容器名), 一份 job 两条 target 都 scrape
+  # 注: trader /metrics 走独立 :2112 (与 Dashboard :8080 隔离), 见 cmd/trader/main.go
   - job_name: 'trader-host'
     metrics_path: /metrics
     static_configs:
-      - targets: ['host.docker.internal:8080']
+      - targets: ['host.docker.internal:2112']
         labels:
           service: 'trader'
           source: 'host'
@@ -22,7 +23,7 @@ scrape_configs:
   - job_name: 'trader-container'
     metrics_path: /metrics
     static_configs:
-      - targets: ['trader:8080']
+      - targets: ['trader:2112']
         labels:
           service: 'trader'
           source: 'container'
