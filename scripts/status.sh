@@ -43,20 +43,20 @@ printf "  deploy/data:  %s\n  backups/:     %s\n" "${DATA_SIZE:-N/A}" "${BACKUP_
 # Falls back to docker logs --tail if Prometheus is unreachable.
 section "Activity (last 5min, 9 collectors)"
 _PROM='http://localhost:9090/api/v1/query'
-_QUERY='round(increase(trader_collector_runs_total{outcome="success"}[5m]))'
+_QUERY='round(increase(trader_collector_runs_total[5m]))'
 if PROM_RESP=$(curl -fsG --max-time 3 --data-urlencode "query=${_QUERY}" "$_PROM" 2>/dev/null); then
-    echo "$PROM_RESP" | python3 - <<'PYEOF'
+    echo "$PROM_RESP" | python3 -c '
 import json, sys
-COLLECTORS = ['oi','btc_regime','klines','square_feed','square_hashtag',
-              'watchlist','position_price','signal_engine','decision_engine']
+COLS = ["oi","btc_regime","klines","square_feed","square_hashtag",
+        "watchlist","position_price","signal_engine","decision_engine"]
 try:
-    counts = {r['metric']['collector']: int(float(r['value'][1]))
-              for r in json.load(sys.stdin)['data']['result']}
+    counts = {r["metric"]["collector"]: int(float(r["value"][1]))
+              for r in json.load(sys.stdin)["data"]["result"]}
 except Exception:
     counts = {}
-for c in COLLECTORS:
-    print(f"  {c:<18} {counts.get(c, 0)} ticks")
-PYEOF
+for c in COLS:
+    print("  {:<18} {} ticks".format(c, counts.get(c, 0)))
+'
 else
     # fallback: docker logs tail (--since unreliable in some docker compose versions)
     LOGS=$($COMPOSE logs --tail=500 trader 2>/dev/null)
