@@ -59,5 +59,9 @@ services:
     depends_on:
       - trader
 
+  grafana:
+    env_file:
+      - ../.env   # 注入 GF_SERVER_ROOT_URL=https://$DOMAIN/grafana/
+
   # Dashboard 静态文件由 caddy 直接 serve, 不单独起容器
   # 如需要单独前端容器, 在此追加 dashboard service

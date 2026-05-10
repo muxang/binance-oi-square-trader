@@ -99,6 +99,8 @@ services:
       # changeme = obvious placeholder, bootstrap.sh REQUIRED_VARS 强制 .env 填真值
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-changeme}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # GF_SERVER_ROOT_URL 由生产 .env 通过 docker-compose.prod.yml env_file 注入
     ports:
       - "127.0.0.1:3001:3000"
     volumes:
