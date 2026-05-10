@@ -164,6 +164,8 @@ ok "VPS 时区: $(timedatectl show -p Timezone --value)"
 step "准备数据目录"
 mkdir -p deploy/data/{postgres,redis,prometheus,loki,grafana,caddy,caddy-config}
 mkdir -p backups
+# prometheus(65534)/grafana(472)/loki(10001) 以非 root 运行, 需要写权限
+chmod -R 777 deploy/data/
 ok "数据目录就绪"
 
 # -----------------------------------------------------------------------------
