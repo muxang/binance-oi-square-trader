@@ -1,5 +1,6 @@
 # Binary
 bin/
+/trader
 *.exe
 *.dll
 *.so
