@@ -92,6 +92,7 @@ services:
     image: grafana/grafana:latest
     container_name: trader-grafana
     restart: unless-stopped
+    user: "0:0"   # Grafana 12.x background-installer needs root to patch bundled plugins
     environment:
       <<: *tz
       GF_SECURITY_ADMIN_USER: admin
