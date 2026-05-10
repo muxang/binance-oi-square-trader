@@ -57,21 +57,61 @@
   · 当前 5min 收盘价 > 60min 前价格 (不接顶保护, SPEC 追加)
 ```
 
-#### 辅助信号:Square 热度上升
+#### 辅助信号:Square 热度上升(自适应曲率判定)
+
+> v0.1 算法 — Phase 2 设计阶段重构:hot 判定从"单条件幅度阈值"升级为"形态识别"。
+> 区分爆发型(病毒式扩散,行情起步)/ 线性型(持续讨论)/ 衰减型(过顶反向),仅爆发型 → hot=true。
+> 所有阈值参数为 v0.1 经验值,Phase 2 内 forward 跑数据后 v0.2 校准。
+
+##### 数据来源
+
+T3 SquareHashtagCollector **全采集 ~530 USDT 永续 symbols**(15min cron,非池内),
+写入 `square_hashtag_history(symbol, ts, content_count, view_count)`。
+全采集让池子动态进出时新入池 symbol 立即拿到完整历史,不再因数据不足永远 fallback。
+
+##### 数学定义
+
+某 symbol 评估时刻有 N 个 15min 采样,序列 `c[1..N]` 为 content_count:
 
 ```
-对监控池每个 symbol 调 queryByHashtag, 5min 一次
-跟踪 contentCount 时间序列
-
-hot 判定:
-  · 取该 symbol 最近 24h 的 contentCount 时序
-  · 计算每个 60min 滑窗的增量
-  · 若当前 60min 增量 > 该 symbol 24h 增量中位数 × 2 → hot=true
-  · 数据不足 24h(刚入池) → hot=false (fallback)
+60min 滑窗增量:  Δᵢ = c[i] − c[i−4]   (i ≥ 5,4 个 15min 拼 1 个 60min)
+15min 增量:      δᵢ = c[i] − c[i−1]    (短窗用)
+一阶差分:        Δ'ⱼ = Δⱼ − Δⱼ₋₁
+二阶差分:        Δ''ₖ = Δ'ₖ − Δ'ₖ₋₁
+二阶差分正数比例: pos_ratio = count(Δ'' > 0) / len(Δ'')
+近远比:          ratio = recent_avg / baseline_median
 ```
 
-> 算法锚定 `references/user-snippets/square-discussion.py` 的接口调用方式;
-> 时序统计逻辑由本项目实现。
+`baseline_median = 0` 时 ratio 降级为 0(走 fallback)。
+
+##### 自适应窗口与判定条件
+
+| 模式 | 数据跨度 | 采样数 | 增量序列 | recent K | baseline | ratio 阈值 | 二阶差分窗口 | accel 阈值 | hot 条件 |
+|---|---|---|---|---|---|---|---|---|---|
+| **标准** | ≥ 24h | ≥ 96 | 60min Δ | 3 | 24h 内除最近 K 个 Δ 中位数 | 2.0 | 最近 6 Δ | 0.6 | ratio AND accel |
+| **中窗** | 6–24h | 24–96 | 60min Δ | 3 | 全部除最近 K 个 Δ 中位数 | 2.0 | 最近 4 Δ | 0.6 | ratio AND accel |
+| **短窗** | 2–6h | 8–24 | 15min δ | 6 | 全部除最近 K 个 δ 中位数 | 2.5 | (跳过)| — | ratio only |
+| **fallback** | < 2h | < 8 | — | — | — | — | — | — | hot = **false** |
+
+##### 阈值参数(v0.1,配置化,待真数据校准)
+
+```
+SIGNAL_HOT_STANDARD_RATIO_THRESHOLD=2.0
+SIGNAL_HOT_STANDARD_ACCELERATION_THRESHOLD=0.6
+SIGNAL_HOT_MEDIUM_RATIO_THRESHOLD=2.0
+SIGNAL_HOT_MEDIUM_ACCELERATION_THRESHOLD=0.6
+SIGNAL_HOT_SHORT_RATIO_THRESHOLD=2.5
+SIGNAL_HOT_MIN_DATA_POINTS=8           # 短窗下限,= 2h × 4/h
+```
+
+> 注:上述 `#` 行内注释仅 SPEC 文档说明,实际 `.env` / `.env.example` 行尾禁加注释(Phase 0 viper `825d5d3` 修复约定)。
+
+> v0.1 模式切换无 hysteresis:从短窗→中窗会加二阶差分要求,瞬间 hot 可能从 true→false。
+> 这是 feature(算法置信度提升)非 bug,Phase 2 forward 跑数据后 v0.2 决定是否平滑切换。
+
+##### 接口调用
+
+接口调用方式锚定 `references/user-snippets/square-discussion.py`;时序统计 + 自适应判定由本项目实现。
 
 #### 入场决策
 
@@ -194,7 +234,7 @@ OI 不触发            → 不交易
 |---|---|---|---|
 | T1 OI 全量扫描 | 5min | 全部 USDT 永续 | period=5m, limit=15 |
 | T2 Square 推荐流 | 1h | feed-recommend, 8 次分页 ≤100 帖 | cashtag 发现 |
-| T3 Square 热度跟踪 | 5min | queryByHashtag, 池内每币 | 时序入库;走代理(`SQUARE_USE_PROXY=true`),并发 10,单币重试 2 次,整轮 4min 硬超时,失败的币本轮跳过下轮补 |
+| T3 Square 热度跟踪 | 15min | queryByHashtag, **全 USDT 永续** | 时序入库 — Phase 2 v0.1 改全采集 + 15min,服务于 hot 自适应判定(§辅助信号);走代理(`SQUARE_USE_PROXY=true`),并发 10,单币重试 2 次,整轮 4min 硬超时,失败的币本轮跳过下轮补 |
 | T4 监控池刷新 | 1h | 合并 A/B/C/D + 过滤 | 上限 150 |
 | T5 持仓价格追踪 | 60s | 已开仓币种 ticker/price | 30s 实现待 robfig/cron SecondOptional 启用,Phase 2/3 决定 |
 | T6 BTC regime | 1min | BTCUSDT 5min K 线跌幅 | 黑天鹅熔断 |
