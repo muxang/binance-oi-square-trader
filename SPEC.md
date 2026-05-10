@@ -38,6 +38,8 @@
 
 每个 symbol 入池时打 source 标签 `['square','oi','price','position']`,可同时多源。
 
+> **WatchlistConfig env 映射**:实现层 cfg 字段名(`MinQuoteVolume` / `MinListingDays`)与 env 命名(`WATCHLIST_MIN_VOLUME_USD` / `WATCHLIST_MIN_LIST_DAYS`)通过 `cmd/trader/main.go` wire-up 显式映射,双命名共存。
+
 ---
 
 ### 信号(每 5 min 评估池中所有币种)
@@ -194,7 +196,7 @@ OI 不触发            → 不交易
 | T2 Square 推荐流 | 1h | feed-recommend, 8 次分页 ≤100 帖 | cashtag 发现 |
 | T3 Square 热度跟踪 | 5min | queryByHashtag, 池内每币 | 时序入库;走代理(`SQUARE_USE_PROXY=true`),并发 10,单币重试 2 次,整轮 4min 硬超时,失败的币本轮跳过下轮补 |
 | T4 监控池刷新 | 1h | 合并 A/B/C/D + 过滤 | 上限 150 |
-| T5 持仓价格追踪 | 30s | 已开仓币种 ticker/price | |
+| T5 持仓价格追踪 | 60s | 已开仓币种 ticker/price | 30s 实现待 robfig/cron SecondOptional 启用,Phase 2/3 决定 |
 | T6 BTC regime | 1min | BTCUSDT 5min K 线跌幅 | 黑天鹅熔断 |
 | T7 K 线 + ATR 缓存 | 5min | 池内每币 15min K 线 | ATR(14) + EMA(20) |
 
