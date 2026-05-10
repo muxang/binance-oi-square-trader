@@ -12,6 +12,57 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getRecentEnteredSignals = `-- name: GetRecentEnteredSignals :many
+SELECT id, ts, symbol, oi_triggered, oi_data, square_hot, square_data, decision
+FROM signals
+WHERE ts > $1
+  AND decision IN ('entered_full', 'entered_half')
+ORDER BY ts ASC
+`
+
+type GetRecentEnteredSignalsRow struct {
+	ID          int64
+	Ts          time.Time
+	Symbol      string
+	OiTriggered bool
+	OiData      []byte
+	SquareHot   bool
+	SquareData  []byte
+	Decision    string
+}
+
+// Phase 3 decision engine reads "fresh entered_full / entered_half" signals
+// in the last 5 min window. ts ASC so caller processes in arrival order
+// (Phase 3 v0.1 FIFO priority). Hits signals_ts_desc_idx in reverse-scan.
+func (q *Queries) GetRecentEnteredSignals(ctx context.Context, ts time.Time) ([]GetRecentEnteredSignalsRow, error) {
+	rows, err := q.db.Query(ctx, getRecentEnteredSignals, ts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecentEnteredSignalsRow
+	for rows.Next() {
+		var i GetRecentEnteredSignalsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ts,
+			&i.Symbol,
+			&i.OiTriggered,
+			&i.OiData,
+			&i.SquareHot,
+			&i.SquareData,
+			&i.Decision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertSignal = `-- name: InsertSignal :exec
 INSERT INTO signals (
     ts, symbol, oi_triggered, oi_data, square_hot, square_data, decision, rejection_reason

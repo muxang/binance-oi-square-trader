@@ -9,7 +9,23 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	decimal "github.com/shopspring/decimal"
 )
+
+const countActiveTrades = `-- name: CountActiveTrades :one
+SELECT COUNT(*) FROM trades
+WHERE status IN ('entering', 'open', 'partial')
+`
+
+// Phase 3 decision engine 仓位上限检查 (SPEC §仓位规则 ≤ 5).
+// 'entering' (Phase 3 写入) / 'open' / 'partial' 都算 active.
+// Hits trades_status_entry_ts_desc_idx.
+func (q *Queries) CountActiveTrades(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveTrades)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const getOpenTrades = `-- name: GetOpenTrades :many
 SELECT id, symbol, direction, entry_price, entry_ts, status
@@ -56,4 +72,64 @@ func (q *Queries) GetOpenTrades(ctx context.Context) ([]GetOpenTradesRow, error)
 		return nil, err
 	}
 	return items, nil
+}
+
+const hasRecent24hTradeForSymbol = `-- name: HasRecent24hTradeForSymbol :one
+SELECT EXISTS(
+  SELECT 1 FROM trades
+  WHERE symbol = $1
+    AND entry_ts IS NOT NULL
+    AND entry_ts > $2
+)
+`
+
+type HasRecent24hTradeForSymbolParams struct {
+	Symbol  string
+	EntryTs pgtype.Timestamptz
+}
+
+// Phase 3 决策引擎 24h 不二次入场过滤 (SPEC §仓位规则 L191 + §全局过滤 L205).
+// 任一 active OR closed 的 trade 在 24h 内开过 → skip 该 symbol.
+// $1 = symbol, $2 = cutoff_ts (NOW() - INTERVAL '24h' from caller).
+// Hits trades_symbol_status_idx (symbol prefix).
+func (q *Queries) HasRecent24hTradeForSymbol(ctx context.Context, arg HasRecent24hTradeForSymbolParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRecent24hTradeForSymbol, arg.Symbol, arg.EntryTs)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const insertEnteringTrade = `-- name: InsertEnteringTrade :one
+INSERT INTO trades (
+    signal_id, symbol, direction, margin, notional, leverage, status
+) VALUES (
+    $1, $2, $3, $4, $5, $6, 'entering'
+)
+RETURNING id
+`
+
+type InsertEnteringTradeParams struct {
+	SignalID  pgtype.Int8
+	Symbol    string
+	Direction string
+	Margin    decimal.Decimal
+	Notional  decimal.Decimal
+	Leverage  int16
+}
+
+// Phase 3 写入决策记录, status='entering'. Phase 4 真下单后 UPDATE 填
+// entry_ts / entry_price / binance_position_id / status='open'.
+// Returns id so caller can log + future Phase 4 references.
+func (q *Queries) InsertEnteringTrade(ctx context.Context, arg InsertEnteringTradeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertEnteringTrade,
+		arg.SignalID,
+		arg.Symbol,
+		arg.Direction,
+		arg.Margin,
+		arg.Notional,
+		arg.Leverage,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
