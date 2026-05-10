@@ -232,8 +232,7 @@ shutdown_trader() {
         SHUTDOWN_ELAPSED_MS=$((t1 - t0))
         ok "shutdown: exit in ${SHUTDOWN_ELAPSED_MS}ms"
     fi
-    POST_SHUTDOWN_CURL=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:2112/metrics 2>/dev/null || echo 000)
-    [ "$POST_SHUTDOWN_CURL" = "000" ] && ok ":2112 closed" || ko ":2112 still serving (curl=$POST_SHUTDOWN_CURL)"
+    if curl -s -o /dev/null --max-time 3 http://localhost:2112/metrics 2>/dev/null; then POST_SHUTDOWN_CURL=serving; ko ":2112 still serving"; else POST_SHUTDOWN_CURL=closed; ok ":2112 closed"; fi
     TRADER_PID=""
 }
 
@@ -346,7 +345,7 @@ EOF
     local rc=0
     monitor_30min_loop "$OUTPUT_DIR" || rc=$?
     END_TS=$(date +%s)
-    ELAPSED_HOURS=$(echo "scale=2; ($END_TS-$START_TS)/3600" | bc)
+    ELAPSED_HOURS=$(awk -v s="$START_TS" -v e="$END_TS" 'BEGIN{printf "%.2f", (e-s)/3600}')
     step "Step 4: shutdown"; shutdown_trader
     step "Step 5: acceptance + archive"
     generate_acceptance "$OUTPUT_DIR"; archive_logs "$OUTPUT_DIR"
