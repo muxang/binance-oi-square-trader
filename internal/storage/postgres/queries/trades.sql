@@ -37,3 +37,18 @@ INSERT INTO trades (
     $1, $2, $3, $4, $5, $6, 'entering'
 )
 RETURNING id;
+
+-- name: HasRecent24hAttemptForSymbol :one
+-- Phase 3 v0.1 24h 不二次入场过滤 — 用 signals.ts JOIN (trades.entry_ts
+-- 在 'entering' 状态为 NULL, Phase 4 真下单后才填). signals.ts NOT NULL
+-- + trades.signal_id Phase 3 永远填 → 无遗漏. Phase 4 切回
+-- HasRecent24hTradeForSymbol (entry_ts 路径).
+-- $1 = symbol, $2 = cutoff_ts (caller passes NOW() - INTERVAL '24h').
+SELECT EXISTS(
+  SELECT 1 FROM trades t
+  JOIN signals s ON s.id = t.signal_id
+  WHERE t.symbol = $1
+    AND s.ts > $2
+    AND t.status IN ('entering', 'open', 'partial', 'closed')
+);
+
