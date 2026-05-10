@@ -1,14 +1,15 @@
-// T3 collector — hashtag engagement metrics for the monitoring pool. Reads
-// watchlist from Redis, queries Square BAPI per symbol (with retries),
-// writes (symbol, ts, content_count, view_count) into the time-series
-// table. Cron: */5; empty watchlist skips (T4 may not be running yet —
-// see ARCH §9.5 + SPEC §T3).
+// T3 collector — hashtag engagement metrics. Phase 2 v0.1 (commit 801d6e8):
+// 全采集 ~530 USDT 永续 (15min cron), 通过 SymbolService.ListSymbols 拿全
+// symbol, 服务于 §辅助信号 自适应 hot 判定 (新入池 symbol 立即拿到完整
+// 24h 历史, 不再因数据不足永远 fallback)。Phase 1 池内 5min 模式已废弃,
+// 不再依赖 watchlist:current。写 (symbol, ts, content_count, view_count)
+// 进 square_hashtag_history 时序表, 走代理 + 并发 10 + 单币重试 2 次。
+// 详见 SPEC.md §T3 + §辅助信号。
 
 package collector
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
 	"golang.org/x/sync/errgroup"
@@ -28,14 +28,20 @@ import (
 
 const queryByHashtagPath = "/bapi/composite/v4/friendly/pgc/content/queryByHashtag"
 
+// HashtagSymbolLister is the minimum surface SquareHashtagCollector needs
+// from SymbolService (CLAUDE.md §18 — accept interfaces in consumer).
+// *binance.SymbolService implements this implicitly via duck typing.
+type HashtagSymbolLister interface {
+	ListSymbols(ctx context.Context) ([]string, error)
+}
+
 type SquareHashtagConfig struct {
-	PerTickTimeout    time.Duration
-	PerSymbolTimeout  time.Duration
-	Concurrency       int
-	RetryCount        int
-	RetryInterval     time.Duration
-	HighFailureRate   float64
-	WatchlistRedisKey string
+	PerTickTimeout   time.Duration
+	PerSymbolTimeout time.Duration
+	Concurrency      int
+	RetryCount       int
+	RetryInterval    time.Duration
+	HighFailureRate  float64
 }
 
 type hashtagResult struct {
@@ -45,30 +51,29 @@ type hashtagResult struct {
 	err          error
 }
 
-// SquareHashtagCollector implements T3 — see file header. Empty watchlist
-// is the expected state pre-1.6 (T4 not yet running) and during Redis
-// outages: skip-with-warn rather than fall back to seed data, so a Redis
-// failure can't silently feed wrong symbols into Phase 2 hot judgement.
+// SquareHashtagCollector implements T3. Phase 2 v0.1: 全采集 + 15min cron
+// (see file header). symbolService 返空只在 SymbolService 异常时发生 —
+// 不是正常状态, 视为 error 上抛而非 silently skip。
 type SquareHashtagCollector struct {
-	client  *square.SquareClient
-	redis   *redis.Client
-	pool    *pgxpool.Pool
-	queries *gen.Queries
-	log     zerolog.Logger
-	cfg     SquareHashtagConfig
-	nowFunc func() time.Time
+	client        *square.SquareClient
+	symbolService HashtagSymbolLister
+	pool          *pgxpool.Pool
+	queries       *gen.Queries
+	log           zerolog.Logger
+	cfg           SquareHashtagConfig
+	nowFunc       func() time.Time
 }
 
-func NewSquareHashtagCollector(client *square.SquareClient, rdb *redis.Client, pool *pgxpool.Pool, log zerolog.Logger, cfg SquareHashtagConfig) *SquareHashtagCollector {
+func NewSquareHashtagCollector(client *square.SquareClient, symbolService HashtagSymbolLister, pool *pgxpool.Pool, log zerolog.Logger, cfg SquareHashtagConfig) *SquareHashtagCollector {
 	cfg = squareHashtagDefaults(cfg)
 	return &SquareHashtagCollector{
-		client:  client,
-		redis:   rdb,
-		pool:    pool,
-		queries: gen.New(pool),
-		log:     log,
-		cfg:     cfg,
-		nowFunc: timez.NowUTC,
+		client:        client,
+		symbolService: symbolService,
+		pool:          pool,
+		queries:       gen.New(pool),
+		log:           log,
+		cfg:           cfg,
+		nowFunc:       timez.NowUTC,
 	}
 }
 
@@ -91,9 +96,6 @@ func squareHashtagDefaults(cfg SquareHashtagConfig) SquareHashtagConfig {
 	if cfg.HighFailureRate == 0 {
 		cfg.HighFailureRate = 0.30
 	}
-	if cfg.WatchlistRedisKey == "" {
-		cfg.WatchlistRedisKey = "watchlist:current"
-	}
 	return cfg
 }
 
@@ -103,13 +105,14 @@ func (c *SquareHashtagCollector) Run(ctx context.Context) error {
 	tickCtx, cancel := context.WithTimeout(ctx, c.cfg.PerTickTimeout)
 	defer cancel()
 
-	symbols, err := c.readWatchlist(tickCtx)
+	symbols, err := c.symbolService.ListSymbols(tickCtx)
 	if err != nil {
-		return fmt.Errorf("read watchlist: %w", err)
+		return fmt.Errorf("list symbols: %w", err)
 	}
 	if len(symbols) == 0 {
-		c.log.Warn().Msg("square_hashtag: watchlist empty — T3 skipped (T4 not running or redis issue)")
-		return nil
+		// 全采集模式下 ListSymbols 返空 = SymbolService 异常 (cache 没刷或上游故障),
+		// 不是正常状态 (Phase 1 watchlist 空才是正常),应 error 让 runner 计 metric。
+		return errors.New("square_hashtag: SymbolService returned 0 symbols (cache miss or upstream error)")
 	}
 
 	results := c.fetchConcurrent(tickCtx, symbols)
@@ -125,23 +128,6 @@ func (c *SquareHashtagCollector) Run(ctx context.Context) error {
 		c.log.Warn().Float64("failure_rate", failureRate).Msg("square_hashtag high failure rate")
 	}
 	return nil
-}
-
-// readWatchlist fetches the current pool from Redis. redis.Nil (key
-// absent) returns empty slice, not error — callers gracefully skip.
-func (c *SquareHashtagCollector) readWatchlist(ctx context.Context) ([]string, error) {
-	val, err := c.redis.Get(ctx, c.cfg.WatchlistRedisKey).Result()
-	if errors.Is(err, redis.Nil) {
-		return []string{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var symbols []string
-	if err := json.Unmarshal([]byte(val), &symbols); err != nil {
-		return nil, fmt.Errorf("unmarshal watchlist: %w", err)
-	}
-	return symbols, nil
 }
 
 func (c *SquareHashtagCollector) fetchConcurrent(ctx context.Context, symbols []string) []hashtagResult {

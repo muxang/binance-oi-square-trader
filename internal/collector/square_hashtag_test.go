@@ -2,7 +2,6 @@ package collector
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,12 +26,24 @@ func hashtagBody(contentCount, viewCount int64) string {
 	return fmt.Sprintf(`{"code":"000000","data":{"hashtag":{"contentCount":%d,"viewCount":%d}}}`, contentCount, viewCount)
 }
 
+// fakeSymbolLister implements HashtagSymbolLister; tests inject a fixed
+// symbol slice or err to drive Run() through both happy + error paths.
+type fakeSymbolLister struct {
+	symbols []string
+	err     error
+}
+
+func (f *fakeSymbolLister) ListSymbols(_ context.Context) ([]string, error) {
+	return f.symbols, f.err
+}
+
 // newHashtagCollector wires a SquareHashtagCollector. srv=nil → no client
-// (readWatchlist-only tests). db=nil → no queries (non-DB tests).
+// (parser-only tests). db=nil → no queries (non-DB tests). symbols=nil → no
+// SymbolService (fetchSingleHashtag / parseHashtagResponse tests skip Run()).
 // RetryInterval is 1ms (vs 1s prod) so retry tests stay fast.
 // Reuses 1.4 helpers from square_feed_test.go: squareTestProxy /
 // noopLimiter / squareTestServer / fakeDBTX (same package).
-func newHashtagCollector(t *testing.T, srv *httptest.Server, db gen.DBTX) *SquareHashtagCollector {
+func newHashtagCollector(t *testing.T, srv *httptest.Server, db gen.DBTX, symbols []string) *SquareHashtagCollector {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -47,11 +58,15 @@ func newHashtagCollector(t *testing.T, srv *httptest.Server, db gen.DBTX) *Squar
 	if db != nil {
 		queries = gen.New(db)
 	}
+	var sl HashtagSymbolLister
+	if symbols != nil {
+		sl = &fakeSymbolLister{symbols: symbols}
+	}
 	return &SquareHashtagCollector{
-		client:  sc,
-		redis:   rdb,
-		queries: queries,
-		log:     zerolog.Nop(),
+		client:        sc,
+		symbolService: sl,
+		queries:       queries,
+		log:           zerolog.Nop(),
 		cfg: squareHashtagDefaults(SquareHashtagConfig{
 			RetryInterval:    1 * time.Millisecond,
 			PerSymbolTimeout: 500 * time.Millisecond,
@@ -61,41 +76,21 @@ func newHashtagCollector(t *testing.T, srv *httptest.Server, db gen.DBTX) *Squar
 	}
 }
 
-func setWatchlist(t *testing.T, c *SquareHashtagCollector, symbols []string) {
-	t.Helper()
-	b, _ := json.Marshal(symbols)
-	require.NoError(t, c.redis.Set(context.Background(), c.cfg.WatchlistRedisKey, b, 0).Err())
+// --- Run, SymbolService error paths (2) ---
+
+func TestSquareHashtagRun_SymbolServiceError_BubblesUp(t *testing.T) {
+	c := newHashtagCollector(t, nil, nil, nil)
+	c.symbolService = &fakeSymbolLister{err: errors.New("upstream cache miss")}
+	err := c.Run(context.Background())
+	require.Error(t, err, "ListSymbols error must surface, not silently skip")
+	assert.Contains(t, err.Error(), "list symbols")
 }
 
-// --- readWatchlist (3) ---
-
-func TestSquareHashtag_ReadWatchlist_NormalKey(t *testing.T) {
-	c := newHashtagCollector(t, nil, nil)
-	setWatchlist(t, c, []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"})
-	got, err := c.readWatchlist(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}, got)
-}
-
-func TestSquareHashtag_ReadWatchlist_EmptyKey_ReturnsEmpty(t *testing.T) {
-	c := newHashtagCollector(t, nil, nil)
-	got, err := c.readWatchlist(context.Background())
-	require.NoError(t, err, "redis.Nil must NOT bubble as error")
-	assert.Empty(t, got)
-}
-
-func TestSquareHashtag_ReadWatchlist_RedisError_BubblesUp(t *testing.T) {
-	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 100 * time.Millisecond, MaxRetries: -1})
-	c := &SquareHashtagCollector{redis: rdb, log: zerolog.Nop(), cfg: squareHashtagDefaults(SquareHashtagConfig{})}
-	_, err := c.readWatchlist(context.Background())
-	require.Error(t, err)
-}
-
-// --- Run, empty watchlist (1) ---
-
-func TestSquareHashtagRun_EmptyWatchlist_SkipsWithWarn(t *testing.T) {
-	c := newHashtagCollector(t, nil, nil)
-	require.NoError(t, c.Run(context.Background()), "empty watchlist must skip not error")
+func TestSquareHashtagRun_SymbolServiceEmpty_ReturnsError(t *testing.T) {
+	c := newHashtagCollector(t, nil, nil, []string{})
+	err := c.Run(context.Background())
+	require.Error(t, err, "全采集模式下 0 symbols 是异常状态, 不是正常 skip")
+	assert.Contains(t, err.Error(), "0 symbols")
 }
 
 // --- fetchSingleHashtag retry (5) ---
@@ -106,7 +101,7 @@ func TestFetchSingleHashtag_Success_NoRetry(t *testing.T) {
 		attempts.Add(1)
 		_, _ = w.Write([]byte(hashtagBody(100, 1000)))
 	})
-	c := newHashtagCollector(t, srv, nil)
+	c := newHashtagCollector(t, srv, nil, nil)
 	cc, vc, err := c.fetchSingleHashtag(context.Background(), "BTCUSDT")
 	require.NoError(t, err)
 	assert.EqualValues(t, 100, cc)
@@ -123,7 +118,7 @@ func TestFetchSingleHashtag_TransientError_Retries(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(hashtagBody(100, 1000)))
 	})
-	c := newHashtagCollector(t, srv, nil)
+	c := newHashtagCollector(t, srv, nil, nil)
 	cc, _, err := c.fetchSingleHashtag(context.Background(), "BTCUSDT")
 	require.NoError(t, err)
 	assert.EqualValues(t, 100, cc)
@@ -136,7 +131,7 @@ func TestFetchSingleHashtag_AllAttemptsFail_ReturnsError(t *testing.T) {
 		attempts.Add(1)
 		w.WriteHeader(500)
 	})
-	c := newHashtagCollector(t, srv, nil)
+	c := newHashtagCollector(t, srv, nil, nil)
 	_, _, err := c.fetchSingleHashtag(context.Background(), "BTCUSDT")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "after 2 retries")
@@ -149,7 +144,7 @@ func TestFetchSingleHashtag_4xx_NoRetry(t *testing.T) {
 		attempts.Add(1)
 		w.WriteHeader(400)
 	})
-	c := newHashtagCollector(t, srv, nil)
+	c := newHashtagCollector(t, srv, nil, nil)
 	_, _, err := c.fetchSingleHashtag(context.Background(), "BTCUSDT")
 	require.Error(t, err)
 	var sqErr *square.SquareError
@@ -160,7 +155,7 @@ func TestFetchSingleHashtag_4xx_NoRetry(t *testing.T) {
 
 func TestFetchSingleHashtag_CtxCancelled_ExitsImmediately(t *testing.T) {
 	srv := squareTestServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
-	c := newHashtagCollector(t, srv, nil)
+	c := newHashtagCollector(t, srv, nil, nil)
 	c.cfg.RetryInterval = 10 * time.Second // long enough that ctx cancel is the early exit
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -206,7 +201,7 @@ func TestFetchSingleHashtag_HashtagParam_IsLowercaseNoHash(t *testing.T) {
 		capturedHashtag = r.URL.Query().Get("hashtag")
 		_, _ = w.Write([]byte(hashtagBody(100, 1000)))
 	})
-	c := newHashtagCollector(t, srv, nil)
+	c := newHashtagCollector(t, srv, nil, nil)
 	_, _, err := c.fetchSingleHashtag(context.Background(), "BTCUSDT")
 	require.NoError(t, err)
 	assert.Equal(t, "btc", capturedHashtag, "hashtag query param must be lowercase, no '#' prefix (per square-discussion.py)")
@@ -215,7 +210,7 @@ func TestFetchSingleHashtag_HashtagParam_IsLowercaseNoHash(t *testing.T) {
 // --- batch insert (2) ---
 
 func TestSquareHashtag_BatchInsert_FiltersErroredResults(t *testing.T) {
-	c := newHashtagCollector(t, nil, &fakeDBTX{})
+	c := newHashtagCollector(t, nil, &fakeDBTX{}, nil)
 	results := []hashtagResult{
 		{symbol: "BTCUSDT", contentCount: 100, viewCount: 1000, err: nil},
 		{symbol: "ETHUSDT", err: errors.New("fetch failed")},
@@ -233,7 +228,6 @@ func TestSquareHashtagRun_PartialFailure_ContinuesOthers(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(hashtagBody(100, 1000)))
 	})
-	c := newHashtagCollector(t, srv, &fakeDBTX{})
-	setWatchlist(t, c, []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"})
+	c := newHashtagCollector(t, srv, &fakeDBTX{}, []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"})
 	require.NoError(t, c.Run(context.Background()), "partial failure must not error the run")
 }

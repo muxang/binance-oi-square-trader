@@ -137,16 +137,16 @@ func run() error {
 	if err := runner.Register(squareCol, "0 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register square collector")
 	}
-	hashtagCol := collector.NewSquareHashtagCollector(squareClient, rdb, pgPool, log, collector.SquareHashtagConfig{
-		PerTickTimeout:    cfg.Square.HashtagBatchDeadline,
-		PerSymbolTimeout:  cfg.Square.HashtagTimeout,
-		Concurrency:       cfg.Square.HashtagConcurrency,
-		RetryCount:        cfg.Square.HashtagRetryCount,
-		RetryInterval:     1 * time.Second,
-		HighFailureRate:   0.30,
-		WatchlistRedisKey: "watchlist:current",
+	hashtagCol := collector.NewSquareHashtagCollector(squareClient, symbolService, pgPool, log, collector.SquareHashtagConfig{
+		PerTickTimeout:   cfg.Square.HashtagBatchDeadline,
+		PerSymbolTimeout: cfg.Square.HashtagTimeout,
+		Concurrency:      cfg.Square.HashtagConcurrency,
+		RetryCount:       cfg.Square.HashtagRetryCount,
+		RetryInterval:    1 * time.Second,
+		HighFailureRate:  0.30,
 	})
-	if err := runner.Register(hashtagCol, "*/5 * * * *"); err != nil {
+	// Phase 2 v0.1: cron 5min -> 15min (全采集 + 自适应 hot 算法不需 5min 粒度)
+	if err := runner.Register(hashtagCol, "*/15 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register square hashtag collector")
 	}
 	watchlistCol := collector.NewWatchlistCollector(symbolService, client, gen.New(pgPool), rdb, log, collector.WatchlistCollectorConfig{
