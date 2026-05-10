@@ -86,6 +86,18 @@ fi
 
 ok ".env 校验通过 (TRADER_MODE=$TRADER_MODE)"
 
+# pool 模式: 校验 proxies.txt 存在且非空 (避免 trader 启动即崩溃)
+if [[ "${BINANCE_PROXY_MODE:-}" == "pool" ]]; then
+    _pfile="${BINANCE_PROXY_POOL_FILE:-}"
+    if [[ -z "$_pfile" ]]; then
+        err "BINANCE_PROXY_MODE=pool 但 BINANCE_PROXY_POOL_FILE 未设置"
+    fi
+    [[ -f "$_pfile" ]] || err "BINANCE_PROXY_POOL_FILE=$_pfile 不存在, 请创建并填入代理 URL (每行一个)"
+    _pcnt=$(grep -cE '^[^#[:space:]]' "$_pfile" 2>/dev/null || echo 0)
+    [[ "$_pcnt" -gt 0 ]] || err "BINANCE_PROXY_POOL_FILE=$_pfile 无有效代理 URL"
+    ok "代理池 $_pfile: $_pcnt 个 URL"
+fi
+
 # -----------------------------------------------------------------------------
 # 1.5 DNS 校验 (DOMAIN 应解析到当前 VPS 公网 IP)
 # -----------------------------------------------------------------------------
@@ -186,10 +198,15 @@ done
 
 step "运行数据库迁移"
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
-    exec -T trader sh -c \
-    'migrate -path /app/migrations -database "$DATABASE_URL" up' \
+    run --rm --no-deps --entrypoint="" trader \
+    sh -c '/app/migrate -path /app/migrations -database "$DATABASE_URL" up' \
     || err "迁移失败"
 ok "迁移完成"
+
+step "重启 trader (迁移完成后确保进程状态一致)"
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
+    restart trader
+ok "trader 已重启"
 
 # -----------------------------------------------------------------------------
 # 6.5 等待 Caddy + Let's Encrypt 证书 (30-90s)
