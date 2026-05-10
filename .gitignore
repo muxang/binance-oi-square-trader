@@ -38,6 +38,8 @@ build/
 # Logs
 *.log
 logs/
+# Exception: longrun evidence (alarm.log / env_audit.log / run.log) under reports/
+!reports/**/*.log
 
 # Web
 web/node_modules/
