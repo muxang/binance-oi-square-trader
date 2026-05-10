@@ -208,6 +208,19 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
     restart trader
 ok "trader 已重启"
 
+step "等待 trader /health 就绪 (最多 60s)"
+for i in $(seq 1 20); do
+    if curl -fs --max-time 3 http://localhost:8080/health >/dev/null 2>&1; then
+        ok "trader /health OK"
+        break
+    fi
+    sleep 3
+    if [[ $i -eq 20 ]]; then
+        yellow "  ⚠ trader 60s 未就绪, 查看日志排查:"
+        yellow "    docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml logs --tail=50 trader"
+    fi
+done
+
 # -----------------------------------------------------------------------------
 # 6.5 等待 Caddy + Let's Encrypt 证书 (30-90s)
 # -----------------------------------------------------------------------------
@@ -229,7 +242,6 @@ done
 # 7. 健康检查
 # -----------------------------------------------------------------------------
 step "健康检查"
-sleep 5
 bash "$REPO_ROOT/scripts/healthcheck.sh" || err "健康检查失败"
 
 # -----------------------------------------------------------------------------
