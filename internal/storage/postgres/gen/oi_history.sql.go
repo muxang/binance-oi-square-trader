@@ -4,3 +4,46 @@
 // source: oi_history.sql
 
 package gen
+
+import (
+	"context"
+)
+
+const getLatestOIHistory = `-- name: GetLatestOIHistory :many
+SELECT symbol, ts, oi, oi_value_usd FROM oi_history
+WHERE symbol = $1
+ORDER BY ts DESC
+LIMIT $2
+`
+
+type GetLatestOIHistoryParams struct {
+	Symbol string
+	Limit  int32
+}
+
+// Phase 2 signal engine reads last N 5-min OI snapshots for surge eval.
+// Caller specifies limit (default 15: LookbackPeriods 10 + buffer).
+func (q *Queries) GetLatestOIHistory(ctx context.Context, arg GetLatestOIHistoryParams) ([]OiHistory, error) {
+	rows, err := q.db.Query(ctx, getLatestOIHistory, arg.Symbol, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OiHistory
+	for rows.Next() {
+		var i OiHistory
+		if err := rows.Scan(
+			&i.Symbol,
+			&i.Ts,
+			&i.Oi,
+			&i.OiValueUsd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

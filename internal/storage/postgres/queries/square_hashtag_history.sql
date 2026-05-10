@@ -5,3 +5,11 @@
 INSERT INTO square_hashtag_history (symbol, ts, content_count, view_count)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (symbol, ts) DO NOTHING;
+
+-- name: GetLatestHashtagHistory :many
+-- Phase 2 signal engine reads last N hashtag samples for adaptive hot eval.
+-- Caller specifies limit (default 100: 24h × 4/h = 96 + buffer).
+SELECT * FROM square_hashtag_history
+WHERE symbol = $1
+ORDER BY ts DESC
+LIMIT $2;

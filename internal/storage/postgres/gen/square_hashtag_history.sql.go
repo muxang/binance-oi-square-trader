@@ -4,3 +4,46 @@
 // source: square_hashtag_history.sql
 
 package gen
+
+import (
+	"context"
+)
+
+const getLatestHashtagHistory = `-- name: GetLatestHashtagHistory :many
+SELECT symbol, ts, content_count, view_count FROM square_hashtag_history
+WHERE symbol = $1
+ORDER BY ts DESC
+LIMIT $2
+`
+
+type GetLatestHashtagHistoryParams struct {
+	Symbol string
+	Limit  int32
+}
+
+// Phase 2 signal engine reads last N hashtag samples for adaptive hot eval.
+// Caller specifies limit (default 100: 24h × 4/h = 96 + buffer).
+func (q *Queries) GetLatestHashtagHistory(ctx context.Context, arg GetLatestHashtagHistoryParams) ([]SquareHashtagHistory, error) {
+	rows, err := q.db.Query(ctx, getLatestHashtagHistory, arg.Symbol, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SquareHashtagHistory
+	for rows.Next() {
+		var i SquareHashtagHistory
+		if err := rows.Scan(
+			&i.Symbol,
+			&i.Ts,
+			&i.ContentCount,
+			&i.ViewCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -6,3 +6,11 @@
 INSERT INTO oi_history (symbol, ts, oi, oi_value_usd)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (symbol, ts) DO NOTHING;
+
+-- name: GetLatestOIHistory :many
+-- Phase 2 signal engine reads last N 5-min OI snapshots for surge eval.
+-- Caller specifies limit (default 15: LookbackPeriods 10 + buffer).
+SELECT * FROM oi_history
+WHERE symbol = $1
+ORDER BY ts DESC
+LIMIT $2;
