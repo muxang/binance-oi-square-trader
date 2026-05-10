@@ -36,7 +36,7 @@ fi
 
 set -a; source .env; set +a
 
-REQUIRED_VARS=(BINANCE_API_KEY BINANCE_API_SECRET TG_BOT_TOKEN TG_CHAT_ID DATABASE_URL REDIS_URL)
+REQUIRED_VARS=(BINANCE_API_KEY BINANCE_API_SECRET DATABASE_URL REDIS_URL)
 for var in "${REQUIRED_VARS[@]}"; do
     if [[ -z "${!var:-}" ]]; then
         err ".env 缺少 $var"

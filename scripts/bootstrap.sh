@@ -62,14 +62,13 @@ ok ".env 权限锁定 600 (owner: ${SUDO_USER:-root})"
 REQUIRED_VARS=(
     BINANCE_API_KEY
     BINANCE_API_SECRET
-    TG_BOT_TOKEN
-    TG_CHAT_ID
     DATABASE_URL
     REDIS_URL
     GF_SECURITY_ADMIN_PASSWORD
     DOMAIN
     ACME_EMAIL
 )
+# TG_BOT_TOKEN / TG_CHAT_ID 是 Phase 5 告警通道, 暂不强制
 
 set -a; source "$REPO_ROOT/.env"; set +a
 
