@@ -57,6 +57,35 @@
   · 当前 5min 收盘价 > 60min 前价格 (不接顶保护, SPEC 追加)
 ```
 
+##### oi_data JSONB schema(v0.1 落地)
+
+> ARCH §7 仅声明 `signals.oi_data JSONB`,未规定内部结构。
+> Phase 2 v0.1 由 `internal/signal/OISurgeResult` 定义(commit `516755b`),snake_case 7 字段:
+
+| 字段 | 类型 | 含义 | 来源 |
+|---|---|---|---|
+| `triggered` | bool | 4 条规则全过 → true,任一 fail → false | `OISurge` 主返值 |
+| `growth_from_min` | numeric (JSON string) | rule 1 实际涨幅 `(c[N]-min) / min` | min over last `LookbackPeriods=10` |
+| `recent_growth` | numeric | rule 2 实际涨幅 `(c[N]-c[N-6]) / c[N-6]` | 最近 `RecentPeriods=6` 周期 |
+| `growing_periods` | int | rule 3 相邻递增对数 | `count(c[i] > c[i-1])` for last 5 pairs |
+| `recent_periods_count` | int | recent 窗口对数(默认 5)| `RecentPeriods - 1` 算法常量 |
+| `price_moved_up` | bool | rule 4 SPEC 追加 `closeNow > closePrior` | klines 60min ago bar |
+| `failed_reason` | string (optional) | `triggered=false` 时填首失败原因 | 见下方枚举 |
+
+`failed_reason` 枚举(7 值):
+- `insufficient_oi_history: have N need M`(N < RecentPeriods,数据不足)
+- `zero_min_oi`(rule 1 边界 — min == 0,防除零)
+- `zero_recent_start_oi`(rule 2 边界 — recent_start == 0)
+- `low_growth_from_min`(rule 1 fail)
+- `recent_flat`(rule 2 fail)
+- `no_uptrend`(rule 3 fail)
+- `price_not_moved_up`(rule 4 fail)
+
+**与 `signals.decision` / `signals.rejection_reason` 的关系**:
+- `triggered=true` + `square_data.hot=true` → `decision='entered_full'`,`rejection_reason` NULL
+- `triggered=true` + `square_data.hot=false` → `decision='entered_half'`,`rejection_reason` NULL
+- `triggered=false` → `decision='rejected'`,`rejection_reason` = `oi_data.failed_reason`(同值)
+
 #### 辅助信号:Square 热度上升(自适应曲率判定)
 
 > v0.1 算法 — Phase 2 设计阶段重构:hot 判定从"单条件幅度阈值"升级为"形态识别"。
@@ -112,6 +141,35 @@ SIGNAL_HOT_MIN_DATA_POINTS=8           # 短窗下限,= 2h × 4/h
 ##### 接口调用
 
 接口调用方式锚定 `references/user-snippets/square-discussion.py`;时序统计 + 自适应判定由本项目实现。
+
+##### square_data JSONB schema(v0.1 落地)
+
+> ARCH §7 仅声明 `signals.square_data JSONB`,未规定内部结构。
+> Phase 2 v0.1 由 `internal/signal/SquareHotResult` 定义(commit `563717a`),snake_case 7 字段:
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `hot` | bool | ratio + acceleration 双条件全过 → true,短窗 ratio 单条件 |
+| `mode` | string enum | `standard` / `medium` / `short` / `fallback`(per 自适应窗口表)|
+| `ratio` | numeric (JSON string) | `recent_avg / baseline_median`,`baseline_median=0` 时降级 0 |
+| `acceleration` | numeric | 二阶差分正数比例 `count(Δ''>0) / len(Δ'')`,短窗 mode 此字段 = 0 |
+| `sample_count` | int | `len(contentCounts)` 入参长度 |
+| `data_span_hours` | numeric | `(N-1) × SamplePeriod` 跨度小时数 |
+| `failed_reason` | string (optional) | `hot=false` 时填首失败原因 |
+
+`failed_reason` 枚举(5 值):
+- `insufficient_samples: have N need M`(N < `MinDataPoints=8`,fallback mode)
+- `insufficient_deltas: have N need >K`(模式选定后 deltas 不足 recentK,降级 mode 后仍不足)
+- `zero_baseline_median`(baseline median == 0,SPEC L85 规定降级)
+- `low_ratio`(ratio < 模式阈值)
+- `low_acceleration`(标准/中窗 ratio 过但 accel < 阈值;短窗模式不会出现)
+
+> **中窗 acceleration 量化特性**(Round 3 实施时识别,v0.1 设计选择):
+> 中窗模式 二阶差分窗口仅 4 Δ → 3 Δ' → 2 Δ'' → `pos_ratio` 仅 3 档(0/0.5/1)。
+> 阈值 0.6 实际等价 `pos_ratio = 1`(2/2 个 Δ'' 都正,即 v0.1 短样本严格性)。
+> v0.2 看真数据决定是否调阈值或扩 accel 窗口。
+
+> mode 降级:若 `len(deltas)` 不足 `accelWindow`(标准 6 / 中窗 4),mode 降级一档(诚实反映实际算法选择,非缩窗保持 mode)。
 
 #### 入场决策
 
