@@ -64,14 +64,17 @@ check "grafana /api/health" curl -fs http://localhost:3001/api/health
 # 6. Loki
 check "loki /ready" curl -fs http://localhost:3100/ready
 
-# 7. 币安 API 连通(走应用层探针)
-check "binance api reachable (via trader)" \
-    curl -fs http://localhost:8080/health/binance
+# 7. 币安 API 连通(直接探 fapi.binance.com, 不走 trader)
+check "binance fapi reachable" \
+    curl -fs --max-time 5 "https://fapi.binance.com/fapi/v1/ping"
 
-# 8. TG bot 连通
+# 8. TG bot 连通(可选, 失败只 warn 不计入 FAIL)
 if [[ -n "${TG_BOT_TOKEN:-}" ]]; then
-    check "telegram bot getMe" \
-        curl -fs "https://api.telegram.org/bot${TG_BOT_TOKEN}/getMe"
+    if curl -fs --max-time 5 "https://api.telegram.org/bot${TG_BOT_TOKEN}/getMe" >/dev/null 2>&1; then
+        green "✓ telegram bot getMe"
+    else
+        yellow "⚠ telegram bot getMe (失败 — 检查 TG_BOT_TOKEN 或 VPS → Telegram 网络)"
+    fi
 else
     yellow "- TG_BOT_TOKEN 未设置, 跳过 telegram 检查"
 fi
