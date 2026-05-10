@@ -184,6 +184,16 @@ func run() error {
 	if err := runner.Register(sigEngineCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register signal_engine collector")
 	}
+	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
+	// runs filters + sizing → trades.entering. 详见 internal/collector/decision_engine.go 文件头.
+	decisionEngineCol := collector.NewDecisionEngineCollector(
+		gen.New(pgPool), rdb, symbolService, log, collector.DecisionEngineConfig{
+			PerTickTimeout: 4 * time.Minute,
+		},
+	)
+	if err := runner.Register(decisionEngineCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register decision_engine collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.

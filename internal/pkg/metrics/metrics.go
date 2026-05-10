@@ -51,8 +51,38 @@ var (
 		},
 		[]string{"outcome"},
 	)
+
+	// DecisionEvaluationsTotal counts Phase 3 decision_engine per-signal
+	// evaluations by outcome. ~14 bounded outcome label values (see
+	// internal/decision/engine.go OutcomeXxx + filters/sizing reasons).
+	// Cardinality: ~14 series. No symbol label per 1.8 纪律.
+	DecisionEvaluationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_decision_evaluations_total",
+			Help: "Total Phase 3 decision evaluations by outcome (trade_entering/rejected_*/sizing_*/internal_error/no_entered_signals).",
+		},
+		[]string{"outcome"},
+	)
+
+	// DecisionSizingDeviationPct measures step-round偏差 (TargetNotional -
+	// ActualNotional) / TargetNotional × 100%. Only emitted on successful
+	// sizing (Outcome=trade_entering); reject paths skip. symbol_class is a
+	// 3-bucket enum (high_price/mid/low) keeping cardinality at 3 series.
+	// v0.2 forward calibrates buckets after real-data P50/P95.
+	DecisionSizingDeviationPct = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "trader_decision_sizing_deviation_pct",
+			Help:    "Phase 3 sizing step-round deviation as percent (TargetNotional - ActualNotional)/TargetNotional × 100.",
+			Buckets: []float64{0, 0.1, 0.5, 1, 2, 5, 10, 20},
+		},
+		[]string{"symbol_class"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(CollectorRunsTotal, CollectorDurationSeconds, SignalEvaluationsTotal)
+	prometheus.MustRegister(
+		CollectorRunsTotal, CollectorDurationSeconds,
+		SignalEvaluationsTotal,
+		DecisionEvaluationsTotal, DecisionSizingDeviationPct,
+	)
 }
