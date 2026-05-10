@@ -101,6 +101,8 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
+> **注(Phase 2/3 v0.1 实施)**:`signals → trades` 走 DB 读写(`signals_ts_desc_idx` + `trades_symbol_status_idx` 索引高效查询 + `trades` 表 24h lookup 兜底防重),**不走 channel-based eventbus**(§5)。Phase 4 上线后视性能决定是否切 channel + ARCH 同步。
+
 ---
 
 ## 5. 进程内事件总线
