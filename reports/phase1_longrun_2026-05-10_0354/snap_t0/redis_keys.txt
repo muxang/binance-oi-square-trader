@@ -1,0 +1,6 @@
+DBSIZE=1019
+EXISTS_watchlist_current=1
+EXISTS_btc_5m_change=1
+atr_count=508
+ema20_count=508
+latest_price_count=0

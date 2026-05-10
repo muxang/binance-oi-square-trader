@@ -1,0 +1,5 @@
+oi_history=57403
+klines=33028
+square_posts=155
+square_hashtag_history=198
+watchlist_snapshots=5

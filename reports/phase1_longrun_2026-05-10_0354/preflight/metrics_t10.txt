@@ -1,0 +1,372 @@
+# HELP binance_proxy_active_count Number of active (non-evicted) proxies in pool.
+# TYPE binance_proxy_active_count gauge
+binance_proxy_active_count 40
+# HELP binance_proxy_evicted_count Number of evicted proxies in pool.
+# TYPE binance_proxy_evicted_count gauge
+binance_proxy_evicted_count 1
+# HELP binance_proxy_failures_total Proxy failures by URL and error type.
+# TYPE binance_proxy_failures_total counter
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.181.173:5636"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.181.190:5653"} 7
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.83.119:7082"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.83.251:7214"} 4
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@145.223.40.160:5730"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@147.136.85.140:6056"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@147.136.85.252:6168"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.124:6624"} 3
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.191:6691"} 9
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.95:6595"} 3
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.172.211.68:5252"} 4
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.40.71.158:6341"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.40.71.5:6188"} 2
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@206.232.74.193:7263"} 4
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@23.26.61.117:5583"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@23.27.127.203:7168"} 4
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.185:5708"} 3
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.231:5754"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.65:5588"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.94:5617"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://6YWS7KNF:6YWS7KNF@92.112.90.41:7015"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.181.123:5586"} 4
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.181.78:5541"} 7
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.83.196:7159"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@142.111.67.149:5614"} 7
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@145.223.40.102:5672"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@145.223.40.156:5726"} 8
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@147.136.85.229:6145"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@161.123.208.102:6346"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.121.206:5389"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.121.20:5203"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.123.91:6275"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.71.102:6285"} 7
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@206.232.74.233:7303"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@206.232.74.77:7147"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@23.27.127.42:7007"} 7
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@46.203.28.180:6703"} 4
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@46.203.52.155:5678"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@50.114.92.132:5596"} 6
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@50.114.92.39:5503"} 5
+binance_proxy_failures_total{error_type="timeout",proxy_url="socks5://U8VAF46V:U8VAF46V@92.112.110.39:8013"} 4
+# HELP binance_proxy_requests_total Total proxy requests by URL and outcome.
+# TYPE binance_proxy_requests_total counter
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.181.173:5636"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.181.190:5653"} 7
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.83.119:7082"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.83.251:7214"} 4
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@145.223.40.160:5730"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@147.136.85.140:6056"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@147.136.85.252:6168"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.124:6624"} 3
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.191:6691"} 9
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.95:6595"} 3
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.172.211.68:5252"} 4
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.40.71.158:6341"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.40.71.5:6188"} 2
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@206.232.74.193:7263"} 4
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@23.26.61.117:5583"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@23.27.127.203:7168"} 4
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.185:5708"} 3
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.231:5754"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.65:5588"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.94:5617"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://6YWS7KNF:6YWS7KNF@92.112.90.41:7015"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.181.123:5586"} 4
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.181.78:5541"} 7
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.83.196:7159"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@142.111.67.149:5614"} 7
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@145.223.40.102:5672"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@145.223.40.156:5726"} 8
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@147.136.85.229:6145"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@161.123.208.102:6346"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.121.206:5389"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.121.20:5203"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.123.91:6275"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.71.102:6285"} 7
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@206.232.74.233:7303"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@206.232.74.77:7147"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@23.27.127.42:7007"} 7
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@46.203.28.180:6703"} 4
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@46.203.52.155:5678"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@50.114.92.132:5596"} 6
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@50.114.92.39:5503"} 5
+binance_proxy_requests_total{outcome="failure",proxy_url="socks5://U8VAF46V:U8VAF46V@92.112.110.39:8013"} 4
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.181.173:5636"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.181.190:5653"} 46
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.83.119:7082"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@108.165.83.251:7214"} 49
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@145.223.40.160:5730"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@147.136.85.140:6056"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@147.136.85.252:6168"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.124:6624"} 51
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.191:6691"} 44
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@161.123.209.95:6595"} 50
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.172.211.68:5252"} 49
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.40.71.158:6341"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@195.40.71.5:6188"} 51
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@206.232.74.193:7263"} 49
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@23.26.61.117:5583"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@23.27.127.203:7168"} 49
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.185:5708"} 50
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.231:5754"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.65:5588"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@46.203.52.94:5617"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://6YWS7KNF:6YWS7KNF@92.112.90.41:7015"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.181.123:5586"} 49
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.181.78:5541"} 46
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@108.165.83.196:7159"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@142.111.67.149:5614"} 46
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@145.223.40.102:5672"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@145.223.40.156:5726"} 45
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@147.136.85.229:6145"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@161.123.208.102:6346"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.121.206:5389"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.121.20:5203"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.123.91:6275"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@195.40.71.102:6285"} 46
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@206.232.74.233:7303"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@206.232.74.77:7147"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@23.27.127.42:7007"} 46
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@46.203.28.180:6703"} 49
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@46.203.52.155:5678"} 47
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@50.114.92.132:5596"} 23
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@50.114.92.39:5503"} 48
+binance_proxy_requests_total{outcome="success",proxy_url="socks5://U8VAF46V:U8VAF46V@92.112.110.39:8013"} 49
+# HELP go_gc_duration_seconds A summary of the wall-time pause (stop-the-world) duration in garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 2.0434e-05
+go_gc_duration_seconds{quantile="0.25"} 4.5246e-05
+go_gc_duration_seconds{quantile="0.5"} 7.302e-05
+go_gc_duration_seconds{quantile="0.75"} 0.000124353
+go_gc_duration_seconds{quantile="1"} 0.000308181
+go_gc_duration_seconds_sum 0.005582347
+go_gc_duration_seconds_count 60
+# HELP go_gc_gogc_percent Heap size target percentage configured by the user, otherwise 100. This value is set by the GOGC environment variable, and the runtime/debug.SetGCPercent function. Sourced from /gc/gogc:percent.
+# TYPE go_gc_gogc_percent gauge
+go_gc_gogc_percent 100
+# HELP go_gc_gomemlimit_bytes Go runtime memory limit configured by the user, otherwise math.MaxInt64. This value is set by the GOMEMLIMIT environment variable, and the runtime/debug.SetMemoryLimit function. Sourced from /gc/gomemlimit:bytes.
+# TYPE go_gc_gomemlimit_bytes gauge
+go_gc_gomemlimit_bytes 9.223372036854776e+18
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 110
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.25.0"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated in heap and currently in use. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 3.228632e+06
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated in heap until now, even if released already. Equals to /gc/heap/allocs:bytes.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 6.15064376e+08
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table. Equals to /memory/classes/profiling/buckets:bytes.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 4441
+# HELP go_memstats_frees_total Total number of heap objects frees. Equals to /gc/heap/frees:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 8.081182e+06
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata. Equals to /memory/classes/metadata/other:bytes.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 4.81104e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and currently in use, same as go_memstats_alloc_bytes. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 3.228632e+06
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used. Equals to /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 6.6568192e+07
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 1.1911168e+07
+# HELP go_memstats_heap_objects Number of currently allocated objects. Equals to /gc/heap/objects:objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 13218
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS. Equals to /memory/classes/heap/released:bytes.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 5.9629568e+07
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes + /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 7.847936e+07
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.7783570750614514e+09
+# HELP go_memstats_mallocs_total Total number of heap objects allocated, both live and gc-ed. Semantically a counter version for go_memstats_heap_objects gauge. Equals to /gc/heap/allocs:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 8.0944e+06
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures. Equals to /memory/classes/metadata/mcache/inuse:bytes.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 38656
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system. Equals to /memory/classes/metadata/mcache/inuse:bytes + /memory/classes/metadata/mcache/free:bytes.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 47112
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures. Equals to /memory/classes/metadata/mspan/inuse:bytes.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 392000
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system. Equals to /memory/classes/metadata/mspan/inuse:bytes + /memory/classes/metadata/mspan/free:bytes.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 1.3056e+06
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place. Equals to /gc/heap/goal:bytes.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 6.97893e+06
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations. Equals to /memory/classes/other:bytes.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 3.297695e+06
+# HELP go_memstats_stack_inuse_bytes Number of bytes obtained from system for stack allocator in non-CGO environments. Equals to /memory/classes/heap/stacks:bytes.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 5.40672e+06
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator. Equals to /memory/classes/heap/stacks:bytes + /memory/classes/os-stacks:bytes.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 5.40672e+06
+# HELP go_memstats_sys_bytes Number of bytes obtained from system. Equals to /memory/classes/total:byte.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 9.3351968e+07
+# HELP go_sched_gomaxprocs_threads The current runtime.GOMAXPROCS setting, or the number of operating system threads that can execute user-level Go code simultaneously. Sourced from /sched/gomaxprocs:threads.
+# TYPE go_sched_gomaxprocs_threads gauge
+go_sched_gomaxprocs_threads 32
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 31
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 5.05
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1.048575e+06
+# HELP process_network_receive_bytes_total Number of bytes received by the process over the network.
+# TYPE process_network_receive_bytes_total counter
+process_network_receive_bytes_total 4.68137264e+08
+# HELP process_network_transmit_bytes_total Number of bytes sent by the process over the network.
+# TYPE process_network_transmit_bytes_total counter
+process_network_transmit_bytes_total 1.0959508e+08
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 65
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 4.2377216e+07
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.77835648669e+09
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 3.536392192e+09
+# HELP process_virtual_memory_max_bytes Maximum amount of virtual memory available in bytes.
+# TYPE process_virtual_memory_max_bytes gauge
+process_virtual_memory_max_bytes 1.8446744073709552e+19
+# HELP promhttp_metric_handler_requests_in_flight Current number of scrapes being served.
+# TYPE promhttp_metric_handler_requests_in_flight gauge
+promhttp_metric_handler_requests_in_flight 1
+# HELP promhttp_metric_handler_requests_total Total number of scrapes by HTTP status code.
+# TYPE promhttp_metric_handler_requests_total counter
+promhttp_metric_handler_requests_total{code="200"} 1
+promhttp_metric_handler_requests_total{code="500"} 0
+promhttp_metric_handler_requests_total{code="503"} 0
+# HELP trader_collector_duration_seconds Time spent in each collector run, by collector.
+# TYPE trader_collector_duration_seconds histogram
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.005"} 0
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.01"} 0
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.025"} 0
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.05"} 0
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.1"} 0
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.25"} 0
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="0.5"} 4
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="1"} 5
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="2.5"} 6
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="5"} 6
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="10"} 6
+trader_collector_duration_seconds_bucket{collector="btc_regime",le="+Inf"} 10
+trader_collector_duration_seconds_sum{collector="btc_regime"} 128.374068244
+trader_collector_duration_seconds_count{collector="btc_regime"} 10
+trader_collector_duration_seconds_bucket{collector="klines",le="0.005"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="0.01"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="0.025"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="0.05"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="0.1"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="0.25"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="0.5"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="1"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="2.5"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="5"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="10"} 0
+trader_collector_duration_seconds_bucket{collector="klines",le="+Inf"} 2
+trader_collector_duration_seconds_sum{collector="klines"} 377.740554878
+trader_collector_duration_seconds_count{collector="klines"} 2
+trader_collector_duration_seconds_bucket{collector="oi",le="0.005"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="0.01"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="0.025"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="0.05"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="0.1"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="0.25"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="0.5"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="1"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="2.5"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="5"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="10"} 0
+trader_collector_duration_seconds_bucket{collector="oi",le="+Inf"} 2
+trader_collector_duration_seconds_sum{collector="oi"} 401.965512892
+trader_collector_duration_seconds_count{collector="oi"} 2
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.005"} 8
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.01"} 9
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.025"} 9
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.05"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.1"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.25"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="0.5"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="1"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="2.5"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="5"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="10"} 10
+trader_collector_duration_seconds_bucket{collector="position_price",le="+Inf"} 10
+trader_collector_duration_seconds_sum{collector="position_price"} 0.060268590999999996
+trader_collector_duration_seconds_count{collector="position_price"} 10
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.005"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.01"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.025"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.05"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.1"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.25"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="0.5"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="1"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="2.5"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="5"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="10"} 0
+trader_collector_duration_seconds_bucket{collector="square_feed",le="+Inf"} 1
+trader_collector_duration_seconds_sum{collector="square_feed"} 31.188870069
+trader_collector_duration_seconds_count{collector="square_feed"} 1
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.005"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.01"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.025"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.05"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.1"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.25"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="0.5"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="1"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="2.5"} 0
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="5"} 1
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="10"} 1
+trader_collector_duration_seconds_bucket{collector="square_hashtag",le="+Inf"} 2
+trader_collector_duration_seconds_sum{collector="square_hashtag"} 49.785903005
+trader_collector_duration_seconds_count{collector="square_hashtag"} 2
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.005"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.01"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.025"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.05"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.1"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.25"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="0.5"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="1"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="2.5"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="5"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="10"} 0
+trader_collector_duration_seconds_bucket{collector="watchlist",le="+Inf"} 1
+trader_collector_duration_seconds_sum{collector="watchlist"} 31.292820606
+trader_collector_duration_seconds_count{collector="watchlist"} 1
+# HELP trader_collector_runs_total Total runs of each collector by outcome (success/error/panic).
+# TYPE trader_collector_runs_total counter
+trader_collector_runs_total{collector="btc_regime",outcome="error"} 4
+trader_collector_runs_total{collector="btc_regime",outcome="success"} 6
+trader_collector_runs_total{collector="klines",outcome="error"} 1
+trader_collector_runs_total{collector="klines",outcome="success"} 1
+trader_collector_runs_total{collector="oi",outcome="success"} 2
+trader_collector_runs_total{collector="position_price",outcome="success"} 10
+trader_collector_runs_total{collector="square_feed",outcome="error"} 1
+trader_collector_runs_total{collector="square_hashtag",outcome="success"} 2
+trader_collector_runs_total{collector="watchlist",outcome="error"} 1
