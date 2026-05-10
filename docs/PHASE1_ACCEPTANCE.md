@@ -214,4 +214,4 @@ Phase 2 信号引擎入口数据 contract — **全部从 PG/Redis 读,不再访
 - 信号决策窗口 5min(per SPEC §信号),OI 暴涨 + Square 热度判定算法 1:1 锚定 `references/user-snippets/contract-monitor.js`
 - 输出落 `signals` 表(per ARCH §7),不落仓位 / 不下单(那是 Phase 4)
 
-**Phase 1 收尾确认**:数据采集层已完整,Phase 2 前置数据全到位。**Phase 1 PASS,可进 Phase 2**。
+**Phase 1 收尾确认**:数据采集层已完整,Phase 2 前置数据全到位。**Phase 1 PARTIAL PASS**(1.9 长跑代理上游硬伤未跑满 6h,框架本身完成度证据充分),**Phase 2 数据 contract 满足,可进**。
