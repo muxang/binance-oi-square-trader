@@ -50,6 +50,10 @@ if [[ ! -f "$REPO_ROOT/.env" ]]; then
     err ".env 不存在, 请: cp .env.example .env && nano .env"
 fi
 
+# 锁定 .env 权限 (VPS 公网部署防其他用户读 secret)
+chmod 600 "$REPO_ROOT/.env"
+ok ".env 权限锁定 600"
+
 # 必需项
 REQUIRED_VARS=(
     BINANCE_API_KEY

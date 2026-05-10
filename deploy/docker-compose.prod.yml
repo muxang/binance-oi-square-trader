@@ -28,7 +28,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
+      # 同时校验 :8080 (dashboard /health) + :2112 (Phase 1.8 prometheus metrics)
+      # 任一端口不响应即 unhealthy → docker compose ps 立即显示 + Caddy 不路由
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/health && curl -fs -o /dev/null http://localhost:2112/metrics"]
       interval: 30s
       timeout: 5s
       retries: 3
