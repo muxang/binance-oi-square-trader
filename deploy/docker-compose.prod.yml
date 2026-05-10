@@ -47,6 +47,8 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      DOMAIN: ${DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
     ports:
       - "80:80"
       - "443:443"
