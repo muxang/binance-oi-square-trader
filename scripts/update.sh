@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# deploy.sh — 增量部署 (代码更新后)
+# update.sh — 增量更新 (代码更新后, deployment v0.1 Round 2 自 deploy.sh rename)
 #
 # 1. git pull
 # 2. 校验 .env 必需项
@@ -9,7 +9,7 @@
 # 5. 跑迁移(若有新迁移)
 # 6. 健康检查
 #
-# Usage: bash scripts/deploy.sh
+# Usage: bash scripts/update.sh
 # =============================================================================
 
 set -euo pipefail

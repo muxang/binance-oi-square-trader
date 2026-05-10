@@ -15,10 +15,12 @@ OS:        Ubuntu 22.04 / 24.04 LTS (推荐) 或 Debian 12+
 
 | 脚本 | 用途 | 何时运行 |
 |---|---|---|
-| `bootstrap.sh` | 首次部署:装 Docker / Docker Compose / 起所有服务 / 跑迁移 | 新 VPS 第一次 |
-| `deploy.sh` | 增量部署:`git pull` + 重 build + 重启 | 后续每次代码更新 |
-| `db-backup.sh` | PG 全量 dump 到本地 `backups/` | 定时任务(cron) |
-| `healthcheck.sh` | 全链路健康检查(应用 / DB / 币安连通) | 出问题排查时 |
+| `bootstrap.sh` | 首次部署:装 Docker / Docker Compose / 起所有服务 / 跑迁移 + chmod 600 .env | 新 VPS 第一次 |
+| `update.sh` | 增量更新:`git pull` + 重 build + 重启(原 deploy.sh,Round 2 rename) | 后续每次代码更新 |
+| `status.sh` | 全栈状态摘要(container / disk / 9 collector activity / metrics / errors)5 段输出 | 日常状态检查 |
+| `healthcheck.sh` | 全链路健康检查(8 项:应用 / DB / 币安 / TG / Prometheus / Grafana / Loki / Redis) | 出问题排查时 |
+| `db-backup.sh` | PG 全量 dump 到本地 `backups/` + 30 天保留 | 定时任务(cron) |
+| `restore.sh` | 从 `backups/*.sql.gz` 恢复 PG(必须 type 确认串) | 灾难恢复 |
 
 ## 标准工作流
 
@@ -52,8 +54,24 @@ bash scripts/healthcheck.sh
 ```bash
 cd ~/trader
 git pull
-bash scripts/deploy.sh
+bash scripts/update.sh
 bash scripts/healthcheck.sh
+```
+
+### 日常状态检查
+
+```bash
+bash scripts/status.sh
+# 5 段输出: Container / Disk-Memory / Activity (9 collector last 5min) / Metrics / Errors (last 1h)
+```
+
+### 灾难恢复(从备份还原)
+
+```bash
+ls -lh backups/                      # 找到要还原的备份
+bash scripts/restore.sh backups/trader-YYYYMMDD-HHMMSS.sql.gz
+# 必须 type "yes-i-want-to-restore" 确认
+# 流程: 停 trader → drop+create DB → psql restore → 启 trader → healthcheck
 ```
 
 ### 备份(放进 cron)
@@ -72,13 +90,14 @@ nano .env
 # TRADER_MODE=mainnet
 # TRADER_MAINNET_CONFIRM=I_UNDERSTAND
 
-bash scripts/deploy.sh
+bash scripts/update.sh
 # 启动日志会有 ⚠️ 5 行 + sleep 5s, 给你最后反应时间
 ```
 
 ## 安全约束
 
-- bootstrap.sh **只在首次**运行。后续重复运行会跳过已装的依赖
-- deploy.sh **不会**自动改 .env,需要更新配置先手动 nano 再 deploy
-- db-backup.sh 备份在本地 `backups/` 目录,**不**自动上传云端 — 自己配 rclone 或 aws cli
-- 所有脚本 **set -euo pipefail**,任何一步失败立即终止
+- `bootstrap.sh` **只在首次**运行。后续重复运行会跳过已装的依赖,并 `chmod 600 .env`
+- `update.sh` **不会**自动改 .env,需要更新配置先手动 nano 再 update
+- `db-backup.sh` 备份在本地 `backups/` 目录,**不**自动上传云端 — 自己配 rclone 或 aws cli
+- `restore.sh` 必须 type `yes-i-want-to-restore` 确认串才执行(防误操作),失败后 DB 处于不完整状态需手工修复
+- 所有脚本 **set -euo pipefail**(restore.sh 在交互确认前不 exit-on-error,确认后 set -e),任何一步失败立即终止
