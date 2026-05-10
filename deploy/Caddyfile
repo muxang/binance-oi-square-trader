@@ -1,31 +1,56 @@
 # =============================================================================
-# Caddyfile - 生产部署反向代理
+# Caddyfile — VPS 生产部署反向代理 (deployment v0.1 Round 3-4 B 简化安全模式)
 # =============================================================================
-# 开发期不用,生产 VPS 上用 caddy 做 HTTPS 终端 + 路由。
+# Caddy 2 自动 Let's Encrypt + HTTPS, 替换域名后启用.
+# Round 5 真部署前 mu 必须 .env 配置:
+#   1. DOMAIN=trader.letsagent.net (真实域名, A 记录已指向 VPS IP)
+#   2. ACME_EMAIL=admin@example.com (Let's Encrypt 通知用真实邮箱)
+#
+# 安全模式 (mu 决策, 覆盖 v0.1 / v0.2 / Phase 4 所有阶段):
+#   - 简化防护: /metrics + /grafana 公网开放, 走各自认证 (Grafana admin 密码)
+#   - GF_SECURITY_ADMIN_PASSWORD ≥16 字符强密码必填 (bootstrap.sh REQUIRED_VARS 强制)
+#   - 不引入 IP 限制 / basicauth / fail2ban / WireGuard
+#   - 操作便利性优先, mu 接受公网暴露
 # =============================================================================
 
-# 替换为你的域名:
-# trader.example.com {
-#     reverse_proxy /api/* trader:8080
-#     reverse_proxy /metrics trader:8080
-#     handle /grafana/* {
-#         reverse_proxy grafana:3000
-#     }
-#     handle /* {
-#         root * /srv/dashboard
-#         file_server
-#         try_files {path} /index.html
-#     }
-#
-#     basicauth /grafana/* {
-#         admin <bcrypt-password-hash>
-#     }
-#
-#     log {
-#         output file /var/log/caddy/access.log
-#     }
-# }
+{
+    email {$ACME_EMAIL:-admin@example.com}
+}
 
-:80 {
-	respond "binance-oi-square-trader (placeholder, configure domain)" 200
+# 主域名 — 自动 :80 → :443 redirect + Let's Encrypt
+{$DOMAIN:-localhost} {
+    encode gzip
+
+    # /health — 公开 (外部 uptime monitor)
+    handle /health {
+        reverse_proxy trader:8080
+    }
+
+    # /api/* — 公开 (Phase 5+ frontend 调用)
+    handle /api/* {
+        reverse_proxy trader:8080
+    }
+
+    # /metrics — 公开 (Prometheus scrape, 也允许 mu 浏览器直访)
+    handle /metrics {
+        reverse_proxy trader:2112
+    }
+
+    # /grafana/* — 公开 (走 Grafana 自己的 admin 密码认证)
+    handle /grafana/* {
+        uri strip_prefix /grafana
+        reverse_proxy grafana:3000
+    }
+
+    # 默认: 占位 (Phase 5+ dashboard 静态文件)
+    handle {
+        respond "trader running. Dashboard 待 Phase 5 前端部署." 200
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+    }
 }

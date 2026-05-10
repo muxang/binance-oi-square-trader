@@ -62,6 +62,9 @@ REQUIRED_VARS=(
     TG_CHAT_ID
     DATABASE_URL
     REDIS_URL
+    GF_SECURITY_ADMIN_PASSWORD
+    DOMAIN
+    ACME_EMAIL
 )
 
 set -a; source "$REPO_ROOT/.env"; set +a
@@ -82,6 +85,26 @@ if [[ "${TRADER_MODE:-}" == "mainnet" ]]; then
 fi
 
 ok ".env 校验通过 (TRADER_MODE=$TRADER_MODE)"
+
+# -----------------------------------------------------------------------------
+# 1.5 DNS 校验 (DOMAIN 应解析到当前 VPS 公网 IP)
+# -----------------------------------------------------------------------------
+step "DNS 校验"
+if ! command -v dig >/dev/null 2>&1; then
+    yellow "  dig 未安装, 安装 dnsutils..."
+    apt-get install -y dnsutils
+fi
+
+VPS_IP="$(curl -fs --max-time 5 https://api.ipify.org 2>/dev/null || curl -fs --max-time 5 https://icanhazip.com 2>/dev/null || echo '')"
+[[ -n "$VPS_IP" ]] || err "无法获取 VPS 公网 IP (api.ipify.org / icanhazip.com 都 fail)"
+
+DNS_IP="$(dig +short "$DOMAIN" @8.8.8.8 2>/dev/null | tail -1)"
+[[ -n "$DNS_IP" ]] || err "DOMAIN=$DOMAIN 未解析 (DNS 未配 / 未生效, 等 5-10min 重试)"
+
+if [[ "$DNS_IP" != "$VPS_IP" ]]; then
+    err "DOMAIN=$DOMAIN 解析到 $DNS_IP, 不匹配 VPS 公网 IP $VPS_IP — 请检查 DNS A 记录"
+fi
+ok "DNS: $DOMAIN → $VPS_IP"
 
 # -----------------------------------------------------------------------------
 # 2. 装 Docker
@@ -132,6 +155,13 @@ mkdir -p backups
 ok "数据目录就绪"
 
 # -----------------------------------------------------------------------------
+# 4.5 配置 ufw 防火墙 (在起服务前)
+# -----------------------------------------------------------------------------
+step "配置 ufw 防火墙"
+bash "$REPO_ROOT/scripts/setup-ufw.sh" || err "ufw 配置失败"
+ok "ufw 已启用 (22/80/443 开放, 内部端口 deny)"
+
+# -----------------------------------------------------------------------------
 # 5. 启动基础设施
 # -----------------------------------------------------------------------------
 step "启动基础设施 (PG / Redis / Prometheus / Grafana / Loki)"
@@ -162,6 +192,23 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
 ok "迁移完成"
 
 # -----------------------------------------------------------------------------
+# 6.5 等待 Caddy + Let's Encrypt 证书 (30-90s)
+# -----------------------------------------------------------------------------
+step "等待 Caddy + Let's Encrypt 证书 (最多 90s)"
+for i in $(seq 1 30); do
+    if curl -fs --max-time 3 "https://$DOMAIN/health" >/dev/null 2>&1; then
+        ok "HTTPS + cert OK ($DOMAIN)"
+        break
+    fi
+    sleep 3
+    if [[ $i -eq 30 ]]; then
+        yellow "  ⚠ Caddy cert 90s 仍未就绪 (Let's Encrypt 偶尔较慢, 不阻塞 bootstrap)"
+        yellow "    排查: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml logs caddy"
+        yellow "    常见原因: DNS 未生效 / 80 端口被占 / Let's Encrypt rate limit"
+    fi
+done
+
+# -----------------------------------------------------------------------------
 # 7. 健康检查
 # -----------------------------------------------------------------------------
 step "健康检查"
@@ -177,9 +224,10 @@ green "║  ✅ Bootstrap 完成                      ║"
 green "╚════════════════════════════════════════╝"
 echo
 echo "下一步:"
-echo "  - 查看日志:        docker compose -f deploy/docker-compose.yml logs -f trader"
-echo "  - Dashboard:       http://<vps-ip>:3000"
-echo "  - Grafana:         http://<vps-ip>:3001 (admin/admin)"
-echo "  - 后续更新:        bash scripts/deploy.sh"
-echo "  - 备份(加 cron):  bash scripts/db-backup.sh"
+echo "  - 查看日志:         docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml logs -f trader"
+echo "  - Health:          https://$DOMAIN/health"
+echo "  - Grafana:         https://$DOMAIN/grafana (admin / \$GF_SECURITY_ADMIN_PASSWORD)"
+echo "  - 状态摘要:         bash scripts/status.sh"
+echo "  - 后续更新:         bash scripts/update.sh"
+echo "  - 备份 (加 cron):   bash scripts/db-backup.sh"
 echo
