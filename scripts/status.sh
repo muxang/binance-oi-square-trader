@@ -39,17 +39,32 @@ DATA_SIZE=$(du -sh deploy/data 2>/dev/null | cut -f1)
 BACKUP_SIZE=$(du -sh backups 2>/dev/null | cut -f1)
 printf "  deploy/data:  %s\n  backups/:     %s\n" "${DATA_SIZE:-N/A}" "${BACKUP_SIZE:-N/A}"
 
-# 3. Activity — 9 collector completed (last 5min)
-# collector names match c.Name() in each collector's Name() method:
-#   oi (not oi_history), square_feed (not square)
+# 3. Activity — last 5min success counts via Prometheus query API
+# Falls back to docker logs --tail if Prometheus is unreachable.
 section "Activity (last 5min, 9 collectors)"
-LOGS_5M=$($COMPOSE logs --since=5m --tail=2000 trader 2>/dev/null)
-for c in oi btc_regime klines square_feed square_hashtag watchlist position_price signal_engine decision_engine; do
-    # runner.go always logs: "collector completed collector=<name>" (pretty)
-    # or {"message":"collector completed","collector":"<name>",...}  (json)
-    COUNT=$(echo "$LOGS_5M" | grep -cE "collector completed collector=${c}( |$)|\"collector\":\"${c}\".*collector completed" 2>/dev/null || true)
-    printf "  %-18s %s ticks\n" "$c" "$COUNT"
-done
+_PROM='http://localhost:9090/api/v1/query'
+_QUERY='round(increase(trader_collector_runs_total{outcome="success"}[5m]))'
+if PROM_RESP=$(curl -fsG --max-time 3 --data-urlencode "query=${_QUERY}" "$_PROM" 2>/dev/null); then
+    echo "$PROM_RESP" | python3 - <<'PYEOF'
+import json, sys
+COLLECTORS = ['oi','btc_regime','klines','square_feed','square_hashtag',
+              'watchlist','position_price','signal_engine','decision_engine']
+try:
+    counts = {r['metric']['collector']: int(float(r['value'][1]))
+              for r in json.load(sys.stdin)['data']['result']}
+except Exception:
+    counts = {}
+for c in COLLECTORS:
+    print(f"  {c:<18} {counts.get(c, 0)} ticks")
+PYEOF
+else
+    # fallback: docker logs tail (--since unreliable in some docker compose versions)
+    LOGS=$($COMPOSE logs --tail=500 trader 2>/dev/null)
+    for c in oi btc_regime klines square_feed square_hashtag watchlist position_price signal_engine decision_engine; do
+        COUNT=$(echo "$LOGS" | grep "collector=${c}" | grep -c "completed" 2>/dev/null || true)
+        printf "  %-18s %s ticks\n" "$c" "$COUNT"
+    done
+fi
 
 # 4. Metrics 摘要
 section "Metrics 摘要 (key counters)"
@@ -61,10 +76,10 @@ else
     red "  :2112/metrics 不可达"
 fi
 
-# 5. Errors
-section "Errors (last 1h, 最近 10 条)"
-ERR=$($COMPOSE logs --since=1h --tail=2000 trader 2>/dev/null \
-    | grep -E '"level":"error"|"level":"fatal"|panic:' \
+# 5. Errors — last 2000 lines (--since unreliable; 2000 lines covers several hours)
+section "Errors (recent, 最近 10 条)"
+ERR=$($COMPOSE logs --tail=2000 trader 2>/dev/null \
+    | grep -E '"level":"error"|"level":"fatal"|panic:| ERR | FTL | PNC ' \
     | tail -10 || true)
 if [[ -z "$ERR" ]]; then
     green "  ✓ 无 ERROR / FATAL / panic"
