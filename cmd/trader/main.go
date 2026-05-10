@@ -175,6 +175,15 @@ func run() error {
 	if err := runner.Register(posPriceCol, "* * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register position_price collector")
 	}
+	// Phase 2 v0.1: signal_engine — 5min cron, 评估 watchlist:current 池中 symbols,
+	// 写 signals 表 (含 rejected). 详见 internal/collector/signal_engine.go 文件头.
+	sigEngineCol := collector.NewSignalEngineCollector(gen.New(pgPool), rdb, log, collector.SignalEngineConfig{
+		PerTickTimeout: 4 * time.Minute,
+		Concurrency:    10,
+	})
+	if err := runner.Register(sigEngineCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register signal_engine collector")
+	}
 	runner.Start()
 
 	// 9. HTTP server with /health backed by real ping closures.

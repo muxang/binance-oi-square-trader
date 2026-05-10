@@ -37,8 +37,22 @@ var (
 		},
 		[]string{"collector"},
 	)
+
+	// SignalEvaluationsTotal counts Phase 2 signal_engine per-symbol
+	// evaluations by outcome. {outcome} only — symbol label intentionally
+	// excluded to keep cardinality bounded (530 × 4 = 2120 series risk
+	// per 1.8 metrics 纪律). Per-symbol detail goes to trader.log not metrics.
+	// Labels: outcome — "entered_full" | "entered_half" | "rejected" | "error".
+	// Cardinality: 4 series.
+	SignalEvaluationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_signal_evaluations_total",
+			Help: "Total Phase 2 signal evaluations by outcome (entered_full/entered_half/rejected/error).",
+		},
+		[]string{"outcome"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(CollectorRunsTotal, CollectorDurationSeconds)
+	prometheus.MustRegister(CollectorRunsTotal, CollectorDurationSeconds, SignalEvaluationsTotal)
 }
