@@ -39,11 +39,15 @@ DATA_SIZE=$(du -sh deploy/data 2>/dev/null | cut -f1)
 BACKUP_SIZE=$(du -sh backups 2>/dev/null | cut -f1)
 printf "  deploy/data:  %s\n  backups/:     %s\n" "${DATA_SIZE:-N/A}" "${BACKUP_SIZE:-N/A}"
 
-# 3. Activity — 9 collector tick complete (last 5min)
+# 3. Activity — 9 collector completed (last 5min)
+# collector names match c.Name() in each collector's Name() method:
+#   oi (not oi_history), square_feed (not square)
 section "Activity (last 5min, 9 collectors)"
 LOGS_5M=$($COMPOSE logs --since=5m --tail=2000 trader 2>/dev/null)
-for c in oi_history btc_regime klines square square_hashtag watchlist position_price signal_engine decision_engine; do
-    COUNT=$(echo "$LOGS_5M" | grep -E "\"collector\":\"${c}\"" 2>/dev/null | grep -cE "completed|tick complete" || true)
+for c in oi btc_regime klines square_feed square_hashtag watchlist position_price signal_engine decision_engine; do
+    # runner.go always logs: "collector completed collector=<name>" (pretty)
+    # or {"message":"collector completed","collector":"<name>",...}  (json)
+    COUNT=$(echo "$LOGS_5M" | grep -cE "collector completed collector=${c}( |$)|\"collector\":\"${c}\".*collector completed" 2>/dev/null || true)
     printf "  %-18s %s ticks\n" "$c" "$COUNT"
 done
 
