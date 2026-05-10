@@ -37,8 +37,8 @@
     }
 
     # /grafana 及子路径 — 公开 (走 Grafana 自己的 admin 密码认证)
+    # 不做 strip_prefix: Grafana 配 GF_SERVER_SERVE_FROM_SUB_PATH=true 自己处理 /grafana 前缀
     handle /grafana* {
-        uri strip_prefix /grafana
         reverse_proxy grafana:3000
     }
 
