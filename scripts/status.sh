@@ -43,14 +43,14 @@ printf "  deploy/data:  %s\n  backups/:     %s\n" "${DATA_SIZE:-N/A}" "${BACKUP_
 section "Activity (last 5min, 9 collectors)"
 LOGS_5M=$($COMPOSE logs --since=5m --tail=2000 trader 2>/dev/null)
 for c in oi_history btc_regime klines square square_hashtag watchlist position_price signal_engine decision_engine; do
-    COUNT=$(echo "$LOGS_5M" | grep -cE "\"collector\":\"${c}\".*tick complete|${c} tick complete" 2>/dev/null || true)
+    COUNT=$(echo "$LOGS_5M" | grep -E "\"collector\":\"${c}\"" 2>/dev/null | grep -cE "completed|tick complete" || true)
     printf "  %-18s %s ticks\n" "$c" "$COUNT"
 done
 
 # 4. Metrics 摘要
 section "Metrics 摘要 (key counters)"
 if curl -fs --max-time 3 http://localhost:2112/metrics > /tmp/.trader_metrics 2>/dev/null; then
-    grep -E '^trader_(collector_runs_total|decision_evaluations_total|panic_total|circuit_breaker_state|signals_total) ' /tmp/.trader_metrics \
+    grep -E '^trader_(collector_runs_total|decision_evaluations_total|panic_total|circuit_breaker_state|signals_total)' /tmp/.trader_metrics \
         | head -20
     rm -f /tmp/.trader_metrics
 else
