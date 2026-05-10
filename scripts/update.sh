@@ -81,18 +81,29 @@ ok "trader 已重启"
 # 3. 跑新迁移(若有)
 # -----------------------------------------------------------------------------
 step "运行数据库迁移"
-sleep 3
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml \
-    exec -T trader sh -c \
-    'migrate -path /app/migrations -database "$DATABASE_URL" up' \
+    run --rm --no-deps --entrypoint="" trader \
+    sh -c '/app/migrate -path /app/migrations -database "$DATABASE_URL" up' \
     || err "迁移失败"
 ok "迁移完成 (无新迁移则无操作)"
+
+step "等待 trader /health 就绪 (最多 60s)"
+for i in $(seq 1 20); do
+    if curl -fs --max-time 3 http://localhost:8080/health >/dev/null 2>&1; then
+        ok "trader /health OK"
+        break
+    fi
+    sleep 3
+    if [[ $i -eq 20 ]]; then
+        yellow "  ⚠ trader 60s 未就绪"
+        yellow "    docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml logs --tail=50 trader"
+    fi
+done
 
 # -----------------------------------------------------------------------------
 # 4. 健康检查
 # -----------------------------------------------------------------------------
 step "健康检查"
-sleep 5
 bash scripts/healthcheck.sh
 
 # -----------------------------------------------------------------------------

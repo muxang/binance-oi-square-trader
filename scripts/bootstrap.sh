@@ -52,7 +52,11 @@ fi
 
 # 锁定 .env 权限 (VPS 公网部署防其他用户读 secret)
 chmod 600 "$REPO_ROOT/.env"
-ok ".env 权限锁定 600"
+# 所有权归还给调用 sudo 的用户, 让其无需 sudo 直接读取
+if [[ -n "${SUDO_USER:-}" ]]; then
+    chown "$SUDO_USER" "$REPO_ROOT/.env"
+fi
+ok ".env 权限锁定 600 (owner: ${SUDO_USER:-root})"
 
 # 必需项
 REQUIRED_VARS=(
@@ -144,6 +148,12 @@ https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" \
     ok "Docker 安装完成"
 else
     ok "Docker 已安装: $(docker --version)"
+fi
+
+# docker group: 让调用 sudo 的用户无需 sudo 跑 docker 命令
+if [[ -n "${SUDO_USER:-}" ]]; then
+    usermod -aG docker "$SUDO_USER" 2>/dev/null || true
+    ok "$SUDO_USER 已加入 docker 组 (新 shell/重新登录后生效; 或: exec newgrp docker)"
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
