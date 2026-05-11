@@ -1,5 +1,15 @@
 apiVersion: 1
 
+# Round 9 follow-up: delete then re-create to add explicit uid (Grafana 12.x
+# refuses to mutate existing datasource uid in-place).
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+  - name: Loki
+    orgId: 1
+  - name: PostgreSQL
+    orgId: 1
+
 datasources:
   - name: Prometheus
     uid: prometheus
