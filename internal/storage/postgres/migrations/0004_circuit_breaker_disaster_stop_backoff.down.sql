@@ -1,0 +1,1 @@
+ALTER TABLE circuit_breaker_state DROP COLUMN IF EXISTS consecutive_disaster_stop_failures;

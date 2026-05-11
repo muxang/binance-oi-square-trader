@@ -9,6 +9,7 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"trader/internal/pkg/metrics"
 	"trader/internal/storage/postgres/gen"
 )
 
@@ -144,6 +145,12 @@ func stepCircuitBreaker(ctx context.Context, now time.Time, deps FilterDeps, cfg
 			}
 			return FilterResult{Passed: false, Reason: reason}
 		}
+		// Round 2: count auto-reset by halt_type label for ops visibility.
+		haltType := "unknown"
+		if state.HaltReason.Valid && state.HaltReason.String != "" {
+			haltType = state.HaltReason.String
+		}
+		metrics.HaltAutoResetTotal.WithLabelValues(haltType).Inc()
 		state.TradingHalted = false
 	}
 	if state.TradingHalted {

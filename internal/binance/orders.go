@@ -10,6 +10,7 @@ package binance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"trader/internal/pkg/metrics"
 )
 
 // OrderResult holds the relevant fill fields from a MARKET order response.
@@ -113,9 +116,37 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol, side, quantity, c
 	if clientOrderID != "" {
 		params.Set("newClientOrderId", clientOrderID)
 	}
-	body, err := c.doWrite(ctx, http.MethodPost, "/fapi/v1/order", params, 1)
+	body, err := c.doWriteRetry(ctx, http.MethodPost, "/fapi/v1/order", params, 1)
 	if err != nil {
+		// -2022 duplicate clientOrderId: order may have already succeeded on a
+		// prior attempt (e.g. network timeout that actually delivered). Look up
+		// by clientOrderId and return the existing fill state — idempotent path.
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && ClassifyError(apiErr.HTTPCode, apiErr.BizCode) == ActionTreatAsExisting {
+			metrics.OrdersIdempotentHitTotal.WithLabelValues(symbol).Inc()
+			existing, lookupErr := c.GetOrderByClientID(ctx, symbol, clientOrderID)
+			if lookupErr != nil {
+				return OrderResult{}, fmt.Errorf("place market -2022 + lookup %s %s: %w", symbol, clientOrderID, lookupErr)
+			}
+			return existing, nil
+		}
 		return OrderResult{}, fmt.Errorf("place market order %s %s: %w", symbol, side, err)
+	}
+	return parseOrderResult(body)
+}
+
+// GetOrderByClientID queries a single order by its clientOrderId.
+// Used by Round 2 idempotent recovery path (-2022 + startup recovery).
+//
+// ref: references/binance/urls.md §「Query Order」GET /fapi/v1/order
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Order
+func (c *Client) GetOrderByClientID(ctx context.Context, symbol, clientOrderID string) (OrderResult, error) {
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	params.Set("origClientOrderId", clientOrderID)
+	body, err := c.DoRead(ctx, "/fapi/v1/order", params, 1)
+	if err != nil {
+		return OrderResult{}, fmt.Errorf("get order by client id %s %s: %w", symbol, clientOrderID, err)
 	}
 	return parseOrderResult(body)
 }
@@ -167,7 +198,7 @@ func (c *Client) PlaceAlgoConditionalStop(ctx context.Context, symbol, quantity,
 	params.Set("triggerPrice", triggerPrice)
 	params.Set("workingType", "MARK_PRICE")
 	params.Set("reduceOnly", "true")
-	body, err := c.doWrite(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, 1)
+	body, err := c.doWriteRetry(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, 1)
 	if err != nil {
 		return AlgoOrderResult{}, fmt.Errorf("place algo stop %s: %w", symbol, err)
 	}

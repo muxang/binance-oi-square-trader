@@ -90,6 +90,26 @@ ON CONFLICT (trade_id) DO NOTHING;
 INSERT INTO trade_exits (trade_id, ts, type, qty, price, pnl)
 VALUES ($1, $2, $3, $4, $5, $6);
 
+-- name: GetEnteringTradesForRecovery :many
+-- Phase 4 Round 2 startup recovery: trades stuck in 'entering' with a
+-- client_order_id (Round 1+ inserts). Caller queries Binance by clientOrderId
+-- to reconcile actual state (FILLED → open, NEW → cancel+fail, etc).
+-- Excludes Phase 3 PARTIAL legacy (client_order_id IS NULL — handled by
+-- CleanupOrphanEnteringTrades).
+SELECT id, signal_id, symbol, direction, margin, notional, leverage, client_order_id, retry_count
+FROM trades
+WHERE status = 'entering'
+  AND client_order_id IS NOT NULL
+ORDER BY id;
+
+-- name: BumpTradeRetryCount :exec
+-- Phase 4 Round 2: bump retry_count + update client_order_id when -2022 hit
+-- doesn't resolve to existing fill (e.g. ambiguous state). r{n+1} format.
+UPDATE trades
+SET retry_count = retry_count + 1,
+    client_order_id = $2
+WHERE id = $1;
+
 -- name: CleanupOrphanEnteringTrades :execrows
 -- Phase 4 Round 1 follow-up: orphan cleanup on trader startup.
 -- 命中条件: status='entering' AND entry_ts IS NULL AND client_order_id IS NULL.

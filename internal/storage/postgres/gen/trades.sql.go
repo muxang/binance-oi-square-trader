@@ -307,6 +307,60 @@ func (q *Queries) InsertTradeExit(ctx context.Context, arg InsertTradeExitParams
 	return err
 }
 
+const getEnteringTradesForRecovery = `-- name: GetEnteringTradesForRecovery :many
+SELECT id, signal_id, symbol, direction, margin, notional, leverage, client_order_id, retry_count
+FROM trades
+WHERE status = 'entering'
+  AND client_order_id IS NOT NULL
+ORDER BY id
+`
+
+type GetEnteringTradesForRecoveryRow struct {
+	ID            int64
+	SignalID      pgtype.Int8
+	Symbol        string
+	Direction     string
+	Margin        decimal.Decimal
+	Notional      decimal.Decimal
+	Leverage      int16
+	ClientOrderID pgtype.Text
+	RetryCount    int32
+}
+
+func (q *Queries) GetEnteringTradesForRecovery(ctx context.Context) ([]GetEnteringTradesForRecoveryRow, error) {
+	rows, err := q.db.Query(ctx, getEnteringTradesForRecovery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetEnteringTradesForRecoveryRow
+	for rows.Next() {
+		var i GetEnteringTradesForRecoveryRow
+		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.Margin, &i.Notional, &i.Leverage, &i.ClientOrderID, &i.RetryCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
+const bumpTradeRetryCount = `-- name: BumpTradeRetryCount :exec
+UPDATE trades
+SET retry_count = retry_count + 1,
+    client_order_id = $2
+WHERE id = $1
+`
+
+type BumpTradeRetryCountParams struct {
+	ID            int64
+	ClientOrderID pgtype.Text
+}
+
+func (q *Queries) BumpTradeRetryCount(ctx context.Context, arg BumpTradeRetryCountParams) error {
+	_, err := q.db.Exec(ctx, bumpTradeRetryCount, arg.ID, arg.ClientOrderID)
+	return err
+}
+
 const cleanupOrphanEnteringTrades = `-- name: CleanupOrphanEnteringTrades :execrows
 UPDATE trades
 SET status = 'failed',

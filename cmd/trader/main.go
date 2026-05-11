@@ -96,6 +96,13 @@ func run() error {
 		log.Info().Int64("rows", n).Msg("orphan entering trades cleaned")
 	}
 
+	// Phase 4 Round 2 startup recovery: reconcile Round 1+ 'entering' rows
+	// (have client_order_id) against Binance order state. FILLED → open,
+	// NEW/PARTIAL → cancel+fail, not_found → fail. Per-row try; non-fatal.
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, 30*time.Second)
+	_, _ = execution.RecoverEnteringTrades(recoveryCtx, gen.New(pgPool), client, log)
+	recoveryCancel()
+
 	// 8b. Redis client + ping.
 	redisOpts, err := redis.ParseURL(cfg.DB.RedisURL)
 	if err != nil {

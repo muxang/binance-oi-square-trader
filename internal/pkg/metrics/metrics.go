@@ -108,6 +108,38 @@ var (
 		},
 		[]string{"step"},
 	)
+
+	// Phase 4 Round 2: retry + idempotency + halt auto-reset metrics.
+
+	// OrdersRetryTotal counts retry attempts per signed write path.
+	// Labels: path, error_code (-1021 / -2022 / network / 5xx code / etc), retry_n (1/2/3).
+	OrdersRetryTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orders_retry_total",
+			Help: "Phase 4 Round 2 signed write retry attempts by path+error_code+retry_n.",
+		},
+		[]string{"path", "error_code", "retry_n"},
+	)
+
+	// OrdersIdempotentHitTotal counts -2022 duplicate clientOrderId resolutions.
+	// Each hit is a recovery from a prior partial-success state.
+	OrdersIdempotentHitTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orders_idempotent_hit_total",
+			Help: "Phase 4 Round 2 -2022 duplicate clientOrderId lookups.",
+		},
+		[]string{"symbol"},
+	)
+
+	// HaltAutoResetTotal counts circuit breaker auto-resets after halt_until expiry.
+	// Labels: halt_type (disaster_stop_failed / btc_5m_crash / etc).
+	HaltAutoResetTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_halt_auto_reset_total",
+			Help: "Circuit breaker auto-resets after halt_until expired.",
+		},
+		[]string{"halt_type"},
+	)
 )
 
 func init() {
@@ -116,5 +148,6 @@ func init() {
 		SignalEvaluationsTotal,
 		DecisionEvaluationsTotal, DecisionSizingDeviationPct,
 		OrdersTotal, DisasterStopsPlacedTotal, OrderLatencySeconds,
+		OrdersRetryTotal, OrdersIdempotentHitTotal, HaltAutoResetTotal,
 	)
 }

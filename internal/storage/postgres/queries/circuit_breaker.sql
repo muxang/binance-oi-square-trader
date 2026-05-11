@@ -18,14 +18,27 @@ SET trading_halted = TRUE,
     last_btc_crash_ts = $2
 WHERE id = 1;
 
--- name: TripDisasterStopFailHalt :exec
--- Phase 4: trip circuit breaker when disaster stop placement fails.
--- Per Round 0 mu decision: not in SPEC's 5 halt reasons; halt_until=NULL (manual reset).
+-- name: TripDisasterStopFailHalt :one
+-- Phase 4 Round 2: exponential backoff replacing manual reset.
+-- Backoff = 1h × 2^current_counter, capped 24h. Counter increments per call.
+-- Counter resets on successful Algo place (ResetDisasterStopFailCounter).
+-- Pre-update counter references give: 0→1h, 1→2h, 2→4h, 3→8h, 4→16h, 5+→24h cap.
+-- Returns new halt_until + counter so caller can log + emit metrics.
 UPDATE circuit_breaker_state
 SET trading_halted = TRUE,
     halt_reason = 'disaster_stop_placement_failed',
-    halt_until = NULL
-WHERE id = 1;
+    halt_until = NOW() + INTERVAL '1 hour' * LEAST(POWER(2, consecutive_disaster_stop_failures)::INT, 24),
+    consecutive_disaster_stop_failures = consecutive_disaster_stop_failures + 1
+WHERE id = 1
+RETURNING halt_until, consecutive_disaster_stop_failures;
+
+-- name: ResetDisasterStopFailCounter :exec
+-- Phase 4 Round 2: called when PlaceAlgoConditionalStop succeeds.
+-- Clears the consecutive failure counter so the next failure starts at 1h backoff.
+UPDATE circuit_breaker_state
+SET consecutive_disaster_stop_failures = 0
+WHERE id = 1
+  AND consecutive_disaster_stop_failures > 0;
 
 -- name: ResetHalt :exec
 -- Phase 3 auto-reset when halt_until has passed. Idempotent — safe to run

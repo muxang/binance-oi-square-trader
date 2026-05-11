@@ -36,18 +36,42 @@ func (q *Queries) GetCircuitBreakerState(ctx context.Context) (CircuitBreakerSta
 	return i, err
 }
 
-const tripDisasterStopFailHalt = `-- name: TripDisasterStopFailHalt :exec
+const tripDisasterStopFailHalt = `-- name: TripDisasterStopFailHalt :one
 UPDATE circuit_breaker_state
 SET trading_halted = TRUE,
     halt_reason = 'disaster_stop_placement_failed',
-    halt_until = NULL
+    halt_until = NOW() + INTERVAL '1 hour' * LEAST(POWER(2, consecutive_disaster_stop_failures)::INT, 24),
+    consecutive_disaster_stop_failures = consecutive_disaster_stop_failures + 1
 WHERE id = 1
+RETURNING halt_until, consecutive_disaster_stop_failures
 `
 
-// Phase 4 disaster stop failure trip. Per Round 0 mu decision: not in SPEC's
-// 5 halt reasons; halt_until=NULL (no auto-recovery window — operator must clear).
-func (q *Queries) TripDisasterStopFailHalt(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, tripDisasterStopFailHalt)
+type TripDisasterStopFailHaltRow struct {
+	HaltUntil                       pgtype.Timestamptz
+	ConsecutiveDisasterStopFailures int32
+}
+
+// Phase 4 Round 2: exponential backoff (1h/2h/4h/8h/16h/24h-cap). Returns the
+// applied halt_until + the new counter so caller can log + emit metrics.
+// Auto-reset by existing filters.go path once halt_until passes.
+func (q *Queries) TripDisasterStopFailHalt(ctx context.Context) (TripDisasterStopFailHaltRow, error) {
+	row := q.db.QueryRow(ctx, tripDisasterStopFailHalt)
+	var r TripDisasterStopFailHaltRow
+	err := row.Scan(&r.HaltUntil, &r.ConsecutiveDisasterStopFailures)
+	return r, err
+}
+
+const resetDisasterStopFailCounter = `-- name: ResetDisasterStopFailCounter :exec
+UPDATE circuit_breaker_state
+SET consecutive_disaster_stop_failures = 0
+WHERE id = 1
+  AND consecutive_disaster_stop_failures > 0
+`
+
+// Phase 4 Round 2: called when PlaceAlgoConditionalStop succeeds.
+// Idempotent: WHERE counter > 0 makes it cheap on each successful place.
+func (q *Queries) ResetDisasterStopFailCounter(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, resetDisasterStopFailCounter)
 	return err
 }
 

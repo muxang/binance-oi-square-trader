@@ -227,9 +227,15 @@ func (e *Executor) placeDisasterStop(
 		metrics.DisasterStopsPlacedTotal.WithLabelValues(symbol, "failed").Inc()
 		e.emergencyClose(ctx, tradeID, symbol, fillQty, fillPrice,
 			"disaster_stop_placement_failed", log)
-		// Trip circuit breaker (per Round 0 mu decision: log-only halt, no halt_until).
-		if cbErr := e.db.TripDisasterStopFailHalt(ctx); cbErr != nil {
+		// Round 2 Step 3: exponential backoff (1h/2h/4h/8h/16h/24h cap), auto-reset
+		// by filters.go path once halt_until passes. Counter resets on next success.
+		if cbRow, cbErr := e.db.TripDisasterStopFailHalt(ctx); cbErr != nil {
 			log.Error().Err(cbErr).Msg("order.disaster_stop.failed: circuit_breaker trip also failed")
+		} else {
+			log.Warn().
+				Time("halt_until", cbRow.HaltUntil.Time).
+				Int32("consecutive_failures", cbRow.ConsecutiveDisasterStopFailures).
+				Msg("circuit_breaker: disaster_stop_failed trip (backoff)")
 		}
 		return
 	}
@@ -241,6 +247,11 @@ func (e *Executor) placeDisasterStop(
 		Str("status", algoResult.Status).
 		Msg("order.disaster_stop.placed")
 	metrics.DisasterStopsPlacedTotal.WithLabelValues(symbol, "success").Inc()
+	// Round 2 Step 3: success clears the consecutive-failure counter (1h backoff
+	// starts fresh on the next failure). Idempotent: only fires if counter > 0.
+	if err := e.db.ResetDisasterStopFailCounter(ctx); err != nil {
+		log.Warn().Err(err).Msg("order.disaster_stop.placed: counter reset failed (non-fatal)")
+	}
 
 	// Step 7: persist disaster stop order ID.
 	if err := e.db.UpdateTradeDisasterStop(ctx, gen.UpdateTradeDisasterStopParams{
