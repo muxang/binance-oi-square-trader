@@ -110,6 +110,19 @@ SET retry_count = retry_count + 1,
     client_order_id = $2
 WHERE id = $1;
 
+-- name: SumOpenUnrealizedSnapshot :one
+-- Phase 4 Round 6 TripTotalFloatLoss: aggregate unrealized PnL across all
+-- open positions using position_states.current_qty × last_known mark price.
+-- Returns NULL when no open trades (caller treats as 0).
+-- NOTE: uses entry_price as fallback mark (Phase 4 v0.1) — Round 6 trip
+-- function computes accurate float by combining with Redis latest_price.
+-- This query just returns the raw qty × entry that the trip function uses
+-- to weight Redis mark prices. Trip function does the actual mark - entry math.
+SELECT t.id, t.symbol, t.entry_price, ps.current_qty
+FROM trades t
+INNER JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status IN ('open', 'partial');
+
 -- name: ListOpenTradesForExit :many
 -- Phase 4 Round 5: rows exit_manager iterates each 1min tick for soft/hard
 -- timeout evaluation. Returns enough for the close pipeline:

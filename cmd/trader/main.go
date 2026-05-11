@@ -237,10 +237,13 @@ func run() error {
 		log.Fatal().Err(err).Msg("register exit_manager collector")
 	}
 
+	// Phase 4 Round 6: 5-item circuit breaker tripper (called from decision_engine).
+	circuitBreaker := execution.NewCircuitBreakerTripper(gen.New(pgPool), client, rdb, log)
+
 	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
 	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.
 	decisionEngineCol := collector.NewDecisionEngineCollector(
-		gen.New(pgPool), rdb, symbolService, executor, log, collector.DecisionEngineConfig{
+		gen.New(pgPool), rdb, symbolService, executor, circuitBreaker, log, collector.DecisionEngineConfig{
 			PerTickTimeout: 4 * time.Minute,
 		},
 	)

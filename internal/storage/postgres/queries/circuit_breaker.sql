@@ -6,6 +6,15 @@ SELECT id, trading_halted, halt_reason, halt_until,
 FROM circuit_breaker_state
 WHERE id = 1;
 
+-- name: GetCircuitBreakerStateForTrips :one
+-- Phase 4 Round 6: full state read for trip evaluation.
+-- Adds last_loss_at (for 24h window) + consec_disaster (separate counter).
+SELECT id, trading_halted, halt_reason, halt_until,
+       daily_pnl, daily_pnl_date, consecutive_losses, last_btc_crash_ts,
+       last_loss_at, consecutive_disaster_stop_failures
+FROM circuit_breaker_state
+WHERE id = 1;
+
 -- name: TripBTCHalt :exec
 -- Phase 3 decision engine triggers when BTC 5min drop > 3% (SPEC §风控熔断
 -- L278). 30min halt window per SPEC. last_btc_crash_ts records the trip ts
@@ -61,10 +70,10 @@ SET trading_halted = TRUE,
 WHERE id = 1;
 
 -- name: UpdateAfterTradeClose :exec
--- Phase 4 Round 5: rolls daily_pnl + consecutive_losses after a trade closes.
+-- Phase 4 Round 5+6: rolls daily_pnl + consecutive_losses + last_loss_at.
 -- consecutive_losses: +1 on loss (pnl < 0), reset to 0 on win/breakeven (pnl >= 0).
 -- daily_pnl: accumulates today; resets when daily_pnl_date differs from today (BJT).
--- Round 6 will read these for trip evaluation.
+-- last_loss_at: updated only on loss (used by Round 6 TripConsecutiveLosses 24h window).
 UPDATE circuit_breaker_state
 SET consecutive_losses = CASE
         WHEN ($1::numeric) < 0 THEN consecutive_losses + 1
@@ -74,7 +83,11 @@ SET consecutive_losses = CASE
         WHEN daily_pnl_date = $2 THEN daily_pnl + $1::numeric
         ELSE $1::numeric
     END,
-    daily_pnl_date = $2
+    daily_pnl_date = $2,
+    last_loss_at = CASE
+        WHEN ($1::numeric) < 0 THEN NOW()
+        ELSE last_loss_at
+    END
 WHERE id = 1;
 
 -- name: ResetDisasterStopFailCounter :exec

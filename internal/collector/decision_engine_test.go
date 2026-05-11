@@ -41,7 +41,7 @@ func TestDecisionEngine_SymbolClass(t *testing.T) {
 // --- 1 unit: adapter constructor wires deps correctly ---
 
 func TestDecisionEngine_NewCollector_NameAndDeps(t *testing.T) {
-	c := NewDecisionEngineCollector(nil, nil, nil, nil, zerolog.Nop(), DecisionEngineConfig{})
+	c := NewDecisionEngineCollector(nil, nil, nil, nil, nil, zerolog.Nop(), DecisionEngineConfig{})
 	assert.Equal(t, "decision_engine", c.Name())
 	assert.NotNil(t, c.deps, "adapter wired")
 }

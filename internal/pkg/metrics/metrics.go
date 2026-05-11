@@ -266,6 +266,65 @@ var (
 		},
 		[]string{"exit_reason"},
 	)
+
+	// Phase 4 Round 6: 5-item circuit breaker trip metrics.
+
+	// CircuitBreakerTripsTotal counts trips by trip_type.
+	CircuitBreakerTripsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_circuit_breaker_trips_total",
+			Help: "Phase 4 Round 6 5-item circuit breaker trips by trip_type.",
+		},
+		[]string{"trip_type"},
+	)
+
+	// CircuitBreakerState is 1 when halted, 0 when normal. Set every tick.
+	CircuitBreakerState = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "trader_circuit_breaker_state",
+			Help: "1=halted, 0=normal.",
+		},
+	)
+
+	// AccountBalanceUSDT last-tick USDT availableBalance fetched for trip evaluation.
+	AccountBalanceUSDT = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "trader_account_balance_usdt",
+			Help: "Last-tick USDT availableBalance (Round 6 evaluation).",
+		},
+	)
+
+	// DailyPnlUSDT is the rolling daily PnL value tracked in circuit_breaker_state.
+	DailyPnlUSDT = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "trader_daily_pnl_usdt",
+			Help: "Rolling daily realized PnL (BJT).",
+		},
+	)
+
+	// ConsecutiveLossesGauge is the current consecutive_losses counter.
+	ConsecutiveLossesGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "trader_consecutive_losses",
+			Help: "Current consecutive losing closes count.",
+		},
+	)
+
+	// BTC30MinDropPct is the last-tick 30min BTC drop percentage (positive when down).
+	BTC30MinDropPct = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "trader_btc_30min_drop_pct",
+			Help: "BTC 30min drop percentage (positive when dropping).",
+		},
+	)
+
+	// UnrealizedPnlTotalUSDT is the sum of unrealized PnL across all open positions.
+	UnrealizedPnlTotalUSDT = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "trader_unrealized_pnl_total_usdt",
+			Help: "Sum of unrealized PnL across all open positions.",
+		},
+	)
 )
 
 func init() {
@@ -278,5 +337,7 @@ func init() {
 		PositionSyncRunsTotal, PositionSyncDriftTotal, PositionMarginRatio, MarginCallTriggeredTotal,
 		PositionDriftHaltTotal, PositionLocalOnlyOrphanTotal, PositionBinanceOnlyUnknownTotal, HaltRCAPendingTotal,
 		ExitsTotal, ExitLatencySeconds, RealizedPnlTotal, PositionHoldDurationHours,
+		CircuitBreakerTripsTotal, CircuitBreakerState, AccountBalanceUSDT, DailyPnlUSDT,
+		ConsecutiveLossesGauge, BTC30MinDropPct, UnrealizedPnlTotalUSDT,
 	)
 }

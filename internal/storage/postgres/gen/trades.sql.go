@@ -361,6 +361,39 @@ func (q *Queries) BumpTradeRetryCount(ctx context.Context, arg BumpTradeRetryCou
 	return err
 }
 
+const sumOpenUnrealizedSnapshot = `-- name: SumOpenUnrealizedSnapshot :one
+SELECT t.id, t.symbol, t.entry_price, ps.current_qty
+FROM trades t
+INNER JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status IN ('open', 'partial')
+`
+
+type SumOpenUnrealizedSnapshotRow struct {
+	ID         int64
+	Symbol     string
+	EntryPrice pgtype.Numeric
+	CurrentQty pgtype.Numeric
+}
+
+// Round 6: trip evaluator joins this with Redis latest_price to compute total float loss.
+// (Named :one in SQL by convention but actually returns many rows — sqlc would gen :many here.)
+func (q *Queries) SumOpenUnrealizedSnapshot(ctx context.Context) ([]SumOpenUnrealizedSnapshotRow, error) {
+	rows, err := q.db.Query(ctx, sumOpenUnrealizedSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumOpenUnrealizedSnapshotRow
+	for rows.Next() {
+		var i SumOpenUnrealizedSnapshotRow
+		if err := rows.Scan(&i.ID, &i.Symbol, &i.EntryPrice, &i.CurrentQty); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
 const listOpenTradesForExit = `-- name: ListOpenTradesForExit :many
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,

@@ -37,6 +37,37 @@ func (q *Queries) GetCircuitBreakerState(ctx context.Context) (CircuitBreakerSta
 	return i, err
 }
 
+const getCircuitBreakerStateForTrips = `-- name: GetCircuitBreakerStateForTrips :one
+SELECT id, trading_halted, halt_reason, halt_until,
+       daily_pnl, daily_pnl_date, consecutive_losses, last_btc_crash_ts,
+       last_loss_at, consecutive_disaster_stop_failures
+FROM circuit_breaker_state
+WHERE id = 1
+`
+
+type GetCircuitBreakerStateForTripsRow struct {
+	ID                              int16
+	TradingHalted                   bool
+	HaltReason                      pgtype.Text
+	HaltUntil                       pgtype.Timestamptz
+	DailyPnl                        decimal.Decimal
+	DailyPnlDate                    pgtype.Date
+	ConsecutiveLosses               int16
+	LastBtcCrashTs                  pgtype.Timestamptz
+	LastLossAt                      pgtype.Timestamptz
+	ConsecutiveDisasterStopFailures int32
+}
+
+// Round 6: full state read for trip evaluation.
+func (q *Queries) GetCircuitBreakerStateForTrips(ctx context.Context) (GetCircuitBreakerStateForTripsRow, error) {
+	row := q.db.QueryRow(ctx, getCircuitBreakerStateForTrips)
+	var i GetCircuitBreakerStateForTripsRow
+	err := row.Scan(&i.ID, &i.TradingHalted, &i.HaltReason, &i.HaltUntil,
+		&i.DailyPnl, &i.DailyPnlDate, &i.ConsecutiveLosses, &i.LastBtcCrashTs,
+		&i.LastLossAt, &i.ConsecutiveDisasterStopFailures)
+	return i, err
+}
+
 const tripDisasterStopFailHalt = `-- name: TripDisasterStopFailHalt :one
 UPDATE circuit_breaker_state
 SET consecutive_disaster_stop_failures = CASE
@@ -107,7 +138,11 @@ SET consecutive_losses = CASE
         WHEN daily_pnl_date = $2 THEN daily_pnl + $1::numeric
         ELSE $1::numeric
     END,
-    daily_pnl_date = $2
+    daily_pnl_date = $2,
+    last_loss_at = CASE
+        WHEN ($1::numeric) < 0 THEN NOW()
+        ELSE last_loss_at
+    END
 WHERE id = 1
 `
 

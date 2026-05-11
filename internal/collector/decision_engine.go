@@ -57,7 +57,8 @@ func decisionEngineDefaults(cfg DecisionEngineConfig) DecisionEngineConfig {
 // Phase 4: executor is wired in to PlaceEntry for trade_entering outcomes.
 type DecisionEngineCollector struct {
 	deps     decision.EngineDeps
-	executor *execution.Executor // Phase 4 entry executor; nil in Phase 3-only deploys
+	executor *execution.Executor          // Phase 4 entry executor; nil in Phase 3-only deploys
+	cb       *execution.CircuitBreakerTripper // Phase 4 Round 6 5-item trip; nil → skipped
 	log      zerolog.Logger
 	cfg      DecisionEngineConfig
 	nowFunc  func() time.Time
@@ -65,11 +66,11 @@ type DecisionEngineCollector struct {
 
 func NewDecisionEngineCollector(
 	queries *gen.Queries, rdb *redis.Client, symbols *binance.SymbolService,
-	executor *execution.Executor,
+	executor *execution.Executor, cb *execution.CircuitBreakerTripper,
 	log zerolog.Logger, cfg DecisionEngineConfig,
 ) *DecisionEngineCollector {
 	cfg = decisionEngineDefaults(cfg)
-	c := &DecisionEngineCollector{log: log, cfg: cfg, nowFunc: timez.NowUTC, executor: executor}
+	c := &DecisionEngineCollector{log: log, cfg: cfg, nowFunc: timez.NowUTC, executor: executor, cb: cb}
 	c.deps = &decisionDataAccess{queries: queries, redis: rdb, symbols: symbols, log: log}
 	return c
 }
@@ -79,6 +80,13 @@ func (c *DecisionEngineCollector) Name() string { return "decision_engine" }
 func (c *DecisionEngineCollector) Run(ctx context.Context) error {
 	tickCtx, cancel := context.WithTimeout(ctx, c.cfg.PerTickTimeout)
 	defer cancel()
+
+	// Phase 4 Round 6: 5-item circuit breaker trip evaluation BEFORE RunTick.
+	// If any trip fires, decision engine still runs but stepCircuitBreaker
+	// (filters.go) will short-circuit rejects (trading_halted=true).
+	if c.cb != nil {
+		c.cb.EvaluateAll(tickCtx)
+	}
 
 	report, err := decision.RunTick(tickCtx, c.nowFunc(), c.deps, c.cfg.EngineCfg)
 	if err != nil {
