@@ -238,7 +238,22 @@ func run() error {
 	}
 
 	// Phase 4 Round 6: 5-item circuit breaker tripper (called from decision_engine).
-	circuitBreaker := execution.NewCircuitBreakerTripper(gen.New(pgPool), client, rdb, log)
+	// mu's decision B (2026-05-11): default thresholds 8% daily / 8 consec / 3% BTC / 12% float / 3 api_err.
+	cbCfg := execution.CircuitBreakerConfig{
+		DailyLossHaltPct:      cfg.Risk.DailyLossHaltPct,
+		ConsecutiveLossCount:  cfg.Risk.ConsecutiveLossHaltCount,
+		BTCCrashHaltPct:       cfg.Risk.BTCCrashHaltPct,
+		TotalFloatLossHaltPct: cfg.Risk.TotalFloatLossHaltPct,
+		APIErrorRateLimit:     cfg.Risk.APIErrorRateLimit,
+	}
+	log.Info().
+		Str("daily_loss_pct", cbCfg.DailyLossHaltPct.String()).
+		Int("consec_count", cbCfg.ConsecutiveLossCount).
+		Str("btc_crash_pct", cbCfg.BTCCrashHaltPct.String()).
+		Str("total_float_pct", cbCfg.TotalFloatLossHaltPct.String()).
+		Int("api_err_limit", cbCfg.APIErrorRateLimit).
+		Msg("circuit_breaker config")
+	circuitBreaker := execution.NewCircuitBreakerTripper(gen.New(pgPool), client, rdb, cbCfg, log)
 
 	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
 	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.

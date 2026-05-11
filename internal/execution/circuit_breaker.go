@@ -35,19 +35,29 @@ import (
 	"trader/internal/storage/postgres/gen"
 )
 
-// Trip thresholds (SPEC + Round 0 §4.4).
+// Round 6 fixed constants (windows / durations / barlines).
 const (
-	dailyLossHaltPct       = 0.05 // 5% of balance
-	consecutiveLossCount   = 5
 	consecutiveLossWindow  = 24 * time.Hour
-	btcCrashHaltPct        = 0.03 // 3% 30min drop
-	totalFloatLossHaltPct  = 0.08 // 8% of balance
-	apiErrorRateLimit      = 3    // per 1min
 	apiErrorRateWindow     = 1 * time.Minute
 	cbHaltDuration         = 24 * time.Hour
 	btcCrash30MinBarCount  = 6 // 6 × 5min = 30min
 	btcCrashKlineTimeframe = "5m"
 )
+
+// CircuitBreakerConfig holds the trip thresholds (read from .env via config.RiskConfig).
+// mu's decision B (2026-05-11): default values v0.1 关键参数:
+//   DailyLossHaltPct       = 0.08  (8% — 1000U 起步: 80U halt)
+//   ConsecutiveLossCount   = 8     (8 次 within 24h)
+//   BTCCrashHaltPct        = 0.03  (3% 30min drop — 不变)
+//   TotalFloatLossHaltPct  = 0.12  (12% — 120U halt)
+//   APIErrorRateLimit      = 3     (3 in 1min — 不变)
+type CircuitBreakerConfig struct {
+	DailyLossHaltPct      decimal.Decimal
+	ConsecutiveLossCount  int
+	BTCCrashHaltPct       decimal.Decimal
+	TotalFloatLossHaltPct decimal.Decimal
+	APIErrorRateLimit     int
+}
 
 // Trip type label values (also written to halt_rca.halt_type).
 const (
@@ -78,12 +88,13 @@ type CircuitBreakerTripper struct {
 	db    CircuitBreakerDeps
 	bc    CircuitBreakerBinance
 	rdb   *redis.Client
+	cfg   CircuitBreakerConfig
 	log   zerolog.Logger
 	nowFn func() time.Time
 }
 
-func NewCircuitBreakerTripper(db CircuitBreakerDeps, bc CircuitBreakerBinance, rdb *redis.Client, log zerolog.Logger) *CircuitBreakerTripper {
-	return &CircuitBreakerTripper{db: db, bc: bc, rdb: rdb, log: log, nowFn: timez.NowUTC}
+func NewCircuitBreakerTripper(db CircuitBreakerDeps, bc CircuitBreakerBinance, rdb *redis.Client, cfg CircuitBreakerConfig, log zerolog.Logger) *CircuitBreakerTripper {
+	return &CircuitBreakerTripper{db: db, bc: bc, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
 }
 
 // EvaluateAll runs the 5 trips in fastest-to-slowest order. Returns true if
@@ -156,15 +167,15 @@ func (cb *CircuitBreakerTripper) tripAPIErrorRate(ctx context.Context) bool {
 		cb.log.Warn().Err(err).Msg("circuit_breaker.api_error: count failed")
 		return false
 	}
-	if count < apiErrorRateLimit {
+	if int(count) < cb.cfg.APIErrorRateLimit {
 		return false
 	}
-	cb.log.Warn().Int64("error_count", count).Int("threshold", apiErrorRateLimit).
+	cb.log.Warn().Int64("error_count", count).Int("threshold", cb.cfg.APIErrorRateLimit).
 		Float64("window_seconds", apiErrorRateWindow.Seconds()).
 		Msg("circuit_breaker.trip.api_error")
 	cb.fireTrip(ctx, tripTypeAPIError, map[string]any{
 		"error_count":    count,
-		"threshold":      apiErrorRateLimit,
+		"threshold":      cb.cfg.APIErrorRateLimit,
 		"window_seconds": apiErrorRateWindow.Seconds(),
 	})
 	return true
@@ -172,11 +183,11 @@ func (cb *CircuitBreakerTripper) tripAPIErrorRate(ctx context.Context) bool {
 
 // tripConsecutiveLosses fires when count ≥ 5 AND last loss was within 24h.
 func (cb *CircuitBreakerTripper) tripConsecutiveLosses(ctx context.Context, state gen.GetCircuitBreakerStateForTripsRow) bool {
-	if int(state.ConsecutiveLosses) < consecutiveLossCount {
+	if int(state.ConsecutiveLosses) < cb.cfg.ConsecutiveLossCount {
 		return false
 	}
 	if !state.LastLossAt.Valid || cb.nowFn().Sub(state.LastLossAt.Time) > consecutiveLossWindow {
-		// 5+ losses but last one was > 24h ago → not a fresh streak.
+		// 8+ losses but last one was > 24h ago → not a fresh streak.
 		return false
 	}
 	cb.log.Warn().Int16("count", state.ConsecutiveLosses).
@@ -184,7 +195,7 @@ func (cb *CircuitBreakerTripper) tripConsecutiveLosses(ctx context.Context, stat
 		Msg("circuit_breaker.trip.consec_losses")
 	cb.fireTrip(ctx, tripTypeConsecLosses, map[string]any{
 		"count":        state.ConsecutiveLosses,
-		"threshold":    consecutiveLossCount,
+		"threshold":    cb.cfg.ConsecutiveLossCount,
 		"last_loss_at": state.LastLossAt.Time.Format(time.RFC3339),
 		"window_hours": consecutiveLossWindow.Hours(),
 	})
@@ -197,18 +208,18 @@ func (cb *CircuitBreakerTripper) tripDailyLoss(ctx context.Context, dailyPnl, ba
 		return false
 	}
 	ratio := dailyPnl.Div(balance) // negative
-	threshold := decimal.NewFromFloat(-dailyLossHaltPct)
+	threshold := cb.cfg.DailyLossHaltPct.Neg()
 	if ratio.GreaterThan(threshold) {
 		return false
 	}
 	cb.log.Warn().Str("daily_pnl", dailyPnl.String()).Str("balance", balance.String()).
-		Str("ratio", ratio.String()).Float64("threshold", -dailyLossHaltPct).
+		Str("ratio", ratio.String()).Str("threshold", threshold.String()).
 		Msg("circuit_breaker.trip.daily_loss")
 	cb.fireTrip(ctx, tripTypeDailyLoss, map[string]any{
 		"daily_pnl":     dailyPnl.String(),
 		"balance":       balance.String(),
 		"ratio":         ratio.String(),
-		"threshold_pct": -dailyLossHaltPct,
+		"threshold_pct": threshold.String(),
 	})
 	return true
 }
@@ -242,19 +253,19 @@ func (cb *CircuitBreakerTripper) tripTotalFloatLoss(ctx context.Context, balance
 		return false
 	}
 	ratio := totalUnrealized.Div(balance)
-	threshold := decimal.NewFromFloat(-totalFloatLossHaltPct)
+	threshold := cb.cfg.TotalFloatLossHaltPct.Neg()
 	if ratio.GreaterThan(threshold) {
 		return false
 	}
 	cb.log.Warn().Str("sum_unrealized", totalUnrealized.String()).Str("balance", balance.String()).
-		Str("ratio", ratio.String()).Float64("threshold", -totalFloatLossHaltPct).
+		Str("ratio", ratio.String()).Str("threshold", threshold.String()).
 		Int("positions", len(rows)).
 		Msg("circuit_breaker.trip.total_float_loss")
 	cb.fireTrip(ctx, tripTypeTotalFloatLoss, map[string]any{
 		"sum_unrealized": totalUnrealized.String(),
 		"balance":        balance.String(),
 		"ratio":          ratio.String(),
-		"threshold_pct":  -totalFloatLossHaltPct,
+		"threshold_pct":  threshold.String(),
 		"positions":      len(rows),
 	})
 	return true
@@ -276,16 +287,15 @@ func (cb *CircuitBreakerTripper) tripBTCCrash(ctx context.Context) bool {
 	}
 	dropPct := oldest.Sub(newest).Div(oldest) // positive when dropping
 	metrics.BTC30MinDropPct.Set(mustFloat(dropPct))
-	threshold := decimal.NewFromFloat(btcCrashHaltPct)
-	if dropPct.LessThan(threshold) {
+	if dropPct.LessThan(cb.cfg.BTCCrashHaltPct) {
 		return false
 	}
-	cb.log.Warn().Str("drop_pct", dropPct.String()).Float64("threshold", btcCrashHaltPct).
+	cb.log.Warn().Str("drop_pct", dropPct.String()).Str("threshold", cb.cfg.BTCCrashHaltPct.String()).
 		Str("start_price", oldest.String()).Str("current_price", newest.String()).
 		Msg("circuit_breaker.trip.btc_crash")
 	cb.fireTrip(ctx, tripTypeBTCCrash, map[string]any{
 		"drop_pct":      dropPct.String(),
-		"threshold":     btcCrashHaltPct,
+		"threshold":     cb.cfg.BTCCrashHaltPct.String(),
 		"start_price":   oldest.String(),
 		"current_price": newest.String(),
 		"window_min":    30,
