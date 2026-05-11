@@ -1,0 +1,18 @@
+# Runtime data — Loki/Prometheus/Grafana WAL and persistent volumes
+deploy/data/
+
+# Claude Code memory
+.claude/
+
+# Git history (large, not needed in build context)
+.git/
+
+# Docs and references (not needed for Go build)
+docs/
+references/
+backups/
+*.md
+
+# Test coverage output
+*.out
+*.prof
