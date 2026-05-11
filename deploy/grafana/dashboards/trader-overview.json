@@ -47,7 +47,7 @@
         "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["last"] },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
-      "description": "11 collectors success rate per minute. 1min cron = ~1.0, 5min cron = ~0.2, 15min cron = ~0.067. 任一掉到 0 表示该 collector 挂."
+      "description": "11 collectors success rate per minute. 1min cron = ~1.0, 5min cron = ~0.2, 15min cron = ~0.067, **60min cron (square_feed) = ~0.017** — square_feed 在 [5m] rate 窗口 < 1 个样本时显示 0,属正常,非故障. 判定挂: 持续 > cron 周期 × 2 仍为 0."
     },
     {
       "title": "2. Decision Engine 24h Outcome 分布",
