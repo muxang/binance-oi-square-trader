@@ -1,0 +1,309 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "1. 11 Collectors 健康 (rate/5min, success)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "rate(trader_collector_runs_total{outcome=\"success\"}[5m]) * 60",
+          "legendFormat": "{{collector}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "description": "11 collectors success rate per minute. 1min cron = ~1.0, 5min cron = ~0.2, 15min cron = ~0.067. 任一掉到 0 表示该 collector 挂."
+    },
+    {
+      "title": "2. Decision Engine 24h Outcome 分布",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum by (outcome) (increase(trader_decision_evaluations_total[24h]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "hideFrom": { "tooltip": false, "viz": false, "legend": false } },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "pieType": "donut",
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "description": "16 outcome 分布: trade_entering (成功) / rejected_* (filter / cooldown / position_limit / circuit_breaker) / sizing_* / internal_error / no_entered_signals. 24h 窗口."
+    },
+    {
+      "title": "3. Trader 真盘活动 (orders + exits)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(increase(trader_orders_total{result=\"success\"}[1h]))",
+          "legendFormat": "orders 成功 / 1h",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(trader_orders_total{result=\"failed\"}[1h]))",
+          "legendFormat": "orders 失败 / 1h",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(trader_exits_total[1h]))",
+          "legendFormat": "exits / 1h",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 50
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "description": "真盘 orders 成功/失败 + exits 完成数 (1h windows). 失败包含 testnet -1121 TRUTHUSDT 类(mainnet 不复现) 和真实 bug. 真盘上线后 mu 应该看到 0 失败."
+    },
+    {
+      "title": "4. 持仓健康 (margin_ratio + unrealized + drift)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "trader_position_margin_ratio",
+          "legendFormat": "margin_ratio {{symbol}}",
+          "refId": "A"
+        },
+        {
+          "expr": "trader_unrealized_pnl_total_usdt",
+          "legendFormat": "unrealized PnL 总和 (USDT)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "margin_ratio.*" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 0.5 },
+                { "color": "red", "value": 0.8 }
+              ]}}
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "unrealized PnL 总和 (USDT)" },
+            "properties": [{ "id": "unit", "value": "currencyUSD" }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "description": "margin_ratio>0.8 触发 MARGIN_CALL emergency exit (Round 3). unrealized PnL 累计跨所有 open 持仓 (Round 6 trip 总浮亏阈值 -12%/-120USDT @1000U)."
+    },
+    {
+      "title": "5. 风控熔断状态 (Circuit Breaker)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "trader_circuit_breaker_state",
+          "legendFormat": "halt 状态 (0=normal 1=halted)",
+          "refId": "A"
+        },
+        {
+          "expr": "trader_daily_pnl_usdt",
+          "legendFormat": "daily PnL (BJT)",
+          "refId": "B"
+        },
+        {
+          "expr": "trader_consecutive_losses",
+          "legendFormat": "连亏次数",
+          "refId": "C"
+        },
+        {
+          "expr": "trader_btc_30min_drop_pct",
+          "legendFormat": "BTC 30min 跌幅",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "halt 状态 (0=normal 1=halted)" },
+            "properties": [
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]}},
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "0": { "text": "✅ Normal" }, "1": { "text": "🚨 HALTED" }}}
+              ]}
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "daily PnL (BJT)" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "red", "value": null },
+                { "color": "yellow", "value": -40 },
+                { "color": "green", "value": 0 }
+              ]}}
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "连亏次数" },
+            "properties": [
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 4 },
+                { "color": "red", "value": 8 }
+              ]}}
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "BTC 30min 跌幅" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 0.015 },
+                { "color": "red", "value": 0.03 }
+              ]}}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "description": "mu B 阈值: daily_loss 8% (-80USDT@1000U) / consec 8次 / BTC 3% / float 12% / API 3/1min. 任一触发 halt 24h."
+    },
+    {
+      "title": "6. 资金 + PnL 累计",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "trader_account_balance_usdt",
+          "legendFormat": "账户余额 (USDT)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(trader_realized_pnl_total{sign=\"positive\"}) - sum(trader_realized_pnl_total{sign=\"negative\"})",
+          "legendFormat": "累计净 PnL (USDT)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto"
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["last", "min", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "description": "账户余额来自 /fapi/v2/balance USDT availableBalance (每 5min decision_engine tick 刷新). 净 PnL = positive - negative (Round 5 realized_pnl_total counter)."
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["trader", "phase4"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "Asia/Shanghai",
+  "title": "Trader Overview",
+  "uid": "trader-overview",
+  "version": 1,
+  "weekStart": ""
+}
