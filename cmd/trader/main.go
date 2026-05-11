@@ -28,11 +28,25 @@ import (
 	"trader/internal/config"
 	"trader/internal/execution"
 	"trader/internal/pkg/logger"
+	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/ratelimit"
 	"trader/internal/pkg/timez"
 	"trader/internal/square"
 	"trader/internal/storage/postgres/gen"
 )
+
+// restartResult maps StartupRecoveryReport to a single metric label.
+// Priority: halt_triggered > with_reconciles > clean. "error" is reserved
+// for future use (StartupRecovery never returns an error currently).
+func restartResult(r execution.StartupRecoveryReport) string {
+	if r.HaltAfterRecovery {
+		return "halt_triggered"
+	}
+	if r.EnteringReconciled > 0 || r.EnteringFailed > 0 {
+		return "with_reconciles"
+	}
+	return "clean"
+}
 
 func main() {
 	// Round 4: rca subcommands for halt root-cause review without standing up
@@ -106,12 +120,9 @@ func run() error {
 		log.Info().Int64("rows", n).Msg("orphan entering trades cleaned")
 	}
 
-	// Phase 4 Round 2 startup recovery: reconcile Round 1+ 'entering' rows
-	// (have client_order_id) against Binance order state. FILLED → open,
-	// NEW/PARTIAL → cancel+fail, not_found → fail. Per-row try; non-fatal.
-	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, 30*time.Second)
-	_, _ = execution.RecoverEnteringTrades(recoveryCtx, gen.New(pgPool), client, log)
-	recoveryCancel()
+	// Phase 4 Round 7: full startup recovery is run AFTER all subsystems are
+	// constructed (positionManager / exitManager / circuitBreaker) so the
+	// orchestrator can call them eagerly. See block below `circuit_breaker config`.
 
 	// 8b. Redis client + ping.
 	redisOpts, err := redis.ParseURL(cfg.DB.RedisURL)
@@ -254,6 +265,24 @@ func run() error {
 		Int("api_err_limit", cbCfg.APIErrorRateLimit).
 		Msg("circuit_breaker config")
 	circuitBreaker := execution.NewCircuitBreakerTripper(gen.New(pgPool), client, rdb, cbCfg, log)
+
+	// Phase 4 Round 7: orchestrated startup recovery. Order:
+	//  1. RecoverEnteringTrades (Round 2): clean stuck 'entering' via Binance lookup.
+	//  2. positionManager.SyncTick: immediate reconcile (no 1min wait).
+	//  3. exitManager.EvaluateTick: retry closing-state trades + due timeouts.
+	//  4. circuitBreaker.EvaluateAll: re-evaluate halt — catches yesterday's
+	//     daily_pnl / consec_losses state that survived the restart.
+	// All best-effort; failures logged, do not block startup.
+	startupCtx, startupCancel := context.WithTimeout(ctx, 60*time.Second)
+	report := execution.RunStartupRecovery(startupCtx,
+		gen.New(pgPool), client,
+		positionManager.SyncTick,
+		exitManager.EvaluateTick,
+		circuitBreaker.EvaluateAll,
+		log,
+	)
+	startupCancel()
+	metrics.RestartRecoveryRunsTotal.WithLabelValues(restartResult(report)).Inc()
 
 	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
 	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.

@@ -325,6 +325,18 @@ var (
 			Help: "Sum of unrealized PnL across all open positions.",
 		},
 	)
+
+	// Phase 4 Round 7: restart recovery metrics.
+
+	// RestartRecoveryRunsTotal counts startup recovery passes by outcome.
+	// Labels: result — "clean" | "halt_triggered" | "with_reconciles" | "error".
+	RestartRecoveryRunsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_restart_recovery_runs_total",
+			Help: "Phase 4 Round 7 startup recovery pass outcomes.",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -339,5 +351,6 @@ func init() {
 		ExitsTotal, ExitLatencySeconds, RealizedPnlTotal, PositionHoldDurationHours,
 		CircuitBreakerTripsTotal, CircuitBreakerState, AccountBalanceUSDT, DailyPnlUSDT,
 		ConsecutiveLossesGauge, BTC30MinDropPct, UnrealizedPnlTotalUSDT,
+		RestartRecoveryRunsTotal,
 	)
 }

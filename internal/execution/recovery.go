@@ -126,3 +126,77 @@ func markFailedRow(ctx context.Context, db RecoveryDeps, id int64, reason string
 
 // guarded compile-time interface check.
 var _ = fmt.Sprintf
+
+// StartupRecovery orchestrates the post-restart reconciliation pipeline.
+//
+// Round 7 design: leverage existing Round 4-6 components instead of forking
+// recovery logic. Run each subsystem's first tick eagerly at startup so the
+// trader doesn't trade in an inconsistent window before the natural 1min /
+// 5min cron schedules kick in.
+//
+// Order matters (sequential, fail-soft):
+//  1. RecoverEnteringTrades (Round 2): clean up status='entering' rows that
+//     never finished PlaceEntry — DB ⇄ Binance reconcile via clientOrderId.
+//  2. PositionManager.SyncTick (Round 3 + 4): pull positionRisk, update
+//     position_states, detect drift/local_only/binance_only → halt + RCA.
+//  3. ExitManager.EvaluateTick (Round 5): retry stuck 'closing' / 'closing_failed'
+//     close pipelines + run any soft/hard timeout that came due.
+//  4. CircuitBreakerTripper.EvaluateAll (Round 6): re-evaluate 5-item trips so
+//     trader doesn't open new positions if yesterday's halt condition persists
+//     (daily_pnl / consec_losses survive restarts via DB).
+//
+// Each step is best-effort — failures are logged but don't block subsequent
+// steps. Caller in main.go passes closures wrapping the concrete subsystems'
+// tick functions (avoids import cycles + lets each tick keep its native
+// signature: SyncTick / EvaluateTick / EvaluateAll all uniformly Tick-like).
+
+// StartupRecoveryReport summarises what happened during the recovery pass.
+type StartupRecoveryReport struct {
+	EnteringReconciled int
+	EnteringFailed     int
+	HaltAfterRecovery  bool
+}
+
+// RunStartupRecovery executes the orchestrated post-restart pipeline.
+// positionManagerTick / exitManagerTick / cbEvaluate are closures wrapping
+// the respective subsystems' tick functions; main.go provides them.
+func RunStartupRecovery(
+	ctx context.Context,
+	db RecoveryDeps,
+	bc BinanceQuerier,
+	positionManagerTick func(context.Context),
+	exitManagerTick func(context.Context),
+	cbEvaluate func(context.Context) bool,
+	log zerolog.Logger,
+) StartupRecoveryReport {
+	log.Info().Msg("restart.recovery.start")
+	report := StartupRecoveryReport{}
+
+	// Step 1: entering trades.
+	report.EnteringReconciled, report.EnteringFailed = RecoverEnteringTrades(ctx, db, bc, log)
+
+	// Step 2: position_manager immediate sync (open trades + drift + orphan).
+	if positionManagerTick != nil {
+		log.Info().Msg("restart.recovery.position_sync")
+		positionManagerTick(ctx)
+	}
+
+	// Step 3: exit_manager immediate evaluation (closing retries + timeouts).
+	if exitManagerTick != nil {
+		log.Info().Msg("restart.recovery.exit_eval")
+		exitManagerTick(ctx)
+	}
+
+	// Step 4: circuit breaker re-evaluate (catches yesterday's halt conditions).
+	if cbEvaluate != nil {
+		log.Info().Msg("restart.recovery.cb_eval")
+		report.HaltAfterRecovery = cbEvaluate(ctx)
+	}
+
+	log.Info().
+		Int("entering_reconciled", report.EnteringReconciled).
+		Int("entering_failed", report.EnteringFailed).
+		Bool("halt_after_recovery", report.HaltAfterRecovery).
+		Msg("restart.recovery.complete")
+	return report
+}
