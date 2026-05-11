@@ -198,8 +198,8 @@ func TestDoWrite_HardBlock_Exhaustive(t *testing.T) {
 		"/fapi/v1/marginType",
 		"/fapi/v1/positionMargin",
 		"/fapi/v1/multiAssetsMargin",
-		"/fapi/v1/algo/order",
-		"/fapi/v1/algo/order/cancel",
+		"/fapi/v1/algoOrder",
+		"/fapi/v1/algoOpenOrders",
 		"/fapi/v1/listenKey", // whitelisted but still testnet in testnet mode
 	}
 	for _, path := range writePaths {

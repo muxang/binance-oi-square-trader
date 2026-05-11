@@ -5,7 +5,7 @@
 // all errors are handled internally (log + DB mark-failed) and never bubble up.
 //
 // ref: PHASE_4_DESIGN.md §2 Step 1-9
-// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algo/order
+// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
 package execution
 
 import (

@@ -56,11 +56,11 @@
 
 | Endpoint | URL |
 |---|---|
-| **New Algo Order** (`POST /fapi/v1/algo/order`) | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order |
-| Cancel Algo Order | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Cancel-Algo-Order |
-| Cancel All Algo Open Orders | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Cancel-All-Algo-Open-Orders |
-| Query Algo Order | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Algo-Order |
-| Current All Algo Open Orders | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Algo-Open-Orders |
+| **New Algo Order** (`POST /fapi/v1/algoOrder`) | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order |
+| Cancel Algo Order (`DELETE /fapi/v1/algoOrder`) | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Cancel-Algo-Order |
+| Cancel All Algo Open Orders (`DELETE /fapi/v1/algoOpenOrders`) | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Cancel-All-Algo-Open-Orders |
+| Query Algo Order (`GET /fapi/v1/algoOrder`) | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Algo-Order |
+| Current All Algo Open Orders (`GET /fapi/v1/openAlgoOrders`) | https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Algo-Open-Orders |
 
 > **2025-12-09 起**,STOP_MARKET / TAKE_PROFIT_MARKET / STOP / TAKE_PROFIT / TRAILING_STOP_MARKET
 > 必须通过 Algo Service 接口下单。本项目"灾难止损"依赖此类型,**必须**实现日期感知切换。

@@ -468,7 +468,7 @@ state {entering, open, partial, closed} 转换:
 // internal/binance/conditional.go
 func (c *Client) PlaceConditionalOrder(ctx, params) (*Order, error) {
     if c.now().After(c.cfg.AlgoMigrationDate) {
-        return c.placeAlgoOrder(ctx, params)        // POST /fapi/v1/algo/order
+        return c.placeAlgoOrder(ctx, params)        // POST /fapi/v1/algoOrder
     }
     return c.placeRegularConditional(ctx, params)   // POST /fapi/v1/order type=STOP_MARKET
 }

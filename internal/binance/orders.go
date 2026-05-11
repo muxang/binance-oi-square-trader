@@ -3,7 +3,7 @@
 // ref: references/binance/urls.md §「New Order」POST /fapi/v1/order
 // ref: references/binance/urls.md §「Set Margin Type」POST /fapi/v1/marginType
 // ref: references/binance/urls.md §「Change Initial Leverage」POST /fapi/v1/leverage
-// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algo/order
+// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
 // fetched: 2026-05-11
 package binance
 
@@ -149,11 +149,11 @@ func (c *Client) CancelOrder(ctx context.Context, symbol string, orderID int64) 
 }
 
 // PlaceAlgoConditionalStop places a CONDITIONAL STOP_MARKET via Algo Service.
-// Required after 2025-12-09 — STOP_MARKET must use /fapi/v1/algo/order.
+// Required after 2025-12-09 — STOP_MARKET must use /fapi/v1/algoOrder.
 // triggerPrice is the mark-price threshold; quantity is the full position size.
 // reduceOnly=true ensures it only closes the existing LONG position.
 //
-// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algo/order
+// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
 // docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
 // fetched: 2026-05-11
 func (c *Client) PlaceAlgoConditionalStop(ctx context.Context, symbol, quantity, triggerPrice string) (AlgoOrderResult, error) {
@@ -167,7 +167,7 @@ func (c *Client) PlaceAlgoConditionalStop(ctx context.Context, symbol, quantity,
 	params.Set("triggerPrice", triggerPrice)
 	params.Set("workingType", "MARK_PRICE")
 	params.Set("reduceOnly", "true")
-	body, err := c.doWrite(ctx, http.MethodPost, "/fapi/v1/algo/order", params, 1)
+	body, err := c.doWrite(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, 1)
 	if err != nil {
 		return AlgoOrderResult{}, fmt.Errorf("place algo stop %s: %w", symbol, err)
 	}

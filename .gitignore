@@ -18,6 +18,7 @@ vendor/
 .env
 .env.local
 .env.*.local
+.envreal
 
 # Production proxy URLs (敏感) — see deploy/proxies.example.txt
 deploy/proxies.txt

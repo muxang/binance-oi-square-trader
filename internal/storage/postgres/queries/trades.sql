@@ -90,6 +90,20 @@ ON CONFLICT (trade_id) DO NOTHING;
 INSERT INTO trade_exits (trade_id, ts, type, qty, price, pnl)
 VALUES ($1, $2, $3, $4, $5, $6);
 
+-- name: CleanupOrphanEnteringTrades :execrows
+-- Phase 4 Round 1 follow-up: orphan cleanup on trader startup.
+-- 命中条件: status='entering' AND entry_ts IS NULL AND client_order_id IS NULL.
+-- 这只匹配 Phase 3 v0.1 PARTIAL 时期写入但未执行的遗留行 (Round 1 INSERT
+-- 即设 client_order_id, Round 1+ in-flight 永远不会被误杀).
+-- 不带时间阈值: 若仍存在此类行, 全部是 Phase 3 legacy, 直接 fail.
+UPDATE trades
+SET status = 'failed',
+    exit_reason = 'orphan_cleanup_startup',
+    exit_ts = NOW()
+WHERE status = 'entering'
+  AND entry_ts IS NULL
+  AND client_order_id IS NULL;
+
 -- name: HasRecent24hAttemptForSymbol :one
 -- Phase 3 v0.1 24h 不二次入场过滤 — 用 signals.ts JOIN (trades.entry_ts
 -- 在 'entering' 状态为 NULL, Phase 4 真下单后才填). signals.ts NOT NULL

@@ -94,7 +94,7 @@ client_order_id = fmt.Sprintf("t%d_r%d", signal.ID, retryCount)
 
 **Algo Service 灾难止损:**
 ```
-POST /fapi/v1/algo/order
+POST /fapi/v1/algoOrder
   type=STOP        (条件止损市价)
   side=SELL
   symbol=BTCUSDT
@@ -114,7 +114,7 @@ POST /fapi/v1/algo/order
 **refs:**
 ```
 // ref: references/binance/urls.md §「New Order」POST /fapi/v1/order
-// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algo/order
+// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
 // ref: references/binance/urls.md §「Change Margin Type」POST /fapi/v1/marginType
 // ref: references/binance/urls.md §「Change Initial Leverage」POST /fapi/v1/leverage
 ```
@@ -355,11 +355,11 @@ v0.2 不新增 Phase，在 Phase 4 基础上 patch Round 并重新 acceptance。
 
 ### Catch 1 ✅ Binance Algo Service migration（强制）— Round 1 已实施
 
-- **2025-12-09 起:** STOP_MARKET 等条件单必须通过 `POST /fapi/v1/algo/order` 下单（旧路径 `POST /fapi/v1/order + type=STOP_MARKET` 已废弃）
+- **2025-12-09 起:** STOP_MARKET 等条件单必须通过 `POST /fapi/v1/algoOrder` 下单（旧路径 `POST /fapi/v1/order + type=STOP_MARKET` 已废弃）
 - **措辞澄清 (2026-05-11 Round 1 review):** Algo Service 内 `type=STOP_MARKET` 仍为合法参数值（触发后市价成交）。"废弃"指的是**端点** `/fapi/v1/order` 的该路径，而非 order type 字符串本身。
 - **代码不在** `/fapi/v1/order` 写 STOP_MARKET 分支。
 - **Round 1 实施:** `internal/binance/orders.go PlaceAlgoConditionalStop`
-  - endpoint: `/fapi/v1/algo/order` ✓
+  - endpoint: `/fapi/v1/algoOrder` ✓
   - `algoType=CONDITIONAL` ✓
   - `type=STOP_MARKET` (Algo Service 合法 type，触发后市价成交) ✓
   - `workingType=MARK_PRICE` ✓

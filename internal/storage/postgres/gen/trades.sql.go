@@ -306,3 +306,24 @@ func (q *Queries) InsertTradeExit(ctx context.Context, arg InsertTradeExitParams
 		arg.TradeID, arg.Ts, arg.Type, arg.Qty, arg.Price, arg.Pnl)
 	return err
 }
+
+const cleanupOrphanEnteringTrades = `-- name: CleanupOrphanEnteringTrades :execrows
+UPDATE trades
+SET status = 'failed',
+    exit_reason = 'orphan_cleanup_startup',
+    exit_ts = NOW()
+WHERE status = 'entering'
+  AND entry_ts IS NULL
+  AND client_order_id IS NULL
+`
+
+// Phase 4 Round 1 follow-up: startup orphan cleanup.
+// Matches Phase 3 v0.1 PARTIAL legacy rows (no client_order_id, no entry_ts).
+// Round 1+ INSERTs always set client_order_id, so in-flight orders never match.
+func (q *Queries) CleanupOrphanEnteringTrades(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupOrphanEnteringTrades)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

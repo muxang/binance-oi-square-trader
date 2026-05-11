@@ -87,6 +87,15 @@ func run() error {
 	}
 	log.Info().Msg("postgres ready")
 
+	// Phase 4 Round 1 follow-up: startup orphan cleanup for Phase 3 v0.1 PARTIAL
+	// legacy 'entering' rows (no client_order_id, no entry_ts). Round 1+ in-flight
+	// orders set client_order_id at INSERT time, so this never touches them.
+	if n, err := gen.New(pgPool).CleanupOrphanEnteringTrades(pgCtx); err != nil {
+		log.Warn().Err(err).Msg("orphan entering cleanup failed (non-fatal)")
+	} else if n > 0 {
+		log.Info().Int64("rows", n).Msg("orphan entering trades cleaned")
+	}
+
 	// 8b. Redis client + ping.
 	redisOpts, err := redis.ParseURL(cfg.DB.RedisURL)
 	if err != nil {
