@@ -67,12 +67,12 @@ WHERE id = 1;
 -- Round 6 will read these for trip evaluation.
 UPDATE circuit_breaker_state
 SET consecutive_losses = CASE
-        WHEN $1 < 0 THEN consecutive_losses + 1
+        WHEN ($1::numeric) < 0 THEN consecutive_losses + 1
         ELSE 0
     END,
     daily_pnl = CASE
-        WHEN daily_pnl_date = $2 THEN daily_pnl + $1
-        ELSE $1
+        WHEN daily_pnl_date = $2 THEN daily_pnl + $1::numeric
+        ELSE $1::numeric
     END,
     daily_pnl_date = $2
 WHERE id = 1;
