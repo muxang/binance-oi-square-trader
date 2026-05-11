@@ -361,6 +361,68 @@ func (q *Queries) BumpTradeRetryCount(ctx context.Context, arg BumpTradeRetryCou
 	return err
 }
 
+const updatePositionStateSync = `-- name: UpdatePositionStateSync :exec
+UPDATE position_states
+SET current_qty = $2,
+    highest_price = GREATEST(COALESCE(highest_price, $3), $3),
+    last_check_ts = $4
+WHERE trade_id = $1
+`
+
+type UpdatePositionStateSyncParams struct {
+	TradeID      int64
+	CurrentQty   decimal.Decimal
+	HighestPrice decimal.Decimal
+	LastCheckTs  time.Time
+}
+
+func (q *Queries) UpdatePositionStateSync(ctx context.Context, arg UpdatePositionStateSyncParams) error {
+	_, err := q.db.Exec(ctx, updatePositionStateSync, arg.TradeID, arg.CurrentQty, arg.HighestPrice, arg.LastCheckTs)
+	return err
+}
+
+const listOpenTradesForSync = `-- name: ListOpenTradesForSync :many
+SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
+       t.margin, t.notional, t.leverage,
+       ps.current_qty, ps.highest_price
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status IN ('open', 'partial')
+ORDER BY t.entry_ts ASC
+`
+
+type ListOpenTradesForSyncRow struct {
+	ID           int64
+	SignalID     pgtype.Int8
+	Symbol       string
+	Direction    string
+	EntryTs      pgtype.Timestamptz
+	EntryPrice   pgtype.Numeric
+	Margin       decimal.Decimal
+	Notional     decimal.Decimal
+	Leverage     int16
+	CurrentQty   pgtype.Numeric
+	HighestPrice pgtype.Numeric
+}
+
+func (q *Queries) ListOpenTradesForSync(ctx context.Context) ([]ListOpenTradesForSyncRow, error) {
+	rows, err := q.db.Query(ctx, listOpenTradesForSync)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenTradesForSyncRow
+	for rows.Next() {
+		var i ListOpenTradesForSyncRow
+		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.EntryTs, &i.EntryPrice,
+			&i.Margin, &i.Notional, &i.Leverage, &i.CurrentQty, &i.HighestPrice); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
 const cleanupOrphanEnteringTrades = `-- name: CleanupOrphanEnteringTrades :execrows
 UPDATE trades
 SET status = 'failed',

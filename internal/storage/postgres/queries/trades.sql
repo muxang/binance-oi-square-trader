@@ -110,6 +110,27 @@ SET retry_count = retry_count + 1,
     client_order_id = $2
 WHERE id = $1;
 
+-- name: UpdatePositionStateSync :exec
+-- Phase 4 Round 3: 1min cron sync of position_states from /fapi/v3/positionRisk.
+-- highest_price = GREATEST(existing, fresh_mark) — monotonic high watermark
+-- used by trailing stop logic (Round 5+). current_qty = exchange truth.
+UPDATE position_states
+SET current_qty = $2,
+    highest_price = GREATEST(COALESCE(highest_price, $3), $3),
+    last_check_ts = $4
+WHERE trade_id = $1;
+
+-- name: ListOpenTradesForSync :many
+-- Phase 4 Round 3: rows position_manager iterates each tick. Returns enough
+-- for drift detection (qty/direction) + Redis zset rebuild + MARGIN_CALL calc.
+SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
+       t.margin, t.notional, t.leverage,
+       ps.current_qty, ps.highest_price
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status IN ('open', 'partial')
+ORDER BY t.entry_ts ASC;
+
 -- name: CleanupOrphanEnteringTrades :execrows
 -- Phase 4 Round 1 follow-up: orphan cleanup on trader startup.
 -- 命中条件: status='entering' AND entry_ts IS NULL AND client_order_id IS NULL.

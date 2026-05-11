@@ -211,6 +211,14 @@ func run() error {
 		Int("leverage", cfg.Position.Leverage).
 		Msg("executor ready")
 
+	// Phase 4 Round 3: position_manager — 1min sync of open positions against
+	// /fapi/v3/positionRisk + Redis zset positions_active + MARGIN_CALL detect.
+	positionManager := execution.NewPositionManager(gen.New(pgPool), client, rdb, log)
+	positionManagerCol := collector.NewPositionManagerCollector(positionManager, log, collector.PositionManagerConfig{})
+	if err := runner.Register(positionManagerCol, "*/1 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register position_manager collector")
+	}
+
 	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
 	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.
 	decisionEngineCol := collector.NewDecisionEngineCollector(

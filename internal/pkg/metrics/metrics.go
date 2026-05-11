@@ -140,6 +140,47 @@ var (
 		},
 		[]string{"halt_type"},
 	)
+
+	// Phase 4 Round 3: position sync + MARGIN_CALL metrics.
+
+	// PositionSyncRunsTotal counts 1min position_manager ticks by outcome.
+	// Labels: result — "ok" | "drift" | "error" | "empty".
+	PositionSyncRunsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_position_sync_runs_total",
+			Help: "Phase 4 Round 3 position_manager tick outcomes.",
+		},
+		[]string{"result"},
+	)
+
+	// PositionSyncDriftTotal counts DB-vs-Binance position drift events.
+	// Labels: symbol, drift_type — "qty" | "direction" | "missing".
+	PositionSyncDriftTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_position_sync_drift_total",
+			Help: "DB vs Binance position drift detections per tick (Round 3 logs, Round 4 halts).",
+		},
+		[]string{"symbol", "drift_type"},
+	)
+
+	// PositionMarginRatio is the last-tick margin_ratio = (-unrealized_pnl) / margin.
+	// Gauge so we keep the latest value per symbol; > 0.8 triggers margin_call.
+	PositionMarginRatio = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "trader_position_margin_ratio",
+			Help: "Last-tick margin ratio (-unrealized_pnl / margin) per open position.",
+		},
+		[]string{"symbol"},
+	)
+
+	// MarginCallTriggeredTotal counts emergency MARKET SELL triggers from margin_ratio > 0.8.
+	MarginCallTriggeredTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_margin_call_triggered_total",
+			Help: "Phase 4 Round 3 emergency exits triggered by margin_ratio > 0.8.",
+		},
+		[]string{"symbol"},
+	)
 )
 
 func init() {
@@ -149,5 +190,6 @@ func init() {
 		DecisionEvaluationsTotal, DecisionSizingDeviationPct,
 		OrdersTotal, DisasterStopsPlacedTotal, OrderLatencySeconds,
 		OrdersRetryTotal, OrdersIdempotentHitTotal, HaltAutoResetTotal,
+		PositionSyncRunsTotal, PositionSyncDriftTotal, PositionMarginRatio, MarginCallTriggeredTotal,
 	)
 }
