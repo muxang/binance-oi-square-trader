@@ -144,7 +144,8 @@ func (c *Client) GetOrderByClientID(ctx context.Context, symbol, clientOrderID s
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("origClientOrderId", clientOrderID)
-	body, err := c.DoRead(ctx, "/fapi/v1/order", params, 1)
+	// Account data — testnet API key requires testnet base (DoReadAccount).
+	body, err := c.DoReadAccount(ctx, "/fapi/v1/order", params, 1)
 	if err != nil {
 		return OrderResult{}, fmt.Errorf("get order by client id %s %s: %w", symbol, clientOrderID, err)
 	}
@@ -156,7 +157,8 @@ func (c *Client) GetOrder(ctx context.Context, symbol string, orderID int64) (Or
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
-	body, err := c.DoRead(ctx, "/fapi/v1/order", params, 1)
+	// Account data — testnet API key requires testnet base (DoReadAccount).
+	body, err := c.DoReadAccount(ctx, "/fapi/v1/order", params, 1)
 	if err != nil {
 		return OrderResult{}, fmt.Errorf("get order %s %d: %w", symbol, orderID, err)
 	}

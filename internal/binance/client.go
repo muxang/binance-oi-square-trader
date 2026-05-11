@@ -102,9 +102,22 @@ func New(cfg *config.Config, proxy ProxyManager, limiter RateLimiter, log zerolo
 }
 
 // DoRead issues a signed GET against the read base (production in either mode).
+// Used for MARKET-data endpoints (klines, ticker, openInterest, premiumIndex
+// etc.) where we want real data on testnet for evaluation.
 // All read paths are weight-counted via the limiter.
 func (c *Client) DoRead(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
 	return c.doRequest(ctx, http.MethodGet, c.restBaseRead, path, params, weight)
+}
+
+// DoReadAccount issues a signed GET against the WRITE base (testnet in testnet
+// mode). Used for ACCOUNT-data endpoints (positionRisk, account, balance,
+// userTrades, listOpenOrders) where the API key is testnet-scoped and would
+// fail with -2015 against the mainnet read base.
+//
+// This routing aligns with our defence-in-depth: testnet API keys can ONLY
+// hit testnet base, full stop.
+func (c *Client) DoReadAccount(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
+	return c.doRequest(ctx, http.MethodGet, c.restBaseWrite, path, params, weight)
 }
 
 // doWrite issues a signed POST/PUT/DELETE. listenKey paths route to the

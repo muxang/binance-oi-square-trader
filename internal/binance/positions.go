@@ -50,7 +50,9 @@ func (c *Client) GetPositionRisk(ctx context.Context, symbol string) ([]Position
 	if symbol != "" {
 		params.Set("symbol", symbol)
 	}
-	body, err := c.DoRead(ctx, "/fapi/v3/positionRisk", params, 5)
+	// Account data — DoReadAccount routes to write base (testnet in testnet
+	// mode) to match the API key's scope; mainnet read base would 401/-2015.
+	body, err := c.DoReadAccount(ctx, "/fapi/v3/positionRisk", params, 5)
 	if err != nil {
 		return nil, fmt.Errorf("get position risk: %w", err)
 	}
