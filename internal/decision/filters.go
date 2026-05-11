@@ -122,6 +122,32 @@ func EvaluateGlobalFilters(
 	return FilterResult{Passed: true}, nil
 }
 
+// maintainHaltState is the Round 2 fix for: when there are no entered signals
+// to evaluate, RunTick short-circuits and stepCircuitBreaker never runs, so
+// halts never auto-reset. This function runs the halt_until-expired auto-reset
+// independently of whether any signals exist this tick.
+//
+// Errors are swallowed: this is "best-effort housekeeping" — if state read
+// fails, the next tick will retry. Auto-reset failure to actually clear the
+// halt is logged via metric (-).
+func maintainHaltState(ctx context.Context, now time.Time, deps FilterDeps) {
+	state, err := deps.GetState(ctx)
+	if err != nil {
+		return
+	}
+	if !state.TradingHalted || !state.HaltUntil.Valid || !now.After(state.HaltUntil.Time) {
+		return
+	}
+	if rerr := deps.ResetHalt(ctx); rerr != nil {
+		return
+	}
+	haltType := "unknown"
+	if state.HaltReason.Valid && state.HaltReason.String != "" {
+		haltType = state.HaltReason.String
+	}
+	metrics.HaltAutoResetTotal.WithLabelValues(haltType).Inc()
+}
+
 // stepCircuitBreaker — SPEC §全局过滤 #1 + folded #5 (BTC crash trip).
 //
 //	1a. Read state. Unavailable → fail-safe reject.

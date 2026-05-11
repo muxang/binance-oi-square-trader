@@ -174,6 +174,12 @@ func RunTick(
 	cfg = engineDefaults(cfg)
 	report := TickReport{}
 
+	// Round 2 Step 3 fix: maintain halt state on every tick, NOT just when
+	// signals exist. Previously the no_entered_signals short-circuit bypassed
+	// stepCircuitBreaker, so disaster_stop_failed halts never auto-reset when
+	// the market quieted down.
+	maintainHaltState(ctx, now, deps)
+
 	cutoff := now.Add(-cfg.SignalWindow)
 	signals, err := deps.GetRecentEnteredSignals(ctx, cutoff)
 	if err != nil {
