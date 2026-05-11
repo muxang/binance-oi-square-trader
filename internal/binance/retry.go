@@ -6,7 +6,7 @@
 //   - HTTP 5xx / 429 (rate limit) → same retry policy.
 //   - -1021 timestamp outside recvWindow → retry once (clock or proxy spike).
 //   - Permanent business errors (-2019 margin, -1111 precision) → no retry.
-//   - -2022 duplicate clientOrderId → no retry; caller looks up existing order.
+//   - -4116 duplicate clientOrderId → no retry; caller looks up existing order.
 //   - -4046 / -4059 idempotent success → no retry; caller treats as OK.
 //
 // recvWindow=60000 is set in client.doRequest, so -1021 should be rare.

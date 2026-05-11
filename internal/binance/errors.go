@@ -22,7 +22,7 @@ const (
 	ActionMaybeSucceeded                // -1006 / -1007 — order may have succeeded; query order state to confirm
 	ActionTreatAsCanceled               // -2011 / -2013 — order not found, treat as already canceled / filled
 	ActionTreatAsSuccess                // -4046 / -4059 — idempotent ops at desired state
-	ActionTreatAsExisting               // -2022 — duplicate clientOrderId; caller looks up existing order
+	ActionTreatAsExisting               // -4116 — duplicate clientOrderId; caller looks up existing order
 	ActionFatal                         // -1022 / -2014 / -2015 / 418 — process-level alert, halt API
 )
 
@@ -101,9 +101,11 @@ func ClassifyError(httpCode, bizCode int) Action {
 		return ActionTreatAsCanceled
 	case -4046, -4059:
 		return ActionTreatAsSuccess
-	case -2022:
-		// Duplicate clientOrderId — order may have succeeded on prior attempt.
-		// Caller must look up by clientOrderId and reconcile.
+	case -4116:
+		// Duplicate clientOrderId — order with this clientOrderId already exists.
+		// Caller (PlaceMarketOrder) must look up by clientOrderId and reconcile.
+		// Verified on testnet 2026-05-11: Binance returns code=-4116 "ClientOrderId
+		// is duplicated.", NOT -2022 as some legacy refs suggested.
 		return ActionTreatAsExisting
 	case -1021:
 		return ActionRetryNow

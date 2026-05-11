@@ -118,7 +118,7 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol, side, quantity, c
 	}
 	body, err := c.doWriteRetry(ctx, http.MethodPost, "/fapi/v1/order", params, 1)
 	if err != nil {
-		// -2022 duplicate clientOrderId: order may have already succeeded on a
+		// -4116 duplicate clientOrderId: order may have already succeeded on a
 		// prior attempt (e.g. network timeout that actually delivered). Look up
 		// by clientOrderId and return the existing fill state — idempotent path.
 		var apiErr *APIError
@@ -126,7 +126,7 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol, side, quantity, c
 			metrics.OrdersIdempotentHitTotal.WithLabelValues(symbol).Inc()
 			existing, lookupErr := c.GetOrderByClientID(ctx, symbol, clientOrderID)
 			if lookupErr != nil {
-				return OrderResult{}, fmt.Errorf("place market -2022 + lookup %s %s: %w", symbol, clientOrderID, lookupErr)
+				return OrderResult{}, fmt.Errorf("place market -4116 + lookup %s %s: %w", symbol, clientOrderID, lookupErr)
 			}
 			return existing, nil
 		}
@@ -136,7 +136,7 @@ func (c *Client) PlaceMarketOrder(ctx context.Context, symbol, side, quantity, c
 }
 
 // GetOrderByClientID queries a single order by its clientOrderId.
-// Used by Round 2 idempotent recovery path (-2022 + startup recovery).
+// Used by Round 2 idempotent recovery path (-4116 + startup recovery).
 //
 // ref: references/binance/urls.md §「Query Order」GET /fapi/v1/order
 // docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Order

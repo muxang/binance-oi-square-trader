@@ -118,29 +118,29 @@ func TestDoWriteRetry_Minus1021OneRetry(t *testing.T) {
 }
 
 func TestDoWriteRetry_Minus2022PassesThroughForCaller(t *testing.T) {
-	// -2022 must NOT retry; caller handles via GetOrderByClientID lookup.
+	// -4116 must NOT retry; caller handles via GetOrderByClientID lookup.
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"code":-2022,"msg":"Duplicate Order Sent."}`))
+		_, _ = w.Write([]byte(`{"code":-4116,"msg":"ClientOrderId is duplicated."}`))
 	}))
 	defer srv.Close()
 	c := retryTestClient(t, srv.URL)
 
 	_, err := c.doWriteRetry(context.Background(), http.MethodPost, "/test", nil, 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "-2022")
-	assert.Equal(t, int32(1), hits.Load(), "-2022 must not retry — caller looks up by clientOrderId")
+	assert.Contains(t, err.Error(), "-4116")
+	assert.Equal(t, int32(1), hits.Load(), "-4116 must not retry — caller looks up by clientOrderId")
 }
 
 func TestPlaceMarketOrder_Minus2022LookupReturnsExisting(t *testing.T) {
-	// 1st call: -2022. Caller (PlaceMarketOrder) then calls GetOrderByClientID
+	// 1st call: -4116. Caller (PlaceMarketOrder) then calls GetOrderByClientID
 	// (GET /fapi/v1/order with origClientOrderId), returns FILLED.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/order") {
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"code":-2022,"msg":"Duplicate Order Sent."}`))
+			_, _ = w.Write([]byte(`{"code":-4116,"msg":"ClientOrderId is duplicated."}`))
 			return
 		}
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/order") {
@@ -155,7 +155,7 @@ func TestPlaceMarketOrder_Minus2022LookupReturnsExisting(t *testing.T) {
 
 	res, err := c.PlaceMarketOrder(context.Background(), "BTCUSDT", "BUY", "0.006", "t100_r0")
 	t.Logf("res=%+v err=%v", res, err)
-	require.NoError(t, err, "-2022 path with successful lookup must return existing order")
+	require.NoError(t, err, "-4116 path with successful lookup must return existing order")
 	assert.Equal(t, int64(42), res.OrderID)
 	assert.Equal(t, "FILLED", res.Status)
 }
