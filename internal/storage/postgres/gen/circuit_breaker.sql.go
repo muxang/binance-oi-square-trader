@@ -36,6 +36,21 @@ func (q *Queries) GetCircuitBreakerState(ctx context.Context) (CircuitBreakerSta
 	return i, err
 }
 
+const tripDisasterStopFailHalt = `-- name: TripDisasterStopFailHalt :exec
+UPDATE circuit_breaker_state
+SET trading_halted = TRUE,
+    halt_reason = 'disaster_stop_placement_failed',
+    halt_until = NULL
+WHERE id = 1
+`
+
+// Phase 4 disaster stop failure trip. Per Round 0 mu decision: not in SPEC's
+// 5 halt reasons; halt_until=NULL (no auto-recovery window — operator must clear).
+func (q *Queries) TripDisasterStopFailHalt(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, tripDisasterStopFailHalt)
+	return err
+}
+
 const resetHalt = `-- name: ResetHalt :exec
 UPDATE circuit_breaker_state
 SET trading_halted = FALSE,

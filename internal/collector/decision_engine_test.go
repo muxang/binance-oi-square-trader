@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestDecisionEngine_SymbolClass(t *testing.T) {
 // --- 1 unit: adapter constructor wires deps correctly ---
 
 func TestDecisionEngine_NewCollector_NameAndDeps(t *testing.T) {
-	c := NewDecisionEngineCollector(nil, nil, nil, zerolog.Nop(), DecisionEngineConfig{})
+	c := NewDecisionEngineCollector(nil, nil, nil, nil, zerolog.Nop(), DecisionEngineConfig{})
 	assert.Equal(t, "decision_engine", c.Name())
 	assert.NotNil(t, c.deps, "adapter wired")
 }
@@ -99,7 +100,7 @@ func TestDecisionEngineAdapter_FullChain_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. Insert via adapter (the SUT path)
-	tradeID, err := a.InsertEnteringTrade(ctx, signalID, sym, "LONG", decimal.NewFromInt(50), decimal.NewFromInt(480), 10)
+	tradeID, err := a.InsertEnteringTrade(ctx, signalID, sym, "LONG", fmt.Sprintf("t%d_r0", signalID), decimal.NewFromInt(50), decimal.NewFromInt(480), 10)
 	require.NoError(t, err)
 	assert.Greater(t, tradeID, int64(0))
 

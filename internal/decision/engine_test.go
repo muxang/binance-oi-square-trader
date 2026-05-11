@@ -54,7 +54,7 @@ func (f *fakeEngineDeps) GetLatestClose(_ context.Context, _ string) (decimal.De
 func (f *fakeEngineDeps) GetTradingFilters(_ context.Context, _ string) (binance.TradingFilters, error) {
 	return f.filters, f.filtersErr
 }
-func (f *fakeEngineDeps) InsertEnteringTrade(_ context.Context, signalID int64, symbol, _ string, margin, notional decimal.Decimal, _ int32) (int64, error) {
+func (f *fakeEngineDeps) InsertEnteringTrade(_ context.Context, signalID int64, symbol, _, _ string, margin, notional decimal.Decimal, _ int32) (int64, error) {
 	if f.insertErr != nil {
 		return 0, f.insertErr
 	}

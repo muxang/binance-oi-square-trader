@@ -26,6 +26,7 @@ import (
 	"trader/internal/binance"
 	"trader/internal/collector"
 	"trader/internal/config"
+	"trader/internal/execution"
 	"trader/internal/pkg/logger"
 	"trader/internal/pkg/ratelimit"
 	"trader/internal/pkg/timez"
@@ -72,7 +73,6 @@ func run() error {
 	if err != nil {
 		log.Fatal().Err(err).Msg("binance client init failed")
 	}
-	_ = client // consumed by collector / execution layers in Phase 1+
 	log.Info().Msg("binance client ready")
 
 	// 8a. Postgres pool + ping.
@@ -184,10 +184,21 @@ func run() error {
 	if err := runner.Register(sigEngineCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register signal_engine collector")
 	}
+	// Phase 4 v0.1: Executor — wires binance client + DB into the entry flow.
+	// DisasterStopPct and Leverage read from cfg (DISASTER_STOP_PCT, LEVERAGE).
+	executor := execution.New(client, gen.New(pgPool), execution.Config{
+		DisasterStopPct: cfg.Exit.DisasterStopPct,
+		Leverage:        cfg.Position.Leverage,
+	}, log)
+	log.Info().
+		Str("disaster_stop_pct", cfg.Exit.DisasterStopPct.String()).
+		Int("leverage", cfg.Position.Leverage).
+		Msg("executor ready")
+
 	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
-	// runs filters + sizing → trades.entering. 详见 internal/collector/decision_engine.go 文件头.
+	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.
 	decisionEngineCol := collector.NewDecisionEngineCollector(
-		gen.New(pgPool), rdb, symbolService, log, collector.DecisionEngineConfig{
+		gen.New(pgPool), rdb, symbolService, executor, log, collector.DecisionEngineConfig{
 			PerTickTimeout: 4 * time.Minute,
 		},
 	)

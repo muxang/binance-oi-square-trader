@@ -18,6 +18,15 @@ SET trading_halted = TRUE,
     last_btc_crash_ts = $2
 WHERE id = 1;
 
+-- name: TripDisasterStopFailHalt :exec
+-- Phase 4: trip circuit breaker when disaster stop placement fails.
+-- Per Round 0 mu decision: not in SPEC's 5 halt reasons; halt_until=NULL (manual reset).
+UPDATE circuit_breaker_state
+SET trading_halted = TRUE,
+    halt_reason = 'disaster_stop_placement_failed',
+    halt_until = NULL
+WHERE id = 1;
+
 -- name: ResetHalt :exec
 -- Phase 3 auto-reset when halt_until has passed. Idempotent — safe to run
 -- every tick whether or not currently halted (NULL halt_until preserved).

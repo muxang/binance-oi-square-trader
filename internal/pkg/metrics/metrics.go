@@ -77,6 +77,37 @@ var (
 		},
 		[]string{"symbol_class"},
 	)
+
+	// OrdersTotal counts Phase 4 entry orders by symbol+side+decision+result.
+	// Cardinality: bounded by active trading symbols × 2 sides × 2 decisions × 2 results.
+	OrdersTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orders_total",
+			Help: "Total Phase 4 entry orders placed, by symbol+side+decision+result.",
+		},
+		[]string{"symbol", "side", "decision", "result"},
+	)
+
+	// DisasterStopsPlacedTotal counts Algo Service disaster stop placements.
+	// Labels: symbol, result (success/failed).
+	DisasterStopsPlacedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_disaster_stops_placed_total",
+			Help: "Total disaster stop orders placed via Algo Service, by symbol+result.",
+		},
+		[]string{"symbol", "result"},
+	)
+
+	// OrderLatencySeconds histograms wall-clock time per Phase 4 entry step.
+	// Labels: step — "margin" | "leverage" | "place" | "fill" | "algo".
+	OrderLatencySeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "trader_order_latency_seconds",
+			Help:    "Latency per Phase 4 entry order step (margin/leverage/place/fill/algo).",
+			Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30},
+		},
+		[]string{"step"},
+	)
 )
 
 func init() {
@@ -84,5 +115,6 @@ func init() {
 		CollectorRunsTotal, CollectorDurationSeconds,
 		SignalEvaluationsTotal,
 		DecisionEvaluationsTotal, DecisionSizingDeviationPct,
+		OrdersTotal, DisasterStopsPlacedTotal, OrderLatencySeconds,
 	)
 }

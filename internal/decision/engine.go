@@ -12,6 +12,7 @@ import (
 	"trader/internal/storage/postgres/gen"
 )
 
+
 // SignalSource exposes the recent entered_* signals query (Round 1
 // `GetRecentEnteredSignals`).
 type SignalSource interface {
@@ -29,10 +30,10 @@ type FiltersSource interface {
 	GetTradingFilters(ctx context.Context, symbol string) (binance.TradingFilters, error)
 }
 
-// TradesWriter writes new entering-status trades (Phase 4 真下单 will UPDATE
-// status='open' + entry_ts later).
+// TradesWriter writes new entering-status trades. clientOrderID is the Phase 4
+// idempotency key (format: t{signal_id}_r{retry_count}).
 type TradesWriter interface {
-	InsertEnteringTrade(ctx context.Context, signalID int64, symbol, direction string, margin, notional decimal.Decimal, leverage int32) (int64, error)
+	InsertEnteringTrade(ctx context.Context, signalID int64, symbol, direction, clientOrderID string, margin, notional decimal.Decimal, leverage int32) (int64, error)
 }
 
 // EngineDeps composes all 5 minimal interfaces Phase 3 decision engine needs
@@ -65,6 +66,7 @@ type EvaluateResult struct {
 	Symbol   string
 	Decision string       // entered_full / entered_half (input)
 	Outcome  string       // metric outcome= label, see Outcome* consts
+	TradeID  int64        // set when Outcome=trade_entering; zero otherwise
 	Filter   FilterResult // filter step diag (always populated)
 	Sizing   SizingResult // sizing step diag (populated only if filter passed)
 }
@@ -193,13 +195,15 @@ func RunTick(
 		}
 		switch {
 		case result.Outcome == OutcomeTradeEntering:
-			_, werr := deps.InsertEnteringTrade(ctx,
-				result.SignalID, result.Symbol, "LONG",
+			clientOrderID := fmt.Sprintf("t%d_r0", result.SignalID)
+			tradeID, werr := deps.InsertEnteringTrade(ctx,
+				result.SignalID, result.Symbol, "LONG", clientOrderID,
 				result.Sizing.Margin, result.Sizing.Notional, result.Sizing.Leverage)
 			if werr != nil {
 				result.Outcome = OutcomeInternalError
 				report.Stats.InternalError++
 			} else {
+				result.TradeID = tradeID
 				report.Stats.TradeEntering++
 			}
 		case strings.HasPrefix(result.Outcome, "rejected_"):

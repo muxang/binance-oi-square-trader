@@ -24,9 +24,11 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/shopspring/decimal"
+	"golang.org/x/sync/errgroup"
 
 	"trader/internal/binance"
 	"trader/internal/decision"
+	"trader/internal/execution"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 	"trader/internal/storage/postgres/gen"
@@ -52,19 +54,22 @@ func decisionEngineDefaults(cfg DecisionEngineConfig) DecisionEngineConfig {
 
 // DecisionEngineCollector implements Phase 3 决策引擎, registered in main.go
 // with cron */5 (5min cron, aligned with signal_engine 5min decision window).
+// Phase 4: executor is wired in to PlaceEntry for trade_entering outcomes.
 type DecisionEngineCollector struct {
-	deps    decision.EngineDeps
-	log     zerolog.Logger
-	cfg     DecisionEngineConfig
-	nowFunc func() time.Time
+	deps     decision.EngineDeps
+	executor *execution.Executor // Phase 4 entry executor; nil in Phase 3-only deploys
+	log      zerolog.Logger
+	cfg      DecisionEngineConfig
+	nowFunc  func() time.Time
 }
 
 func NewDecisionEngineCollector(
 	queries *gen.Queries, rdb *redis.Client, symbols *binance.SymbolService,
+	executor *execution.Executor,
 	log zerolog.Logger, cfg DecisionEngineConfig,
 ) *DecisionEngineCollector {
 	cfg = decisionEngineDefaults(cfg)
-	c := &DecisionEngineCollector{log: log, cfg: cfg, nowFunc: timez.NowUTC}
+	c := &DecisionEngineCollector{log: log, cfg: cfg, nowFunc: timez.NowUTC, executor: executor}
 	c.deps = &decisionDataAccess{queries: queries, redis: rdb, symbols: symbols, log: log}
 	return c
 }
@@ -102,6 +107,31 @@ func (c *DecisionEngineCollector) Run(ctx context.Context) error {
 		Int("rejected_by_sizing", report.Stats.RejectedBySizing).
 		Int("internal_error", report.Stats.InternalError).
 		Msg("decision_engine tick complete")
+
+	// Phase 4: fire PlaceEntry for each trade_entering outcome. Uses errgroup
+	// so goroutines are tracked (CLAUDE.md §17). Background ctx so PlaceEntry
+	// is not bound to the 4min tick timeout; PlaceEntry has its own 60s deadline.
+	if c.executor != nil && report.Stats.TradeEntering > 0 {
+		var eg errgroup.Group
+		for _, r := range report.Results {
+			if r.Outcome != decision.OutcomeTradeEntering || r.TradeID == 0 {
+				continue
+			}
+			r := r
+			eg.Go(func() error {
+				c.executor.PlaceEntry(context.Background(),
+					r.TradeID, r.SignalID, r.Symbol, r.Decision,
+					r.Sizing.Quantity, r.Sizing.Margin, r.Sizing.Notional,
+					r.Sizing.EntryPrice, r.Sizing.Leverage)
+				return nil // PlaceEntry handles errors internally
+			})
+		}
+		if err := eg.Wait(); err != nil {
+			// PlaceEntry always returns nil; this branch is unreachable in practice.
+			c.log.Error().Err(err).Msg("decision_engine: executor eg error")
+		}
+	}
+
 	return nil
 }
 
@@ -201,13 +231,14 @@ func (a *decisionDataAccess) GetTradingFilters(ctx context.Context, symbol strin
 
 // TradesWriter
 
-func (a *decisionDataAccess) InsertEnteringTrade(ctx context.Context, signalID int64, symbol, direction string, margin, notional decimal.Decimal, leverage int32) (int64, error) {
-	return a.queries.InsertEnteringTrade(ctx, gen.InsertEnteringTradeParams{
-		SignalID:  pgtype.Int8{Int64: signalID, Valid: true},
-		Symbol:    symbol,
-		Direction: direction,
-		Margin:    margin,
-		Notional:  notional,
-		Leverage:  int16(leverage), // schema SMALLINT, narrow safe (Phase 3 v0.1 leverage default 10)
+func (a *decisionDataAccess) InsertEnteringTrade(ctx context.Context, signalID int64, symbol, direction, clientOrderID string, margin, notional decimal.Decimal, leverage int32) (int64, error) {
+	return a.queries.InsertEnteringTradeWithClientID(ctx, gen.InsertEnteringTradeWithClientIDParams{
+		SignalID:      pgtype.Int8{Int64: signalID, Valid: true},
+		Symbol:        symbol,
+		Direction:     direction,
+		Margin:        margin,
+		Notional:      notional,
+		Leverage:      int16(leverage),
+		ClientOrderID: clientOrderID,
 	})
 }

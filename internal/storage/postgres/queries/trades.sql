@@ -38,6 +38,58 @@ INSERT INTO trades (
 )
 RETURNING id;
 
+-- name: InsertEnteringTradeWithClientID :one
+-- Phase 4 entry: INSERT with client_order_id set at creation for idempotency.
+-- client_order_id = t{signal_id}_r{retry_count}. Round 1 always r0.
+-- Returns id so executor can reference the trade for subsequent Steps.
+INSERT INTO trades (
+    signal_id, symbol, direction, margin, notional, leverage, status, client_order_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, 'entering', $7
+)
+RETURNING id;
+
+-- name: UpdateTradeClientOrderID :exec
+-- Phase 4 Round 2: update client_order_id when retrying with incremented retry_count.
+UPDATE trades SET client_order_id = $2 WHERE id = $1;
+
+-- name: UpdateTradeOpen :exec
+-- Phase 4: mark trade open after market order fills. entry_price = fill avgPrice.
+UPDATE trades
+SET status = 'open',
+    entry_ts = $2,
+    entry_price = $3
+WHERE id = $1;
+
+-- name: UpdateTradeFailed :exec
+-- Phase 4: mark trade failed; called on order failure, fill timeout, disaster stop fail.
+UPDATE trades
+SET status = 'failed',
+    exit_reason = $2,
+    exit_ts = $3
+WHERE id = $1;
+
+-- name: UpdateTradeDisasterStop :exec
+-- Phase 4: record Algo Service disaster stop order ID after successful placement.
+UPDATE trades
+SET binance_disaster_stop_order_id = $2
+WHERE id = $1;
+
+-- name: InsertPositionState :exec
+-- Phase 4: initial position state after entry fill + disaster stop placed.
+-- entry_oi left NULL for v0.1 (no real-time OI at entry).
+INSERT INTO position_states (
+    trade_id, current_qty, highest_price, last_check_ts
+) VALUES (
+    $1, $2, $3, $4
+)
+ON CONFLICT (trade_id) DO NOTHING;
+
+-- name: InsertTradeExit :exec
+-- Phase 4: record each exit event (emergency_close / tp / trailing / timeout).
+INSERT INTO trade_exits (trade_id, ts, type, qty, price, pnl)
+VALUES ($1, $2, $3, $4, $5, $6);
+
 -- name: HasRecent24hAttemptForSymbol :one
 -- Phase 3 v0.1 24h 不二次入场过滤 — 用 signals.ts JOIN (trades.entry_ts
 -- 在 'entering' 状态为 NULL, Phase 4 真下单后才填). signals.ts NOT NULL

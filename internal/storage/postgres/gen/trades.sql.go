@@ -2,6 +2,10 @@
 // versions:
 //   sqlc v1.27.0
 // source: trades.sql
+//
+// Phase 4 Round 1: manually extended with 7 new queries (InsertEnteringTradeWithClientID,
+// UpdateTradeClientOrderID, UpdateTradeOpen, UpdateTradeFailed, UpdateTradeDisasterStop,
+// InsertPositionState, InsertTradeExit). Run `make sqlc` to regenerate cleanly.
 
 package gen
 
@@ -160,4 +164,145 @@ func (q *Queries) InsertEnteringTrade(ctx context.Context, arg InsertEnteringTra
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+// ── Phase 4 Round 1 additions (manually written; regenerate with `make sqlc`) ──
+
+const insertEnteringTradeWithClientID = `-- name: InsertEnteringTradeWithClientID :one
+INSERT INTO trades (
+    signal_id, symbol, direction, margin, notional, leverage, status, client_order_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, 'entering', $7
+)
+RETURNING id
+`
+
+type InsertEnteringTradeWithClientIDParams struct {
+	SignalID      pgtype.Int8
+	Symbol        string
+	Direction     string
+	Margin        decimal.Decimal
+	Notional      decimal.Decimal
+	Leverage      int16
+	ClientOrderID string
+}
+
+func (q *Queries) InsertEnteringTradeWithClientID(ctx context.Context, arg InsertEnteringTradeWithClientIDParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertEnteringTradeWithClientID,
+		arg.SignalID, arg.Symbol, arg.Direction,
+		arg.Margin, arg.Notional, arg.Leverage, arg.ClientOrderID,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const updateTradeClientOrderID = `-- name: UpdateTradeClientOrderID :exec
+UPDATE trades SET client_order_id = $2 WHERE id = $1
+`
+
+type UpdateTradeClientOrderIDParams struct {
+	ID            int64
+	ClientOrderID pgtype.Text
+}
+
+func (q *Queries) UpdateTradeClientOrderID(ctx context.Context, arg UpdateTradeClientOrderIDParams) error {
+	_, err := q.db.Exec(ctx, updateTradeClientOrderID, arg.ID, arg.ClientOrderID)
+	return err
+}
+
+const updateTradeOpen = `-- name: UpdateTradeOpen :exec
+UPDATE trades
+SET status = 'open',
+    entry_ts = $2,
+    entry_price = $3
+WHERE id = $1
+`
+
+type UpdateTradeOpenParams struct {
+	ID         int64
+	EntryTs    time.Time       // always provided on fill
+	EntryPrice decimal.Decimal // avgPrice from exchange fill
+}
+
+func (q *Queries) UpdateTradeOpen(ctx context.Context, arg UpdateTradeOpenParams) error {
+	_, err := q.db.Exec(ctx, updateTradeOpen, arg.ID, arg.EntryTs, arg.EntryPrice)
+	return err
+}
+
+const updateTradeFailed = `-- name: UpdateTradeFailed :exec
+UPDATE trades
+SET status = 'failed',
+    exit_reason = $2,
+    exit_ts = $3
+WHERE id = $1
+`
+
+type UpdateTradeFailedParams struct {
+	ID         int64
+	ExitReason pgtype.Text
+	ExitTs     pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateTradeFailed(ctx context.Context, arg UpdateTradeFailedParams) error {
+	_, err := q.db.Exec(ctx, updateTradeFailed, arg.ID, arg.ExitReason, arg.ExitTs)
+	return err
+}
+
+const updateTradeDisasterStop = `-- name: UpdateTradeDisasterStop :exec
+UPDATE trades
+SET binance_disaster_stop_order_id = $2
+WHERE id = $1
+`
+
+type UpdateTradeDisasterStopParams struct {
+	ID                         int64
+	BinanceDisasterStopOrderID pgtype.Text
+}
+
+func (q *Queries) UpdateTradeDisasterStop(ctx context.Context, arg UpdateTradeDisasterStopParams) error {
+	_, err := q.db.Exec(ctx, updateTradeDisasterStop, arg.ID, arg.BinanceDisasterStopOrderID)
+	return err
+}
+
+const insertPositionState = `-- name: InsertPositionState :exec
+INSERT INTO position_states (
+    trade_id, current_qty, highest_price, last_check_ts
+) VALUES (
+    $1, $2, $3, $4
+)
+ON CONFLICT (trade_id) DO NOTHING
+`
+
+type InsertPositionStateParams struct {
+	TradeID      int64
+	CurrentQty   decimal.Decimal
+	HighestPrice decimal.Decimal // entry price on creation
+	LastCheckTs  time.Time
+}
+
+func (q *Queries) InsertPositionState(ctx context.Context, arg InsertPositionStateParams) error {
+	_, err := q.db.Exec(ctx, insertPositionState,
+		arg.TradeID, arg.CurrentQty, arg.HighestPrice, arg.LastCheckTs)
+	return err
+}
+
+const insertTradeExit = `-- name: InsertTradeExit :exec
+INSERT INTO trade_exits (trade_id, ts, type, qty, price, pnl)
+VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type InsertTradeExitParams struct {
+	TradeID pgtype.Int8
+	Ts      time.Time
+	Type    string
+	Qty     decimal.Decimal
+	Price   decimal.Decimal
+	Pnl     decimal.Decimal
+}
+
+func (q *Queries) InsertTradeExit(ctx context.Context, arg InsertTradeExitParams) error {
+	_, err := q.db.Exec(ctx, insertTradeExit,
+		arg.TradeID, arg.Ts, arg.Type, arg.Qty, arg.Price, arg.Pnl)
+	return err
 }
