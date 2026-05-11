@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/shopspring/decimal"
 )
 
 const getCircuitBreakerState = `-- name: GetCircuitBreakerState :one
@@ -93,6 +94,32 @@ type TripGenericHaltParams struct {
 // Round 4: generic halt for reconcile drift / orphan / unknown. Idempotent.
 func (q *Queries) TripGenericHalt(ctx context.Context, arg TripGenericHaltParams) error {
 	_, err := q.db.Exec(ctx, tripGenericHalt, arg.HaltReason, arg.HaltUntil)
+	return err
+}
+
+const updateAfterTradeClose = `-- name: UpdateAfterTradeClose :exec
+UPDATE circuit_breaker_state
+SET consecutive_losses = CASE
+        WHEN $1 < 0 THEN consecutive_losses + 1
+        ELSE 0
+    END,
+    daily_pnl = CASE
+        WHEN daily_pnl_date = $2 THEN daily_pnl + $1
+        ELSE $1
+    END,
+    daily_pnl_date = $2
+WHERE id = 1
+`
+
+type UpdateAfterTradeCloseParams struct {
+	RealizedPnl  decimal.Decimal
+	DailyPnlDate pgtype.Date
+}
+
+// Round 5: rolls daily_pnl + consecutive_losses after each closed trade.
+// Round 6 reads these for trip evaluation (5 项熔断).
+func (q *Queries) UpdateAfterTradeClose(ctx context.Context, arg UpdateAfterTradeCloseParams) error {
+	_, err := q.db.Exec(ctx, updateAfterTradeClose, arg.RealizedPnl, arg.DailyPnlDate)
 	return err
 }
 

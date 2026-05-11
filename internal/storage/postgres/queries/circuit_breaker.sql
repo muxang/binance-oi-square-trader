@@ -60,6 +60,23 @@ SET trading_halted = TRUE,
     halt_until = $2
 WHERE id = 1;
 
+-- name: UpdateAfterTradeClose :exec
+-- Phase 4 Round 5: rolls daily_pnl + consecutive_losses after a trade closes.
+-- consecutive_losses: +1 on loss (pnl < 0), reset to 0 on win/breakeven (pnl >= 0).
+-- daily_pnl: accumulates today; resets when daily_pnl_date differs from today (BJT).
+-- Round 6 will read these for trip evaluation.
+UPDATE circuit_breaker_state
+SET consecutive_losses = CASE
+        WHEN $1 < 0 THEN consecutive_losses + 1
+        ELSE 0
+    END,
+    daily_pnl = CASE
+        WHEN daily_pnl_date = $2 THEN daily_pnl + $1
+        ELSE $1
+    END,
+    daily_pnl_date = $2
+WHERE id = 1;
+
 -- name: ResetDisasterStopFailCounter :exec
 -- Phase 4 Round 2: called when PlaceAlgoConditionalStop succeeds.
 -- Clears the consecutive failure counter so the next failure starts at 1h backoff.

@@ -181,6 +181,25 @@ func (c *Client) CancelOrder(ctx context.Context, symbol string, orderID int64) 
 	return fmt.Errorf("cancel order %s %d: %w", symbol, orderID, err)
 }
 
+// CancelAlgoOrder cancels an Algo Service order by algoId.
+// -2011 / -2013 (order not found / already canceled or triggered) → nil.
+// Used by Round 5 close pipeline before MARKET SELL.
+//
+// ref: references/binance/urls.md §「Cancel Algo Order」DELETE /fapi/v1/algoOrder
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Cancel-Algo-Order
+func (c *Client) CancelAlgoOrder(ctx context.Context, symbol string, algoID int64) error {
+	params := url.Values{}
+	params.Set("algoId", strconv.FormatInt(algoID, 10))
+	_, err := c.doWriteRetry(ctx, http.MethodDelete, "/fapi/v1/algoOrder", params, 1)
+	if err == nil {
+		return nil
+	}
+	if apiErr, ok := err.(*APIError); ok && ClassifyError(apiErr.HTTPCode, apiErr.BizCode) == ActionTreatAsCanceled {
+		return nil
+	}
+	return fmt.Errorf("cancel algo order %s %d: %w", symbol, algoID, err)
+}
+
 // PlaceAlgoConditionalStop places a CONDITIONAL STOP_MARKET via Algo Service.
 // Required after 2025-12-09 — STOP_MARKET must use /fapi/v1/algoOrder.
 // triggerPrice is the mark-price threshold; quantity is the full position size.

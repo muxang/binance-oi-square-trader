@@ -229,6 +229,14 @@ func run() error {
 		log.Fatal().Err(err).Msg("register position_manager collector")
 	}
 
+	// Phase 4 Round 5: exit_manager — 1min cron evaluates soft/hard timeout
+	// + drives close pipeline (cancel Algo + MARKET SELL + DB writes).
+	exitManager := execution.NewExitManager(gen.New(pgPool), client, rdb, log)
+	exitManagerCol := collector.NewExitManagerCollector(exitManager, log, collector.ExitManagerConfig{})
+	if err := runner.Register(exitManagerCol, "*/1 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register exit_manager collector")
+	}
+
 	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
 	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.
 	decisionEngineCol := collector.NewDecisionEngineCollector(

@@ -221,6 +221,51 @@ var (
 		},
 		[]string{"halt_type"},
 	)
+
+	// Phase 4 Round 5: exit + timeout + realized PnL metrics.
+
+	// ExitsTotal counts exits by symbol+reason+result.
+	// Labels: symbol, exit_reason (soft_timeout / hard_timeout / disaster / manual),
+	// result (success / sell_failed / db_failed).
+	ExitsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_exits_total",
+			Help: "Phase 4 Round 5 trade exits by symbol+reason+result.",
+		},
+		[]string{"symbol", "exit_reason", "result"},
+	)
+
+	// ExitLatencySeconds histograms wall-clock per close step.
+	// Labels: step — "cancel_algo" | "place_sell" | "fill" | "db".
+	ExitLatencySeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "trader_exit_latency_seconds",
+			Help:    "Latency per Round 5 close pipeline step.",
+			Buckets: []float64{.01, .05, .1, .25, .5, 1, 2, 5, 10, 30},
+		},
+		[]string{"step"},
+	)
+
+	// RealizedPnlTotal sums realized PnL by symbol+sign (positive / negative / zero).
+	// Counter type means each .Add() must be non-negative — we Add |pnl| and label
+	// the sign so Grafana can compute net via positive - negative.
+	RealizedPnlTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_realized_pnl_total",
+			Help: "Phase 4 Round 5 realized PnL totals by symbol+sign.",
+		},
+		[]string{"symbol", "sign"},
+	)
+
+	// PositionHoldDurationHours histograms hold time at close by exit_reason.
+	PositionHoldDurationHours = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "trader_position_hold_duration_hours",
+			Help:    "Hold duration at exit time by exit_reason.",
+			Buckets: []float64{0.5, 1, 2, 4, 8, 12, 24, 48, 72, 120, 168},
+		},
+		[]string{"exit_reason"},
+	)
 )
 
 func init() {
@@ -232,5 +277,6 @@ func init() {
 		OrdersRetryTotal, OrdersIdempotentHitTotal, HaltAutoResetTotal,
 		PositionSyncRunsTotal, PositionSyncDriftTotal, PositionMarginRatio, MarginCallTriggeredTotal,
 		PositionDriftHaltTotal, PositionLocalOnlyOrphanTotal, PositionBinanceOnlyUnknownTotal, HaltRCAPendingTotal,
+		ExitsTotal, ExitLatencySeconds, RealizedPnlTotal, PositionHoldDurationHours,
 	)
 }

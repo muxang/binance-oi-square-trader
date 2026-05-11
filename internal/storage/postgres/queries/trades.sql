@@ -110,6 +110,45 @@ SET retry_count = retry_count + 1,
     client_order_id = $2
 WHERE id = $1;
 
+-- name: ListOpenTradesForExit :many
+-- Phase 4 Round 5: rows exit_manager iterates each 1min tick for soft/hard
+-- timeout evaluation. Returns enough for the close pipeline:
+-- entry_ts (timing) + entry_price (pnl calc) + qty (SELL amount) + algo id
+-- (cancel before close) + leverage (sizing crosscheck).
+SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
+       t.margin, t.notional, t.leverage,
+       t.binance_disaster_stop_order_id,
+       ps.current_qty
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status IN ('open', 'partial', 'closing')
+ORDER BY t.entry_ts ASC;
+
+-- name: UpdateTradeClosed :exec
+-- Phase 4 Round 5: terminal write after SELL fill confirmed.
+UPDATE trades
+SET status = 'closed',
+    exit_ts = $2,
+    exit_price = $3,
+    exit_reason = $4,
+    realized_pnl = $5,
+    fees = $6
+WHERE id = $1;
+
+-- name: UpdateTradeClosing :exec
+-- Phase 4 Round 5: intermediate state while close is in flight. Distinguishes
+-- "trader intends to close" from "open / new entry". If next tick still sees
+-- 'closing', exit_manager retries cancel_algo + SELL from scratch (clientOrderId
+-- carries idempotency).
+UPDATE trades
+SET status = 'closing'
+WHERE id = $1
+  AND status IN ('open', 'partial');
+
+-- name: DeletePositionState :exec
+-- Phase 4 Round 5: remove position state after trade closed (no CASCADE in init).
+DELETE FROM position_states WHERE trade_id = $1;
+
 -- name: UpdatePositionStateSync :exec
 -- Phase 4 Round 3: 1min cron sync of position_states from /fapi/v3/positionRisk.
 -- highest_price = GREATEST(existing, fresh_mark) — monotonic high watermark

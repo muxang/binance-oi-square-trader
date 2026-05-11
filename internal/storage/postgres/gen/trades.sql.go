@@ -361,6 +361,92 @@ func (q *Queries) BumpTradeRetryCount(ctx context.Context, arg BumpTradeRetryCou
 	return err
 }
 
+const listOpenTradesForExit = `-- name: ListOpenTradesForExit :many
+SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
+       t.margin, t.notional, t.leverage,
+       t.binance_disaster_stop_order_id,
+       ps.current_qty
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status IN ('open', 'partial', 'closing')
+ORDER BY t.entry_ts ASC
+`
+
+type ListOpenTradesForExitRow struct {
+	ID                         int64
+	SignalID                   pgtype.Int8
+	Symbol                     string
+	Direction                  string
+	EntryTs                    pgtype.Timestamptz
+	EntryPrice                 pgtype.Numeric
+	Margin                     decimal.Decimal
+	Notional                   decimal.Decimal
+	Leverage                   int16
+	BinanceDisasterStopOrderID pgtype.Text
+	CurrentQty                 pgtype.Numeric
+}
+
+func (q *Queries) ListOpenTradesForExit(ctx context.Context) ([]ListOpenTradesForExitRow, error) {
+	rows, err := q.db.Query(ctx, listOpenTradesForExit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenTradesForExitRow
+	for rows.Next() {
+		var i ListOpenTradesForExitRow
+		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.EntryTs, &i.EntryPrice,
+			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID, &i.CurrentQty); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
+const updateTradeClosed = `-- name: UpdateTradeClosed :exec
+UPDATE trades
+SET status = 'closed',
+    exit_ts = $2,
+    exit_price = $3,
+    exit_reason = $4,
+    realized_pnl = $5,
+    fees = $6
+WHERE id = $1
+`
+
+type UpdateTradeClosedParams struct {
+	ID          int64
+	ExitTs      pgtype.Timestamptz
+	ExitPrice   decimal.Decimal
+	ExitReason  pgtype.Text
+	RealizedPnl decimal.Decimal
+	Fees        decimal.Decimal
+}
+
+func (q *Queries) UpdateTradeClosed(ctx context.Context, arg UpdateTradeClosedParams) error {
+	_, err := q.db.Exec(ctx, updateTradeClosed, arg.ID, arg.ExitTs, arg.ExitPrice, arg.ExitReason, arg.RealizedPnl, arg.Fees)
+	return err
+}
+
+const updateTradeClosing = `-- name: UpdateTradeClosing :exec
+UPDATE trades SET status = 'closing' WHERE id = $1 AND status IN ('open', 'partial')
+`
+
+func (q *Queries) UpdateTradeClosing(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, updateTradeClosing, id)
+	return err
+}
+
+const deletePositionState = `-- name: DeletePositionState :exec
+DELETE FROM position_states WHERE trade_id = $1
+`
+
+func (q *Queries) DeletePositionState(ctx context.Context, tradeID int64) error {
+	_, err := q.db.Exec(ctx, deletePositionState, tradeID)
+	return err
+}
+
 const updatePositionStateSync = `-- name: UpdatePositionStateSync :exec
 UPDATE position_states
 SET current_qty = $2,
