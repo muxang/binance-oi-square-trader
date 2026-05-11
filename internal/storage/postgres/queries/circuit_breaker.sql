@@ -19,16 +19,33 @@ SET trading_halted = TRUE,
 WHERE id = 1;
 
 -- name: TripDisasterStopFailHalt :one
--- Phase 4 Round 2: exponential backoff replacing manual reset.
--- Backoff = 1h × 2^current_counter, capped 24h. Counter increments per call.
--- Counter resets on successful Algo place (ResetDisasterStopFailCounter).
--- Pre-update counter references give: 0→1h, 1→2h, 2→4h, 3→8h, 4→16h, 5+→24h cap.
--- Returns new halt_until + counter so caller can log + emit metrics.
+-- Phase 4 Round 2 Step 3 (mu's decision C): exponential backoff 1h / 4h / 24h.
+-- Post-update counter values: 1 → 1h, 2 → 4h, 3+ → 24h (capped).
+-- 7-day rolling reset: if last failure > 7d ago, counter resets to 1 (1h halt).
+-- Counter resets on success via ResetDisasterStopFailCounter (in addition).
+-- All references to consecutive_disaster_stop_failures in SET clause use the
+-- value BEFORE this UPDATE (Postgres semantics), so we read the pre-update
+-- counter to pick the new halt_until.
 UPDATE circuit_breaker_state
-SET trading_halted = TRUE,
-    halt_reason = 'disaster_stop_placement_failed',
-    halt_until = NOW() + INTERVAL '1 hour' * LEAST(POWER(2, consecutive_disaster_stop_failures)::INT, 24),
-    consecutive_disaster_stop_failures = consecutive_disaster_stop_failures + 1
+SET consecutive_disaster_stop_failures = CASE
+        WHEN last_disaster_stop_failed_ts IS NOT NULL
+             AND NOW() - last_disaster_stop_failed_ts > INTERVAL '7 days'
+        THEN 1
+        ELSE LEAST(consecutive_disaster_stop_failures + 1, 3)
+    END,
+    halt_until = NOW() + (CASE
+        WHEN last_disaster_stop_failed_ts IS NOT NULL
+             AND NOW() - last_disaster_stop_failed_ts > INTERVAL '7 days'
+        THEN INTERVAL '1 hour'
+        WHEN consecutive_disaster_stop_failures = 0
+        THEN INTERVAL '1 hour'
+        WHEN consecutive_disaster_stop_failures = 1
+        THEN INTERVAL '4 hours'
+        ELSE INTERVAL '24 hours'
+    END),
+    last_disaster_stop_failed_ts = NOW(),
+    trading_halted = TRUE,
+    halt_reason = 'disaster_stop_placement_failed'
 WHERE id = 1
 RETURNING halt_until, consecutive_disaster_stop_failures;
 

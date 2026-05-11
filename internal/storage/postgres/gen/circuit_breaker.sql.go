@@ -38,10 +38,25 @@ func (q *Queries) GetCircuitBreakerState(ctx context.Context) (CircuitBreakerSta
 
 const tripDisasterStopFailHalt = `-- name: TripDisasterStopFailHalt :one
 UPDATE circuit_breaker_state
-SET trading_halted = TRUE,
-    halt_reason = 'disaster_stop_placement_failed',
-    halt_until = NOW() + INTERVAL '1 hour' * LEAST(POWER(2, consecutive_disaster_stop_failures)::INT, 24),
-    consecutive_disaster_stop_failures = consecutive_disaster_stop_failures + 1
+SET consecutive_disaster_stop_failures = CASE
+        WHEN last_disaster_stop_failed_ts IS NOT NULL
+             AND NOW() - last_disaster_stop_failed_ts > INTERVAL '7 days'
+        THEN 1
+        ELSE LEAST(consecutive_disaster_stop_failures + 1, 3)
+    END,
+    halt_until = NOW() + (CASE
+        WHEN last_disaster_stop_failed_ts IS NOT NULL
+             AND NOW() - last_disaster_stop_failed_ts > INTERVAL '7 days'
+        THEN INTERVAL '1 hour'
+        WHEN consecutive_disaster_stop_failures = 0
+        THEN INTERVAL '1 hour'
+        WHEN consecutive_disaster_stop_failures = 1
+        THEN INTERVAL '4 hours'
+        ELSE INTERVAL '24 hours'
+    END),
+    last_disaster_stop_failed_ts = NOW(),
+    trading_halted = TRUE,
+    halt_reason = 'disaster_stop_placement_failed'
 WHERE id = 1
 RETURNING halt_until, consecutive_disaster_stop_failures
 `
@@ -51,8 +66,9 @@ type TripDisasterStopFailHaltRow struct {
 	ConsecutiveDisasterStopFailures int32
 }
 
-// Phase 4 Round 2: exponential backoff (1h/2h/4h/8h/16h/24h-cap). Returns the
-// applied halt_until + the new counter so caller can log + emit metrics.
+// Phase 4 Round 2 (mu's decision C): exponential backoff 1h / 4h / 24h.
+// 7-day rolling reset: failures > 7d apart reset to 1h. Counter cap at 3 (24h).
+// Returns the applied halt_until + the new counter so caller can log + metrics.
 // Auto-reset by existing filters.go path once halt_until passes.
 func (q *Queries) TripDisasterStopFailHalt(ctx context.Context) (TripDisasterStopFailHaltRow, error) {
 	row := q.db.QueryRow(ctx, tripDisasterStopFailHalt)
