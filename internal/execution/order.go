@@ -59,7 +59,7 @@ func (e *Executor) PlaceEntry(
 	ctx context.Context,
 	tradeID, signalID int64,
 	symbol, decision string,
-	qty, margin, notional, entryPriceEst decimal.Decimal,
+	qty, margin, notional, entryPriceEst, tickSize decimal.Decimal,
 	leverage int32,
 ) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -165,7 +165,7 @@ func (e *Executor) PlaceEntry(
 	metrics.OrdersTotal.WithLabelValues(symbol, "BUY", decision, "success").Inc()
 
 	// Steps 6-9: place Algo Service disaster stop.
-	e.placeDisasterStop(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, log)
+	e.placeDisasterStop(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
 }
 
 // waitFill polls until the order is FILLED or the deadline is exceeded.
@@ -204,11 +204,16 @@ func (e *Executor) placeDisasterStop(
 	ctx context.Context,
 	tradeID int64,
 	symbol string,
-	fillQty, fillPrice decimal.Decimal,
+	fillQty, fillPrice, tickSize decimal.Decimal,
 	log zerolog.Logger,
 ) {
 	one := decimal.NewFromInt(1)
 	stopPrice := fillPrice.Mul(one.Sub(e.cfg.DisasterStopPct))
+	// Round to symbol tickSize multiple — Binance rejects with -1111 otherwise.
+	// Truncate (floor for positive) = round down = looser stop, conservative re slippage.
+	if !tickSize.IsZero() {
+		stopPrice = stopPrice.Div(tickSize).Truncate(0).Mul(tickSize)
+	}
 
 	start := e.nowFn()
 	algoResult, err := e.bc.PlaceAlgoConditionalStop(ctx, symbol, fillQty.String(), stopPrice.String())
