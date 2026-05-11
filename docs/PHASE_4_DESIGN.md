@@ -353,12 +353,18 @@ v0.2 不新增 Phase，在 Phase 4 基础上 patch Round 并重新 acceptance。
 
 ## §9 Round 0 SPEC Drift 审计输出
 
-### Catch 1 ⚠️ Algo Service 迁移日期已过（HIGH）
+### Catch 1 ✅ Binance Algo Service migration（强制）— Round 1 已实施
 
-- **现象:** BINANCE_ALGO_MIGRATION_DATE=2025-12-09，今日 2026-05-11，已过
-- **影响:** 灾难止损必须用 `POST /fapi/v1/algo/order`，STOP_MARKET 路径废弃
-- **处理:** Round 2 实施 `PlaceConditionalOrder()` 时直接走 Algo Service，不写 STOP_MARKET 分支
-- **ref:** `references/binance/urls.md §「2025-12-09 后启用的 Algo Service 接口」`
+- **2025-12-09 起:** STOP_MARKET 等条件单必须通过 `POST /fapi/v1/algo/order` 下单（旧路径 `POST /fapi/v1/order + type=STOP_MARKET` 已废弃）
+- **措辞澄清 (2026-05-11 Round 1 review):** Algo Service 内 `type=STOP_MARKET` 仍为合法参数值（触发后市价成交）。"废弃"指的是**端点** `/fapi/v1/order` 的该路径，而非 order type 字符串本身。
+- **代码不在** `/fapi/v1/order` 写 STOP_MARKET 分支。
+- **Round 1 实施:** `internal/binance/orders.go PlaceAlgoConditionalStop`
+  - endpoint: `/fapi/v1/algo/order` ✓
+  - `algoType=CONDITIONAL` ✓
+  - `type=STOP_MARKET` (Algo Service 合法 type，触发后市价成交) ✓
+  - `workingType=MARK_PRICE` ✓
+  - `reduceOnly=true` ✓
+- **ref:** `references/binance/urls.md §「2025-12-09 后启用的 Algo Service 接口」`；Binance 官方文档 2026-05-11 re-fetched 确认
 
 ### Catch 2 ⚠️ trades 表缺少 client_order_id（HIGH）
 
