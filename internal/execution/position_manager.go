@@ -14,6 +14,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -32,6 +33,16 @@ import (
 const (
 	redisKeyPositionsActive = "positions_active" // zset trade_id by entered_at
 	marginCallRatioTrigger  = 0.8                // SPEC §8
+	// Round 4 reconcile thresholds + halt window
+	driftHaltThresholdPct = 0.05         // > 5% qty drift trips halt (Round 3 logged at 1%)
+	reconcileHaltDuration = 1 * time.Hour // halt_until = NOW + 1h for reconcile halts
+)
+
+// Round 4 halt_type label values written to halt_rca.halt_type.
+const (
+	haltTypeLocalOrphan = "local_only_orphan"
+	haltTypeBinanceOnly = "binance_only_unknown"
+	haltTypeDriftExceed = "drift_exceeded"
 )
 
 // PositionSyncDeps is the minimal DB surface position_manager needs.
@@ -40,6 +51,9 @@ type PositionSyncDeps interface {
 	UpdatePositionStateSync(ctx context.Context, arg gen.UpdatePositionStateSyncParams) error
 	UpdateTradeFailed(ctx context.Context, arg gen.UpdateTradeFailedParams) error
 	InsertTradeExit(ctx context.Context, arg gen.InsertTradeExitParams) error
+	// Round 4: write halt RCA + trip generic halt.
+	InsertHaltRCA(ctx context.Context, arg gen.InsertHaltRCAParams) (gen.InsertHaltRCARow, error)
+	TripGenericHalt(ctx context.Context, arg gen.TripGenericHaltParams) error
 }
 
 // PositionRiskFetcher is the minimal binance surface.
@@ -97,15 +111,35 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 		positionsBySymbol[p.Symbol] = p
 	}
 
+	// Round 4 reconcile: track DB-side symbols to find binance-only positions
+	// (positions on exchange we don't know about).
+	localSymbols := make(map[string]bool, len(trades))
+	for _, t := range trades {
+		localSymbols[t.Symbol] = true
+	}
+
 	syncedOK, drift, marginCalls := 0, 0, 0
 	for _, t := range trades {
 		l := pm.log.With().Int64("trade_id", t.ID).Str("symbol", t.Symbol).Logger()
 
 		pos, ok := positionsBySymbol[t.Symbol]
 		if !ok {
-			// Binance has no position for this symbol — drift type=missing.
-			l.Warn().Msg("position.sync.drift: open trade has no Binance position (missing)")
+			// Round 4 local_only_orphan: DB has open trade, Binance doesn't.
+			// Possible causes: Algo Service triggered + we missed UpdateTradeFailed,
+			// mu manually closed in Binance UI, or genuine state divergence.
+			// Action: trip halt + write RCA. Trade row stays 'open' for mu to
+			// inspect (Round 5+ exit logic may reconcile).
+			l.Error().Msg("position.local_only_orphan: open trade missing from Binance")
+			metrics.PositionLocalOnlyOrphanTotal.Inc()
 			metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "missing").Inc()
+			pm.tripReconcileHalt(ctx, haltTypeLocalOrphan, map[string]any{
+				"trade_id":    t.ID,
+				"symbol":      t.Symbol,
+				"signal_id":   t.SignalID.Int64,
+				"db_status":   "open",
+				"binance":     "missing",
+				"detected_at": now.Format(time.RFC3339),
+			}, l)
 			drift++
 			continue
 		}
@@ -119,6 +153,14 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 				Str("actual_amt", pos.PositionAmt.String()).
 				Msg("position.sync.drift: direction mismatch")
 			metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "direction").Inc()
+			// Direction mismatch is a hard divergence — always halt.
+			pm.tripReconcileHalt(ctx, haltTypeDriftExceed, map[string]any{
+				"trade_id":   t.ID,
+				"symbol":     t.Symbol,
+				"drift_type": "direction",
+				"db_dir":     t.Direction,
+				"binance_amt": pos.PositionAmt.String(),
+			}, l)
 			drift++
 		}
 
@@ -126,11 +168,32 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 		absAmt := pos.PositionAmt.Abs()
 		if t.CurrentQty.Valid {
 			dbQty := decimalFromPgNumeric(t.CurrentQty)
-			if !dbQty.IsZero() && dbQty.Sub(absAmt).Abs().Div(dbQty).GreaterThan(decimal.NewFromFloat(0.01)) {
-				l.Warn().Str("db_qty", dbQty.String()).Str("binance_qty", absAmt.String()).
-					Msg("position.sync.drift: qty mismatch > 1%")
-				metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "qty").Inc()
-				drift++
+			if !dbQty.IsZero() {
+				deviation := dbQty.Sub(absAmt).Abs().Div(dbQty)
+				if deviation.GreaterThan(decimal.NewFromFloat(driftHaltThresholdPct)) {
+					// > 5% qty drift → halt + RCA (Round 4 escalation).
+					l.Error().Str("db_qty", dbQty.String()).Str("binance_qty", absAmt.String()).
+						Str("deviation_pct", deviation.String()).
+						Msg("position.drift_halt: qty mismatch > 5%")
+					metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "qty").Inc()
+					metrics.PositionDriftHaltTotal.WithLabelValues(t.Symbol, "qty").Inc()
+					pm.tripReconcileHalt(ctx, haltTypeDriftExceed, map[string]any{
+						"trade_id":      t.ID,
+						"symbol":        t.Symbol,
+						"drift_type":    "qty",
+						"db_qty":        dbQty.String(),
+						"binance_qty":   absAmt.String(),
+						"deviation_pct": deviation.String(),
+						"threshold_pct": driftHaltThresholdPct,
+					}, l)
+					drift++
+				} else if deviation.GreaterThan(decimal.NewFromFloat(0.01)) {
+					// 1-5% drift: log only (noise tolerance from Round 3).
+					l.Warn().Str("db_qty", dbQty.String()).Str("binance_qty", absAmt.String()).
+						Str("deviation_pct", deviation.String()).
+						Msg("position.sync.drift: qty mismatch > 1% (no halt)")
+					metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "qty").Inc()
+				}
 			}
 		}
 
@@ -166,20 +229,82 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 		syncedOK++
 	}
 
+	// Round 4 binance_only_unknown: scan Binance positions for symbols not in
+	// our open-trades set. Means mu / another process opened a position outside
+	// the trader. Halt + RCA — do NOT auto-close (could be intentional).
+	unknown := 0
+	for _, pos := range positions {
+		if localSymbols[pos.Symbol] {
+			continue
+		}
+		pm.log.Error().Str("symbol", pos.Symbol).Str("position_amt", pos.PositionAmt.String()).
+			Msg("position.binance_only_unknown: position not in DB")
+		metrics.PositionBinanceOnlyUnknownTotal.Inc()
+		pm.tripReconcileHalt(ctx, haltTypeBinanceOnly, map[string]any{
+			"symbol":       pos.Symbol,
+			"position_amt": pos.PositionAmt.String(),
+			"mark_price":   pos.MarkPrice.String(),
+			"entry_price":  pos.EntryPrice.String(),
+			"detected_at":  now.Format(time.RFC3339),
+		}, pm.log)
+		unknown++
+	}
+
 	pm.rebuildRedisZset(ctx, trades)
 
 	pm.log.Info().
 		Int("open_trades", len(trades)).
+		Int("binance_positions", len(positions)).
 		Int("synced_ok", syncedOK).
 		Int("drift", drift).
 		Int("margin_calls", marginCalls).
+		Int("binance_only_unknown", unknown).
 		Msg("position.sync.tick")
 
-	if drift > 0 {
+	if drift > 0 || unknown > 0 {
 		metrics.PositionSyncRunsTotal.WithLabelValues("drift").Inc()
 	} else {
 		metrics.PositionSyncRunsTotal.WithLabelValues("ok").Inc()
 	}
+}
+
+// tripReconcileHalt trips the circuit breaker for a reconcile event (orphan /
+// unknown / drift > 5%) AND writes a halt_rca row with full context.
+// All failures are logged but non-fatal: sync tick continues so other halts
+// + position updates aren't lost. halt_until = NOW + 1h (auto-reset by
+// existing filters.maintainHaltState path).
+func (pm *PositionManager) tripReconcileHalt(ctx context.Context, haltType string, context map[string]any, log zerolog.Logger) {
+	now := pm.nowFn()
+	haltReason := "position_" + haltType // e.g. position_local_only_orphan
+	haltUntil := pgtype.Timestamptz{Time: now.Add(reconcileHaltDuration), Valid: true}
+
+	if err := pm.db.TripGenericHalt(ctx, gen.TripGenericHaltParams{
+		HaltReason: pgtype.Text{String: haltReason, Valid: true},
+		HaltUntil:  haltUntil,
+	}); err != nil {
+		log.Error().Err(err).Str("halt_type", haltType).Msg("reconcile.halt: trip failed")
+		return
+	}
+
+	ctxJSON, err := json.Marshal(context)
+	if err != nil {
+		log.Error().Err(err).Msg("reconcile.halt: context json marshal failed")
+		ctxJSON = []byte(`{}`)
+	}
+	rca, err := pm.db.InsertHaltRCA(ctx, gen.InsertHaltRCAParams{
+		HaltType:    haltType,
+		ContextJson: ctxJSON,
+	})
+	if err != nil {
+		log.Error().Err(err).Str("halt_type", haltType).Msg("reconcile.halt: rca write failed")
+		return
+	}
+	metrics.HaltRCAPendingTotal.WithLabelValues(haltType).Inc()
+	log.Warn().
+		Int64("halt_rca_id", rca.ID).
+		Str("halt_type", haltType).
+		Time("halt_until", haltUntil.Time).
+		Msg("halt.rca.created")
 }
 
 // rebuildRedisZset replaces positions_active zset to match `trades`. Member=trade_id (str),

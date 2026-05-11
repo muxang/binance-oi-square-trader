@@ -181,6 +181,46 @@ var (
 		},
 		[]string{"symbol"},
 	)
+
+	// Phase 4 Round 4: bidirectional reconcile + halt RCA metrics.
+
+	// PositionDriftHaltTotal counts halts triggered by drift > 5%.
+	// Labels: symbol, drift_type — "qty" | "direction".
+	PositionDriftHaltTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_position_drift_halt_total",
+			Help: "Phase 4 Round 4 halts triggered by reconcile drift > threshold.",
+		},
+		[]string{"symbol", "drift_type"},
+	)
+
+	// PositionLocalOnlyOrphanTotal counts local_only_orphan events
+	// (DB has open trade, Binance has no matching position).
+	PositionLocalOnlyOrphanTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "trader_position_local_only_orphan_total",
+			Help: "Phase 4 Round 4 local-only orphan detections (DB has, Binance doesn't).",
+		},
+	)
+
+	// PositionBinanceOnlyUnknownTotal counts binance_only_unknown events
+	// (Binance has a position, DB has no corresponding open trade).
+	PositionBinanceOnlyUnknownTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "trader_position_binance_only_unknown_total",
+			Help: "Phase 4 Round 4 binance-only unknown detections (Binance has, DB doesn't).",
+		},
+	)
+
+	// HaltRCAPendingTotal counts unacknowledged halt_rca rows by halt_type.
+	// Treated as a counter (mu acks set it to 0 via the cmd-line tool).
+	HaltRCAPendingTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_halt_rca_pending_total",
+			Help: "Phase 4 Round 4 halt_rca records created per halt_type.",
+		},
+		[]string{"halt_type"},
+	)
 )
 
 func init() {
@@ -191,5 +231,6 @@ func init() {
 		OrdersTotal, DisasterStopsPlacedTotal, OrderLatencySeconds,
 		OrdersRetryTotal, OrdersIdempotentHitTotal, HaltAutoResetTotal,
 		PositionSyncRunsTotal, PositionSyncDriftTotal, PositionMarginRatio, MarginCallTriggeredTotal,
+		PositionDriftHaltTotal, PositionLocalOnlyOrphanTotal, PositionBinanceOnlyUnknownTotal, HaltRCAPendingTotal,
 	)
 }

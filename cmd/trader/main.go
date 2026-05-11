@@ -35,6 +35,16 @@ import (
 )
 
 func main() {
+	// Round 4: rca subcommands for halt root-cause review without standing up
+	// the full trader. `./trader rca-list` and `./trader rca-ack <id> <action>`
+	// share the trader's DB connection config.
+	if len(os.Args) > 1 && (os.Args[1] == "rca-list" || os.Args[1] == "rca-ack") {
+		if err := runRCACommand(os.Args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, `{"level":"fatal","cmd":%q,"error":%q}`+"\n", os.Args[1], err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		// Logger may not be ready yet on early failure — emit a minimal
 		// structured line to stderr so container logs still capture it.

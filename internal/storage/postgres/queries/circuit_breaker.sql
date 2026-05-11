@@ -49,6 +49,17 @@ SET consecutive_disaster_stop_failures = CASE
 WHERE id = 1
 RETURNING halt_until, consecutive_disaster_stop_failures;
 
+-- name: TripGenericHalt :exec
+-- Phase 4 Round 4: generic halt trigger for reconcile drift / orphan / unknown.
+-- Caller supplies halt_reason string + halt_until timestamp. Existing
+-- maintainHaltState path auto-resets when halt_until passes (Round 2 fix).
+-- Idempotent: re-tripping just refreshes the halt_until window.
+UPDATE circuit_breaker_state
+SET trading_halted = TRUE,
+    halt_reason = $1,
+    halt_until = $2
+WHERE id = 1;
+
 -- name: ResetDisasterStopFailCounter :exec
 -- Phase 4 Round 2: called when PlaceAlgoConditionalStop succeeds.
 -- Clears the consecutive failure counter so the next failure starts at 1h backoff.

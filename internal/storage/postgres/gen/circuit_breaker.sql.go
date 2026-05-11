@@ -77,6 +77,25 @@ func (q *Queries) TripDisasterStopFailHalt(ctx context.Context) (TripDisasterSto
 	return r, err
 }
 
+const tripGenericHalt = `-- name: TripGenericHalt :exec
+UPDATE circuit_breaker_state
+SET trading_halted = TRUE,
+    halt_reason = $1,
+    halt_until = $2
+WHERE id = 1
+`
+
+type TripGenericHaltParams struct {
+	HaltReason pgtype.Text
+	HaltUntil  pgtype.Timestamptz
+}
+
+// Round 4: generic halt for reconcile drift / orphan / unknown. Idempotent.
+func (q *Queries) TripGenericHalt(ctx context.Context, arg TripGenericHaltParams) error {
+	_, err := q.db.Exec(ctx, tripGenericHalt, arg.HaltReason, arg.HaltUntil)
+	return err
+}
+
 const resetDisasterStopFailCounter = `-- name: ResetDisasterStopFailCounter :exec
 UPDATE circuit_breaker_state
 SET consecutive_disaster_stop_failures = 0
