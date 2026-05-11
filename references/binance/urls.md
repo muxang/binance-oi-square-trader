@@ -133,27 +133,51 @@ Testnet 注册:https://testnet.binancefuture.com
 - 收到 429 必须立即退避,继续违反升级 418 IP ban
 - 详见 General Info 页面最新数据
 
+### Symbol Filters(下单 precision 强制)
+来自 `GET /fapi/v1/exchangeInfo` symbols[].filters,本项目通过 `SymbolService`
+缓存 1h(`internal/binance/symbol_service.go`)。下单前必须 round:
+- `PRICE_FILTER.tickSize`:price / triggerPrice / stopPrice 必须是 tickSize 倍数
+  · Algo Service triggerPrice 也要 round(Round 1 实测 -1111)
+  · 我方实施:`floor(price / tickSize) × tickSize`
+- `LOT_SIZE.stepSize`:quantity 必须是 stepSize 倍数
+  · `internal/decision/sizing.go` 在 SizeTrade 里 `stepRoundDown`
+- `LOT_SIZE.minQty`:数量下限。不满足 → reject sizing
+- `MIN_NOTIONAL.notional`:订单价值下限(BTC 期货 = 5 USDT;每币种不同)
+  · Round 2 smoke 实测 LIMIT BUY 0.01 ETH @ price=100 = 1 USDT < 20 USDT min → -4164
+
 ### 时间戳
 - 毫秒精度
-- 默认 `recvWindow=5000ms`
+- 默认 `recvWindow=5000ms`,最大 `60000ms`
+- 本项目代理路径偶发延迟尖峰 > 5000ms → Round 1 实测 -1021,Round 1 follow-up
+  `internal/binance/client.go` 显式设 `recvWindow=60000`(全部 signed 请求)
 - 服务器时间偏差 > recvWindow 会被拒,必须做时间同步
 
 ### 订单 client id 规则
 - `newClientOrderId` 正则:`^[\.A-Z\:/a-z0-9_-]{1,36}$`
-- 本项目命名约定(强制):
-  - 入场单:`boss-entry-<trade_id>`
-  - 灾难止损:`boss-disaster-<trade_id>`
-  - 部分止盈:`boss-tp1-<trade_id>` / `boss-tp2-<trade_id>`
-  - 移动止损:`boss-trail-<trade_id>`
-  - 信号失效平仓:`boss-sigfail-<trade_id>`
-  - 超时平仓:`boss-timeout-<trade_id>`
-  - 手动平仓:`boss-manual-<trade_id>`
+- 本项目实际命名(Round 1+ 实施):
+  - 入场单:`t{signal_id}_r{retry_count}` (e.g. `t4878_r0`)
+    · `retry_count` 由 `trades.retry_count` 列(migration 0003)驱动
+    · Round 1 始终 `r0`;Round 2 -4116 处理时 bump 到 `r1+`
+  - Algo Service / 部分止盈 / 移动止损等命名将在 Phase 4 Round 5+ 实施时确定
+    · (Round 0 设计中的 `boss-*` 命名为 Phase 5 占位,Round 5 真用时复审)
 
 ### 特殊错误处理(必读)
 - `-1006 / -1007 UNKNOWN/TIMEOUT`:**API 可能已成功**,必须查询订单状态确认
 - `-2011 / -2013`:订单不存在,**当成已撤销/已成交**
 - `-4046 / -4059`:幂等错误,**当成成功**
 - `-2014 / -2015 / -1022`:**致命**,进程级告警 + 暂停所有 API
+- `-1021 Timestamp outside recvWindow`:Round 1 实测代理延迟引起。已设
+  `recvWindow=60000`;再发生时 `internal/binance/retry.go` 单次重试
+- `-1111 Precision is over the maximum`:Round 1 实测 stop_price 未 round 到
+  symbol tickSize 引起。Algo Service triggerPrice / 限价单 price 必须
+  `floor(p / tickSize) × tickSize`(`SymbolService.TradingFilters.TickSize`)
+- `-2019 Margin is insufficient`:不重试,标 trades.status='failed'
+- `-4048 Margin type cannot be changed if there exists position`:Round 2
+  smoke 实测,持仓存在时 setMarginType 拒绝。当前归类 ActionPermanent
+- `-4116 ClientOrderId is duplicated`:**Round 2 实测真错误码**(NOT -2022,
+  老 references 中 -2022 是另一场景)。order 仍 NEW/PARTIALLY_FILLED 时重发
+  相同 `clientOrderId` 触发;`internal/binance/orders.go` 走
+  `GetOrderByClientID` lookup 路径返回已存在的 order(idempotent recovery)
 - 详细决策矩阵在写代码前 web_fetch 错误码页面校对一次
 
 ---
