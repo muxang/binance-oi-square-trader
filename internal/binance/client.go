@@ -140,6 +140,9 @@ func (c *Client) doRequest(ctx context.Context, method, base, path string, param
 		}
 	}
 	signed.Set("timestamp", strconv.FormatInt(c.nowFunc().UnixMilli(), 10))
+	// recvWindow=60000 (Binance max) tolerates occasional proxy latency spikes
+	// that would otherwise cause -1021 "Timestamp outside recvWindow" rejections.
+	signed.Set("recvWindow", "60000")
 	if err := c.limiter.Acquire(ctx, weight); err != nil {
 		return nil, fmt.Errorf("rate limiter: %w", err)
 	}
