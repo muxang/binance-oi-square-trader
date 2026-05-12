@@ -127,16 +127,14 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			ORDER BY symbol, ts DESC
 		),
 		sq_cur AS (
-			SELECT symbol, COUNT(DISTINCT post_id) AS mentions
-			FROM square_mentions
-			WHERE ts >= NOW() - INTERVAL '24 hours'
-			GROUP BY symbol
+			SELECT DISTINCT ON (symbol) symbol, content_count
+			FROM square_hashtag_history ORDER BY symbol, ts DESC
 		),
 		sq_prev AS (
-			SELECT symbol, COUNT(DISTINCT post_id) AS prev_mentions
-			FROM square_mentions
-			WHERE ts >= NOW() - INTERVAL '48 hours' AND ts < NOW() - INTERVAL '24 hours'
-			GROUP BY symbol
+			SELECT DISTINCT ON (symbol) symbol, content_count AS prev_count
+			FROM square_hashtag_history
+			WHERE ts <= NOW() - INTERVAL '24 hours'
+			ORDER BY symbol, ts DESC
 		),
 		lp AS (
 			SELECT DISTINCT ON (symbol) symbol, close AS price
@@ -162,9 +160,9 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			CASE WHEN p24.price>0 AND lp.price>0
 			     THEN ((lp.price-p24.price)/p24.price*100)::float8
 			     ELSE 0 END,
-			COALESCE(sq_cur.mentions, 0),
-			CASE WHEN COALESCE(sq_prev.prev_mentions, 0) > 0
-			     THEN ((COALESCE(sq_cur.mentions, 0) - sq_prev.prev_mentions)::float8 / sq_prev.prev_mentions * 100)
+			COALESCE(sq_cur.content_count, 0),
+			CASE WHEN COALESCE(sq_prev.prev_count, 0) > 0
+			     THEN ((COALESCE(sq_cur.content_count, 0) - sq_prev.prev_count)::float8 / sq_prev.prev_count * 100)
 			     ELSE 0 END,
 			(wl.sym IS NOT NULL),
 			(op.symbol IS NOT NULL)

@@ -124,10 +124,11 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 		price24hPct = (currentPrice - prev24h) / prev24h * 100
 	}
 
-	// Square mention trend: count per hour for the requested window
+	// Square hashtag trend: new content per hour (delta of content_count snapshots)
 	sqSeriesRows, err := s.db.Query(ctx, `
-		SELECT date_trunc('hour', ts) AS h, COUNT(DISTINCT post_id) AS mentions
-		FROM square_mentions
+		SELECT date_trunc('hour', ts) AS h,
+		       (MAX(content_count) - MIN(content_count))::bigint AS delta
+		FROM square_hashtag_history
 		WHERE symbol = $1 AND ts >= NOW() - ($2 || ' hours')::INTERVAL
 		GROUP BY h ORDER BY h ASC
 	`, symbol, strconv.Itoa(hours))

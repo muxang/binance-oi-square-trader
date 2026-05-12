@@ -103,7 +103,7 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
 
           {data.square_series.length > 0 && (
             <div>
-              <div className="text-xs text-gray-500 mb-1">Square 提及 (6h, 每小时)</div>
+              <div className="text-xs text-gray-500 mb-1">Square 话题增量 (每小时新帖)</div>
               <ResponsiveContainer width="100%" height={80}>
                 <BarChart data={data.square_series} barSize={8}>
                   <XAxis dataKey="ts_ms" hide />
