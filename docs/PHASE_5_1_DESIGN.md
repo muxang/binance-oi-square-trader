@@ -548,21 +548,46 @@ admin-web:
 
 ## §4 开发阶段
 
-### Round 拆分（8 Rounds，~30-40h）
+### Round 拆分 v2（8 Rounds，~30-40h）— vertical slice 模式
 
-| Round | 内容 | 预估 Claude Code 工时 | 关键产出 |
-|-------|------|----------------------|---------|
-| Round 0 | 设计文档（本次）| ~2h | PHASE_5_1_DESIGN.md |
-| Round 1 | admin-api Go 骨架 + 全部 12 endpoints stub + DB 查询 | ~6-8h | `cmd/admin-api/` + SQL |
-| Round 2 | 前端 Vite+React 脚手架 + Dashboard 主页 | ~3h | Page 0 可访问 |
-| Round 3 | Page 1 当前持仓 | ~3h | Page 1 真数据 |
-| Round 4 | Page 2 历史仓位 + Page 3 PnL 分析 | ~6h | Page 2+3 真数据 |
-| Round 5 | Page 4 Square 热点 + Page 5 候选池 OI | ~5h | Page 4+5 真数据 |
-| Round 6 | Page 6 开仓决策原因（完整 Section A-E）| ~4-6h | Page 6 真数据 |
-| Round 7 | 集成 + Docker 打包 + VPS 部署 + 真测 | ~3h | https://trader.letsagent.net/admin 可访问 |
-| Round 8 | Acceptance + commit + tag | ~1-2h | `phase-5.1-admin-web-v1.0` |
+> **修订说明 (2026-05-12):** 原 Round 1「全部 12 endpoints」设计改为 vertical slice 模式。
+> 每 Round 前后端配对实施，Round 结束时该 slice 100% real（不留 stub 欠债）。
+> 工程纪律参照 Phase 4 v0.1：每 Round 报告必须 explicit 标 FULL / PARTIAL / STUB / OUT-OF-SCOPE。
 
-**总计：** ~33-40h Claude Code，1-2 周 wall-clock
+#### Round 完成度标注规范
+
+| 标记 | 含义 |
+|------|------|
+| ✅ FULL | 真实施 + 真测，无 placeholder |
+| ⚠️ PARTIAL | 部分实施，剩余需后续 Round 补 |
+| ⚪ STUB | 函数签名存在，返 placeholder JSON，待后续 Round 实施 |
+| ❌ OUT-OF-SCOPE | 有意推后，已明确说明 |
+
+#### Round 清单
+
+| Round | 内容 | Endpoints 实施清单 | 预估工时 | 关键产出 |
+|-------|------|--------------------|---------|---------|
+| Round 0 | 设计文档 | — | ~2h | PHASE_5_1_DESIGN.md |
+| Round 1 ✅ | framework + health + dashboard 基础 | ✅ health, ✅ dashboard (基础)<br>⚪ 其余 10/12 STUB | ~2-3h | `cmd/admin-api/` 可编译运行 |
+| Round 2 | Dashboard 前端 + dashboard endpoint 完善 | ✅ dashboard (加 collector status) | ~3-4h | Page 0 100% real |
+| Round 3 | Page 1 当前持仓 前端 + endpoint 实施 | ✅ positions/open | ~3-4h | Page 1 100% real |
+| Round 4 | Page 2 历史仓位 + Page 3 PnL 分析 | ✅ positions/history<br>✅ pnl/cumulative<br>✅ pnl/by_symbol<br>✅ pnl/by_exit_reason<br>✅ pnl/stats | ~6-7h | Page 2+3 100% real |
+| Round 5 | Page 4 Square + Page 5 候选池 | ✅ square/trending<br>✅ watchlist<br>✅ symbol/:symbol | ~5-6h | Page 4+5 100% real |
+| Round 6 | Page 6 开仓决策原因（完整 Section A-E）| ✅ trade/:trade_id | ~4-6h | Page 6 100% real，12/12 all FULL |
+| Round 7 | Caddy basicauth + Docker + VPS 部署 | — | ~3-4h | https://trader.letsagent.net/admin |
+| Round 8 | Acceptance + commit + tag | — | ~1-2h | `phase-5.1-admin-web-v1.0` |
+
+**总计：** ~30-40h Claude Code，1-2 周 wall-clock（总量不变，slice 模式更可验证）
+
+#### Round 1 完成度记录（已完成）
+
+| 产出 | 完成度 | 说明 |
+|------|--------|------|
+| `cmd/admin-api/main.go` | ✅ FULL | DB read-only pool, Redis, graceful shutdown |
+| `internal/admin/server.go` | ✅ FULL | 12 路由注册 + CORS + helpers |
+| `GET /api/admin/health` | ✅ FULL | DB + Redis ping，VPS curl 真测通过 |
+| `GET /api/admin/dashboard` | ⚠️ PARTIAL | circuit_breaker_state + trade count + Prom metrics；collector status 待 Round 2 补 |
+| 其余 10/12 endpoints | ⚪ STUB | 返回正确 JSON 结构（空数组/空对象），待 Round 2-6 逐步实施 |
 
 ### Round 内纪律（每 Round）
 
@@ -570,7 +595,8 @@ admin-web:
 2. 完成后 mu review（贴关键 diff）
 3. VPS 真测（curl API / 浏览器截图）
 4. commit（每 Round 一个 commit）
-5. 等 mu 明确同意后进入下一 Round
+5. 报告按完成度标注规范 explicit 标每项（不接受「全部 OK」笼统声明）
+6. 等 mu 明确同意后进入下一 Round
 
 ---
 
@@ -677,5 +703,5 @@ SET default_transaction_read_only = on;
 
 ---
 
-*文档版本: Phase 5.1 Round 0 — 2026-05-12 BJT*  
+*文档版本: Phase 5.1 Round 0 (设计) + Round 1 完成度记录 — 2026-05-12 BJT*  
 *下次更新: Round 8 Acceptance 时补充实际 vs 设计对照表*
