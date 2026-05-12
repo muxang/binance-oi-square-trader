@@ -51,6 +51,9 @@ type PositionSyncDeps interface {
 	UpdatePositionStateSync(ctx context.Context, arg gen.UpdatePositionStateSyncParams) error
 	UpdateTradeFailed(ctx context.Context, arg gen.UpdateTradeFailedParams) error
 	InsertTradeExit(ctx context.Context, arg gen.InsertTradeExitParams) error
+	// v0.2 Catch 5: emergencyExit needs to clean up position_states like the
+	// regular close pipeline does (exit_manager.persistClose).
+	DeletePositionState(ctx context.Context, tradeID int64) error
 	// Round 4: write halt RCA + trip generic halt.
 	InsertHaltRCA(ctx context.Context, arg gen.InsertHaltRCAParams) (gen.InsertHaltRCARow, error)
 	TripGenericHalt(ctx context.Context, arg gen.TripGenericHaltParams) error
@@ -70,11 +73,22 @@ type PositionManager struct {
 	rdb   *redis.Client
 	log   zerolog.Logger
 	nowFn func() time.Time
+	// v0.2 Step 5: optional algo reconciler for race-window defense. When set,
+	// the local_only_orphan branch consults it before tripping halt — if Algo
+	// is FINISHED, auto-close instead. nil = legacy behavior (always halt).
+	algoReconciler *AlgoReconciler
 }
 
 // NewPositionManager constructs a PositionManager.
 func NewPositionManager(db PositionSyncDeps, bc PositionRiskFetcher, rdb *redis.Client, log zerolog.Logger) *PositionManager {
 	return &PositionManager{db: db, bc: bc, rdb: rdb, log: log, nowFn: timez.NowUTC}
+}
+
+// SetAlgoReconciler wires the v0.2 Step 5 race-window defense. Called from
+// main.go after both PositionManager and AlgoReconciler are constructed
+// (mutual dependency would otherwise require a constructor refactor).
+func (pm *PositionManager) SetAlgoReconciler(ar *AlgoReconciler) {
+	pm.algoReconciler = ar
 }
 
 // SyncTick runs one sync pass. Called from cron every 1min.
@@ -124,14 +138,40 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 
 		pos, ok := positionsBySymbol[t.Symbol]
 		if !ok {
-			// Round 4 local_only_orphan: DB has open trade, Binance doesn't.
-			// Possible causes: Algo Service triggered + we missed UpdateTradeFailed,
-			// mu manually closed in Binance UI, or genuine state divergence.
-			// Action: trip halt + write RCA. Trade row stays 'open' for mu to
-			// inspect (Round 5+ exit logic may reconcile).
+			// v0.2 Step 5: race-window defense. The Algo polling collector
+			// (1min cron) is supposed to catch FINISHED algos and auto-close
+			// the trade BEFORE we get here. But robfig/cron v3 doesn't
+			// guarantee execution order within the same minute, so we may
+			// observe the trade still 'open' while the Algo has actually
+			// FINISHED. Consult algo_reconciler before tripping orphan halt.
+			if pm.algoReconciler != nil && t.BinanceDisasterStopOrderID.Valid && t.BinanceDisasterStopOrderID.String != "" {
+				entryTs := time.Time{}
+				if t.EntryTs.Valid {
+					entryTs = t.EntryTs.Time
+				}
+				if pm.algoReconciler.TryReconcile(ctx, t.ID, t.Symbol, t.BinanceDisasterStopOrderID.String,
+					decimalFromPgNumeric(t.EntryPrice),
+					decimalFromPgNumeric(t.CurrentQty),
+					entryTs) {
+					l.Info().Msg("position.local_only_orphan: algo_reconciler resolved (FINISHED auto-close), skipping halt")
+					// Mirror healthy-tick gauge cleanup (autoClose did the DELETE
+					// internally too, idempotent re-delete is safe).
+					metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
+					continue
+				}
+			}
+			// Round 4 local_only_orphan: DB has open trade, Binance doesn't,
+			// AND Algo (if any) is not FINISHED. Possible causes: Algo
+			// CANCELED/EXPIRED mid-flight, mu manually closed in Binance UI,
+			// or genuine state divergence. Trip halt + write RCA.
 			l.Error().Msg("position.local_only_orphan: open trade missing from Binance")
 			metrics.PositionLocalOnlyOrphanTotal.Inc()
 			metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "missing").Inc()
+			// v0.2 Catch 2: clear stale margin_ratio gauge — orphan branch
+			// `continue`s before the healthy Set() at line ~219, so without
+			// this delete the gauge keeps its last value for hours/days while
+			// trader-app stays up. Verified by trade 49 BUSDT in Round 8.
+			metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
 			pm.tripReconcileHalt(ctx, haltTypeLocalOrphan, map[string]any{
 				"trade_id":    t.ID,
 				"symbol":      t.Symbol,
@@ -365,6 +405,18 @@ func (pm *PositionManager) emergencyExit(ctx context.Context, tradeID int64, sym
 	}); err != nil {
 		log.Error().Err(err).Msg("position.emergency_exit: UpdateTradeFailed failed")
 	}
+
+	// v0.2 Catch 5 + Catch 2: mirror exit_manager.persistClose terminal cleanup.
+	// Before this fix, emergency closes left position_states + zset members +
+	// margin_ratio gauge orphaned (only the regular close pipeline cleaned
+	// them). All non-fatal — trades.status='failed' is the authoritative state.
+	if err := pm.db.DeletePositionState(ctx, tradeID); err != nil {
+		log.Warn().Err(err).Msg("position.emergency_exit: DeletePositionState failed (non-fatal)")
+	}
+	if err := pm.rdb.ZRem(ctx, redisKeyPositionsActive, strconv.FormatInt(tradeID, 10)).Err(); err != nil {
+		log.Warn().Err(err).Msg("position.emergency_exit: ZREM positions_active failed (non-fatal, next sync rebuilds)")
+	}
+	metrics.PositionMarginRatio.DeleteLabelValues(symbol)
 }
 
 // decimalFromPgNumeric converts pgtype.Numeric → decimal.Decimal. Zero on Valid=false.

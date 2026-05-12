@@ -503,6 +503,7 @@ func (q *Queries) UpdatePositionStateSync(ctx context.Context, arg UpdatePositio
 const listOpenTradesForSync = `-- name: ListOpenTradesForSync :many
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
+       t.binance_disaster_stop_order_id,
        ps.current_qty, ps.highest_price
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -511,17 +512,18 @@ ORDER BY t.entry_ts ASC
 `
 
 type ListOpenTradesForSyncRow struct {
-	ID           int64
-	SignalID     pgtype.Int8
-	Symbol       string
-	Direction    string
-	EntryTs      pgtype.Timestamptz
-	EntryPrice   pgtype.Numeric
-	Margin       decimal.Decimal
-	Notional     decimal.Decimal
-	Leverage     int16
-	CurrentQty   pgtype.Numeric
-	HighestPrice pgtype.Numeric
+	ID                         int64
+	SignalID                   pgtype.Int8
+	Symbol                     string
+	Direction                  string
+	EntryTs                    pgtype.Timestamptz
+	EntryPrice                 pgtype.Numeric
+	Margin                     decimal.Decimal
+	Notional                   decimal.Decimal
+	Leverage                   int16
+	BinanceDisasterStopOrderID pgtype.Text
+	CurrentQty                 pgtype.Numeric
+	HighestPrice               pgtype.Numeric
 }
 
 func (q *Queries) ListOpenTradesForSync(ctx context.Context) ([]ListOpenTradesForSyncRow, error) {
@@ -534,7 +536,53 @@ func (q *Queries) ListOpenTradesForSync(ctx context.Context) ([]ListOpenTradesFo
 	for rows.Next() {
 		var i ListOpenTradesForSyncRow
 		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.EntryTs, &i.EntryPrice,
-			&i.Margin, &i.Notional, &i.Leverage, &i.CurrentQty, &i.HighestPrice); err != nil {
+			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID,
+			&i.CurrentQty, &i.HighestPrice); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
+const listOpenTradesWithAlgo = `-- name: ListOpenTradesWithAlgo :many
+SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
+       t.binance_disaster_stop_order_id,
+       ps.current_qty
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status = 'open'
+  AND t.binance_disaster_stop_order_id IS NOT NULL
+  AND t.binance_disaster_stop_order_id != ''
+ORDER BY t.entry_ts ASC
+`
+
+type ListOpenTradesWithAlgoRow struct {
+	ID                         int64
+	Symbol                     string
+	EntryTs                    pgtype.Timestamptz
+	EntryPrice                 pgtype.Numeric
+	Margin                     decimal.Decimal
+	Leverage                   int16
+	BinanceDisasterStopOrderID pgtype.Text
+	CurrentQty                 pgtype.Numeric
+}
+
+// v0.2 Gap 1: algo_reconciler iterates these rows each 1min tick to detect
+// Algo FINISHED auto-close. Excludes 'closing' trades (regular close pipeline
+// already cancelled the Algo) and trades with empty algo_id (Round 1 entries
+// where placement failed).
+func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesWithAlgoRow, error) {
+	rows, err := q.db.Query(ctx, listOpenTradesWithAlgo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenTradesWithAlgoRow
+	for rows.Next() {
+		var i ListOpenTradesWithAlgoRow
+		if err := rows.Scan(&i.ID, &i.Symbol, &i.EntryTs, &i.EntryPrice, &i.Margin, &i.Leverage,
+			&i.BinanceDisasterStopOrderID, &i.CurrentQty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -557,6 +605,25 @@ WHERE status = 'entering'
 // Round 1+ INSERTs always set client_order_id, so in-flight orders never match.
 func (q *Queries) CleanupOrphanEnteringTrades(ctx context.Context) (int64, error) {
 	result, err := q.db.Exec(ctx, cleanupOrphanEnteringTrades)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const cleanupOrphanPositionStates = `-- name: CleanupOrphanPositionStates :execrows
+DELETE FROM position_states
+WHERE trade_id IN (
+  SELECT id FROM trades WHERE status IN ('closed', 'failed')
+)
+`
+
+// v0.2 Catch 5: startup janitor to remove position_states rows whose owning
+// trade has reached a terminal state. These accumulate when pre-v0.2 close
+// paths (markCloseFailed / emergencyExit) updated trades.status but didn't
+// DELETE the state row. Run once at startup (idempotent).
+func (q *Queries) CleanupOrphanPositionStates(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupOrphanPositionStates)
 	if err != nil {
 		return 0, err
 	}

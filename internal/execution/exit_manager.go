@@ -213,7 +213,7 @@ func (em *ExitManager) closePosition(ctx context.Context, t gen.ListOpenTradesFo
 	qty := decimalFromPgNumeric(t.CurrentQty)
 	if qty.IsZero() {
 		log.Error().Msg("exit.sell.skip: current_qty=0 (cannot SELL); marking failed")
-		em.markCloseFailed(ctx, t.ID, "current_qty_zero", log)
+		em.markCloseFailed(ctx, t.ID, t.Symbol, "current_qty_zero", log)
 		return
 	}
 	clientOrderID := fmt.Sprintf("exit_%d_%d", t.ID, em.nowFn().Unix())
@@ -304,6 +304,10 @@ func (em *ExitManager) persistClose(
 		log.Warn().Err(err).Msg("exit.persist: ZREM positions_active failed (non-fatal, next sync rebuilds)")
 	}
 
+	// v0.2 Catch 2: clear margin_ratio gauge — same reason as orphan branch.
+	// Without this the gauge keeps the last in-flight value indefinitely.
+	metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
+
 	// circuit_breaker rollup (daily_pnl + consecutive_losses).
 	bjt := now.In(timez.BJT)
 	pgDate := pgtype.Date{Valid: true}
@@ -323,7 +327,9 @@ func (em *ExitManager) persistClose(
 	} else if realizedPnl.IsZero() {
 		sign = "zero"
 	}
-	metrics.RealizedPnlTotal.WithLabelValues(t.Symbol, sign).Add(mustFloat(realizedPnl))
+	// Counter.Add panics on negative; metric design (see metrics.go) labels the
+	// sign and adds |pnl|. Pre-v0.2 had latent panic on first loss exit.
+	metrics.RealizedPnlTotal.WithLabelValues(t.Symbol, sign).Add(mustFloat(realizedPnl.Abs()))
 
 	log.Info().
 		Str("exit_price", closePrice.String()).
@@ -362,13 +368,24 @@ func (em *ExitManager) tripCloseHalt(ctx context.Context, t gen.ListOpenTradesFo
 
 // markCloseFailed is for terminal scenarios (current_qty=0) where retrying
 // won't help. Trade goes to 'failed' (not 'closing') to avoid infinite retry.
-func (em *ExitManager) markCloseFailed(ctx context.Context, tradeID int64, reason string, log zerolog.Logger) {
+// v0.2 Catch 5 + Catch 2: also clean up position_states / zset / gauge so
+// terminal failure mirrors the success-path persistClose teardown.
+func (em *ExitManager) markCloseFailed(ctx context.Context, tradeID int64, symbol, reason string, log zerolog.Logger) {
 	if err := em.db.UpdateTradeFailed(ctx, gen.UpdateTradeFailedParams{
 		ID:         tradeID,
 		ExitReason: pgtype.Text{String: reason, Valid: true},
 		ExitTs:     pgtype.Timestamptz{Time: em.nowFn(), Valid: true},
 	}); err != nil {
 		log.Error().Err(err).Msg("exit.fail: UpdateTradeFailed failed")
+	}
+	if err := em.db.DeletePositionState(ctx, tradeID); err != nil {
+		log.Warn().Err(err).Msg("exit.fail: DeletePositionState failed (non-fatal)")
+	}
+	if err := em.rdb.ZRem(ctx, redisKeyPositionsActive, strconv.FormatInt(tradeID, 10)).Err(); err != nil {
+		log.Warn().Err(err).Msg("exit.fail: ZREM positions_active failed (non-fatal)")
+	}
+	if symbol != "" {
+		metrics.PositionMarginRatio.DeleteLabelValues(symbol)
 	}
 }
 

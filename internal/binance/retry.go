@@ -66,6 +66,8 @@ func (c *Client) doWriteRetry(ctx context.Context, method, path string, params u
 		case ActionRetryNow:
 			// -1021: 1 retry only.
 			if minus1021Retried {
+				// v0.2 Gap 2: -1021 exhausted (1 retry only) → record.
+				c.recordAPIError(ctx, "doWriteRetry", path, err)
 				return nil, err
 			}
 			minus1021Retried = true
@@ -73,9 +75,14 @@ func (c *Client) doWriteRetry(ctx context.Context, method, path string, params u
 			continue
 		default:
 			// ActionPermanent / ActionTreatAs* / ActionFatal — caller decides.
+			// v0.2 Gap 2: record (recordAPIError filters out treat-as-success/
+			// canceled internally so idempotent business no-ops don't trip).
+			c.recordAPIError(ctx, "doWriteRetry", path, err)
 			return nil, err
 		}
 	}
+	// v0.2 Gap 2: retry budget exhausted (3 attempts) → record final error.
+	c.recordAPIError(ctx, "doWriteRetry", path, lastErr)
 	return nil, lastErr
 }
 

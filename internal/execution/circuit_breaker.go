@@ -108,16 +108,25 @@ func (cb *CircuitBreakerTripper) EvaluateAll(ctx context.Context) bool {
 		cb.log.Error().Err(err).Msg("circuit_breaker.tick: read state failed")
 		return false
 	}
-	// Track gauge state.
+	// v0.2 gauge audit (Catch 6/7): operational gauges must update BEFORE the
+	// halt-return so dashboard reflects current state during a halt window
+	// (halt can last up to 24h; daily_pnl / consec_losses stale that long
+	// is misleading).
+	metrics.DailyPnlUSDT.Set(mustFloat(state.DailyPnl))
+	metrics.ConsecutiveLossesGauge.Set(float64(state.ConsecutiveLosses))
 	if state.TradingHalted {
 		metrics.CircuitBreakerState.Set(1)
 		return false // already halted, skip evaluation
 	}
 	metrics.CircuitBreakerState.Set(0)
 
-	// Track operational gauges (visible regardless of trip).
-	metrics.DailyPnlUSDT.Set(mustFloat(state.DailyPnl))
-	metrics.ConsecutiveLossesGauge.Set(float64(state.ConsecutiveLosses))
+	// v0.2 gauge audit (Catch 6/7): compute + .Set() unrealized-pnl-total and
+	// BTC drop_pct unconditionally. Previously they only updated inside their
+	// own trip helper, so when an earlier trip fired (or balance fetch failed)
+	// these gauges went stale for hours. Trip helpers below now consume the
+	// pre-computed values instead of recomputing.
+	totalUnrealized, positionCount := cb.updateUnrealizedGauge(ctx)
+	btcDropPct, btcStartPrice, btcCurrentPrice, btcOK := cb.updateBTCDropGauge(ctx)
 
 	// 1. API error rate (cheapest — DB count only).
 	if cb.tripAPIErrorRate(ctx) {
@@ -132,15 +141,63 @@ func (cb *CircuitBreakerTripper) EvaluateAll(ctx context.Context) bool {
 	if balanceOK && cb.tripDailyLoss(ctx, state.DailyPnl, balance) {
 		return true
 	}
-	// 4. Total float loss (positions × Redis prices).
-	if balanceOK && cb.tripTotalFloatLoss(ctx, balance) {
+	// 4. Total float loss (use pre-computed totalUnrealized + balance).
+	if balanceOK && cb.tripTotalFloatLoss(ctx, totalUnrealized, positionCount, balance) {
 		return true
 	}
-	// 5. BTC crash (klines query).
-	if cb.tripBTCCrash(ctx) {
+	// 5. BTC crash (use pre-computed drop_pct).
+	if btcOK && cb.tripBTCCrash(ctx, btcDropPct, btcStartPrice, btcCurrentPrice) {
 		return true
 	}
 	return false
+}
+
+// updateUnrealizedGauge always-runs helper that computes sum of unrealized
+// PnL across open positions + .Sets the gauge. v0.2 gauge audit fix.
+func (cb *CircuitBreakerTripper) updateUnrealizedGauge(ctx context.Context) (decimal.Decimal, int) {
+	rows, err := cb.db.SumOpenUnrealizedSnapshot(ctx)
+	if err != nil {
+		cb.log.Warn().Err(err).Msg("circuit_breaker.gauge.unrealized: snapshot failed (gauge keeps last value)")
+		return decimal.Zero, 0
+	}
+	totalUnrealized := decimal.Zero
+	for _, r := range rows {
+		if !r.EntryPrice.Valid || !r.CurrentQty.Valid {
+			continue
+		}
+		entry := decimalFromPgNumeric(r.EntryPrice)
+		qty := decimalFromPgNumeric(r.CurrentQty)
+		mark := entry
+		if priceStr, err := cb.rdb.Get(ctx, "latest_price:"+r.Symbol).Result(); err == nil {
+			if m, err := decimal.NewFromString(priceStr); err == nil {
+				mark = m
+			}
+		}
+		// LONG only Round 5+6: (mark - entry) × qty.
+		totalUnrealized = totalUnrealized.Add(mark.Sub(entry).Mul(qty))
+	}
+	metrics.UnrealizedPnlTotalUSDT.Set(mustFloat(totalUnrealized))
+	return totalUnrealized, len(rows)
+}
+
+// updateBTCDropGauge always-runs helper that computes 30min BTC drop_pct +
+// .Sets the gauge. Returns ok=false on insufficient klines (caller skips
+// trip check). v0.2 gauge audit fix.
+func (cb *CircuitBreakerTripper) updateBTCDropGauge(ctx context.Context) (dropPct, startPrice, currentPrice decimal.Decimal, ok bool) {
+	bars, err := cb.db.GetLatestKlines(ctx, gen.GetLatestKlinesParams{
+		Symbol: "BTCUSDT", Timeframe: btcCrashKlineTimeframe, Limit: btcCrash30MinBarCount,
+	})
+	if err != nil || len(bars) < btcCrash30MinBarCount {
+		return decimal.Zero, decimal.Zero, decimal.Zero, false
+	}
+	newest := bars[0].Close
+	oldest := bars[len(bars)-1].Open
+	if !oldest.IsPositive() {
+		return decimal.Zero, decimal.Zero, decimal.Zero, false
+	}
+	dropPct = oldest.Sub(newest).Div(oldest)
+	metrics.BTC30MinDropPct.Set(mustFloat(dropPct))
+	return dropPct, oldest, newest, true
 }
 
 // fetchBalance returns (balance, ok). On error logs + returns (0, false) so
@@ -224,31 +281,10 @@ func (cb *CircuitBreakerTripper) tripDailyLoss(ctx context.Context, dailyPnl, ba
 	return true
 }
 
-// tripTotalFloatLoss fires when sum of unrealized PnL ≤ -8% balance.
-func (cb *CircuitBreakerTripper) tripTotalFloatLoss(ctx context.Context, balance decimal.Decimal) bool {
-	rows, err := cb.db.SumOpenUnrealizedSnapshot(ctx)
-	if err != nil {
-		cb.log.Warn().Err(err).Msg("circuit_breaker.total_float_loss: snapshot failed")
-		return false
-	}
-	totalUnrealized := decimal.Zero
-	for _, r := range rows {
-		if !r.EntryPrice.Valid || !r.CurrentQty.Valid {
-			continue
-		}
-		entry := decimalFromPgNumeric(r.EntryPrice)
-		qty := decimalFromPgNumeric(r.CurrentQty)
-		// Redis latest_price; if unavailable use entry (yields 0 — conservative).
-		mark := entry
-		if priceStr, err := cb.rdb.Get(ctx, "latest_price:"+r.Symbol).Result(); err == nil {
-			if m, err := decimal.NewFromString(priceStr); err == nil {
-				mark = m
-			}
-		}
-		// LONG only Round 5+6: (mark - entry) × qty.
-		totalUnrealized = totalUnrealized.Add(mark.Sub(entry).Mul(qty))
-	}
-	metrics.UnrealizedPnlTotalUSDT.Set(mustFloat(totalUnrealized))
+// tripTotalFloatLoss fires when sum of unrealized PnL ≤ -8% balance. v0.2
+// gauge audit: now consumes pre-computed totalUnrealized from
+// updateUnrealizedGauge so the gauge always stays fresh.
+func (cb *CircuitBreakerTripper) tripTotalFloatLoss(ctx context.Context, totalUnrealized decimal.Decimal, positionCount int, balance decimal.Decimal) bool {
 	if !totalUnrealized.IsNegative() {
 		return false
 	}
@@ -259,45 +295,33 @@ func (cb *CircuitBreakerTripper) tripTotalFloatLoss(ctx context.Context, balance
 	}
 	cb.log.Warn().Str("sum_unrealized", totalUnrealized.String()).Str("balance", balance.String()).
 		Str("ratio", ratio.String()).Str("threshold", threshold.String()).
-		Int("positions", len(rows)).
+		Int("positions", positionCount).
 		Msg("circuit_breaker.trip.total_float_loss")
 	cb.fireTrip(ctx, tripTypeTotalFloatLoss, map[string]any{
 		"sum_unrealized": totalUnrealized.String(),
 		"balance":        balance.String(),
 		"ratio":          ratio.String(),
 		"threshold_pct":  threshold.String(),
-		"positions":      len(rows),
+		"positions":      positionCount,
 	})
 	return true
 }
 
-// tripBTCCrash fires when last 30min (6 × 5m bars) drop ≥ 3%.
-func (cb *CircuitBreakerTripper) tripBTCCrash(ctx context.Context) bool {
-	bars, err := cb.db.GetLatestKlines(ctx, gen.GetLatestKlinesParams{
-		Symbol: "BTCUSDT", Timeframe: btcCrashKlineTimeframe, Limit: btcCrash30MinBarCount,
-	})
-	if err != nil || len(bars) < btcCrash30MinBarCount {
-		return false
-	}
-	// bars sorted DESC: bars[0] = newest, bars[len-1] = oldest.
-	newest := bars[0].Close
-	oldest := bars[len(bars)-1].Open
-	if !oldest.IsPositive() {
-		return false
-	}
-	dropPct := oldest.Sub(newest).Div(oldest) // positive when dropping
-	metrics.BTC30MinDropPct.Set(mustFloat(dropPct))
+// tripBTCCrash fires when last 30min (6 × 5m bars) drop ≥ 3%. v0.2 gauge
+// audit: consumes pre-computed drop_pct + start/current prices from
+// updateBTCDropGauge.
+func (cb *CircuitBreakerTripper) tripBTCCrash(ctx context.Context, dropPct, startPrice, currentPrice decimal.Decimal) bool {
 	if dropPct.LessThan(cb.cfg.BTCCrashHaltPct) {
 		return false
 	}
 	cb.log.Warn().Str("drop_pct", dropPct.String()).Str("threshold", cb.cfg.BTCCrashHaltPct.String()).
-		Str("start_price", oldest.String()).Str("current_price", newest.String()).
+		Str("start_price", startPrice.String()).Str("current_price", currentPrice.String()).
 		Msg("circuit_breaker.trip.btc_crash")
 	cb.fireTrip(ctx, tripTypeBTCCrash, map[string]any{
 		"drop_pct":      dropPct.String(),
 		"threshold":     cb.cfg.BTCCrashHaltPct.String(),
-		"start_price":   oldest.String(),
-		"current_price": newest.String(),
+		"start_price":   startPrice.String(),
+		"current_price": currentPrice.String(),
 		"window_min":    30,
 	})
 	return true

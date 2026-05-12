@@ -2,6 +2,7 @@ package binance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,19 @@ import (
 	"trader/internal/config"
 	"trader/internal/pkg/timez"
 )
+
+// APIErrorHook is invoked when an API error surfaces to business code AFTER
+// retries are exhausted (for retry-capable paths) or on the first failure
+// (for non-retry paths). Used by main.go to wire an api_errors table INSERT
+// so v0.2 Round 6 TripAPIErrorRate can count actual errors.
+//
+// Idempotent / treat-as-success classifications (-4046 margin no-op, -4059
+// leverage no-op, -2011/-2013 cancel-already-gone) are filtered out by
+// recordAPIError so they don't trigger the rate trip.
+//
+// httpCode + bizCode = 0 means a non-API error (network / context cancel etc.);
+// hook callers should still record those.
+type APIErrorHook func(ctx context.Context, source, endpoint string, httpCode, bizCode int, message string)
 
 // Production / testnet REST hosts. WS hosts are referenced in the WS layer.
 //
@@ -58,6 +72,35 @@ type Client struct {
 	limiter       RateLimiter
 	log           zerolog.Logger
 	nowFunc       func() time.Time
+	onAPIError    APIErrorHook // v0.2 Gap 2: api_errors auto-populate hook
+}
+
+// SetAPIErrorHook registers the post-error callback. Idempotent. Designed to
+// be called once during wiring (main.go) after the DB is available; nil hook
+// is a no-op.
+func (c *Client) SetAPIErrorHook(hook APIErrorHook) {
+	c.onAPIError = hook
+}
+
+// recordAPIError invokes onAPIError iff err is a "real" error worth counting.
+// Skipped when err is nil OR ClassifyError says treat-as-success / treat-as-
+// canceled (idempotent business no-ops should not contribute to the 1min rate
+// trip). Non-API errors (network, context) are recorded with httpCode=bizCode=0.
+func (c *Client) recordAPIError(ctx context.Context, source, endpoint string, err error) {
+	if err == nil || c.onAPIError == nil {
+		return
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		action := ClassifyError(apiErr.HTTPCode, apiErr.BizCode)
+		if action == ActionTreatAsSuccess || action == ActionTreatAsCanceled {
+			return
+		}
+		c.onAPIError(ctx, source, endpoint, apiErr.HTTPCode, apiErr.BizCode, apiErr.Message)
+		return
+	}
+	// Network / context / proxy errors — count with zero codes.
+	c.onAPIError(ctx, source, endpoint, 0, 0, err.Error())
 }
 
 // New constructs a Client. In mainnet mode it asserts TRADER_MAINNET_CONFIRM
@@ -106,7 +149,9 @@ func New(cfg *config.Config, proxy ProxyManager, limiter RateLimiter, log zerolo
 // etc.) where we want real data on testnet for evaluation.
 // All read paths are weight-counted via the limiter.
 func (c *Client) DoRead(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
-	return c.doRequest(ctx, http.MethodGet, c.restBaseRead, path, params, weight)
+	body, err := c.doRequest(ctx, http.MethodGet, c.restBaseRead, path, params, weight)
+	c.recordAPIError(ctx, "DoRead", path, err)
+	return body, err
 }
 
 // DoReadAccount issues a signed GET against the WRITE base (testnet in testnet
@@ -117,7 +162,9 @@ func (c *Client) DoRead(ctx context.Context, path string, params url.Values, wei
 // This routing aligns with our defence-in-depth: testnet API keys can ONLY
 // hit testnet base, full stop.
 func (c *Client) DoReadAccount(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
-	return c.doRequest(ctx, http.MethodGet, c.restBaseWrite, path, params, weight)
+	body, err := c.doRequest(ctx, http.MethodGet, c.restBaseWrite, path, params, weight)
+	c.recordAPIError(ctx, "DoReadAccount", path, err)
+	return body, err
 }
 
 // doWrite issues a signed POST/PUT/DELETE. listenKey paths route to the

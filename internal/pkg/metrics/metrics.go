@@ -337,6 +337,29 @@ var (
 		},
 		[]string{"result"},
 	)
+
+	// v0.2 Gap 1: Algo polling metrics.
+
+	// AlgoPollingRunsTotal counts polling ticks by outcome.
+	// Labels: result — "ok" | "empty" | "err".
+	AlgoPollingRunsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_algo_polling_runs_total",
+			Help: "v0.2 Gap 1 Algo polling ticks (ok/empty/err).",
+		},
+		[]string{"result"},
+	)
+
+	// AlgoTriggeredTotal counts auto-close reconciles by symbol+exit_reason.
+	// exit_reason will always be 'disaster' for Algo TRIGGERED (kept as label
+	// for symmetry with ExitsTotal).
+	AlgoTriggeredTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_algo_triggered_total",
+			Help: "v0.2 Gap 1 Algo TRIGGERED auto-close reconciles per symbol.",
+		},
+		[]string{"symbol", "exit_reason"},
+	)
 )
 
 func init() {
@@ -352,5 +375,6 @@ func init() {
 		CircuitBreakerTripsTotal, CircuitBreakerState, AccountBalanceUSDT, DailyPnlUSDT,
 		ConsecutiveLossesGauge, BTC30MinDropPct, UnrealizedPnlTotalUSDT,
 		RestartRecoveryRunsTotal,
+		AlgoPollingRunsTotal, AlgoTriggeredTotal,
 	)
 }

@@ -87,6 +87,59 @@ func TestDoWriteRetry_5xxThenSuccess(t *testing.T) {
 	assert.Equal(t, int32(3), hits.Load(), "2 fail + 1 success")
 }
 
+// v0.2 Gap 2: api_errors hook must fire AFTER retry budget exhausted (3 fails).
+// Idempotent / treat-as-success classifications skip the hook so the rate
+// trip doesn't count -4046 / -4059 / -2011 etc.
+func TestDoWriteRetry_Exhausted_FiresAPIErrorHook(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"code":-1000,"msg":"server overloaded"}`))
+	}))
+	defer srv.Close()
+	c := retryTestClient(t, srv.URL)
+
+	type hookCall struct {
+		source, endpoint, message string
+		httpCode, bizCode         int
+	}
+	var calls []hookCall
+	c.SetAPIErrorHook(func(_ context.Context, source, endpoint string, httpCode, bizCode int, message string) {
+		calls = append(calls, hookCall{source, endpoint, message, httpCode, bizCode})
+	})
+
+	_, err := c.doWriteRetry(context.Background(), http.MethodPost, "/test", nil, 1)
+	require.Error(t, err)
+	assert.Equal(t, int32(4), hits.Load(), "1 initial + 3 retries = 4 attempts")
+	require.Len(t, calls, 1, "hook fires EXACTLY once (after retries exhausted, not per attempt)")
+	assert.Equal(t, "doWriteRetry", calls[0].source)
+	assert.Equal(t, "/test", calls[0].endpoint)
+	assert.Equal(t, 503, calls[0].httpCode)
+	assert.Equal(t, -1000, calls[0].bizCode)
+}
+
+// v0.2 Gap 2: idempotent treat-as-success (-4046 / -4059) MUST NOT fire the
+// api_errors hook. Otherwise the rate trip would count routine margin-type or
+// leverage no-ops.
+func TestDoWriteRetry_TreatAsSuccess_DoesNotFireHook(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":-4046,"msg":"No need to change margin type."}`))
+	}))
+	defer srv.Close()
+	c := retryTestClient(t, srv.URL)
+
+	var hookCalls int32
+	c.SetAPIErrorHook(func(_ context.Context, _, _ string, _, _ int, _ string) {
+		hookCalls++
+	})
+
+	_, err := c.doWriteRetry(context.Background(), http.MethodPost, "/test", nil, 1)
+	require.Error(t, err, "doWriteRetry returns the -4046; caller (SetMarginType) decides to swallow")
+	assert.Equal(t, int32(0), hookCalls, "-4046 must not fire hook (recordAPIError filter)")
+}
+
 func TestDoWriteRetry_PermanentNoRetry(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -162,6 +162,17 @@ WHERE id = $1
 -- Phase 4 Round 5: remove position state after trade closed (no CASCADE in init).
 DELETE FROM position_states WHERE trade_id = $1;
 
+-- name: CleanupOrphanPositionStates :execrows
+-- v0.2 Catch 5 (gauge audit follow-up): startup janitor to remove position_states
+-- rows whose owning trade has reached a terminal state. These accumulate when
+-- pre-v0.2 close paths (markCloseFailed / emergencyExit) updated trades.status
+-- but didn't DELETE the state row. Run once at startup (idempotent: re-running
+-- after a clean DB returns 0 rows).
+DELETE FROM position_states
+WHERE trade_id IN (
+  SELECT id FROM trades WHERE status IN ('closed', 'failed')
+);
+
 -- name: UpdatePositionStateSync :exec
 -- Phase 4 Round 3: 1min cron sync of position_states from /fapi/v3/positionRisk.
 -- highest_price = GREATEST(existing, fresh_mark) — monotonic high watermark
@@ -175,12 +186,29 @@ WHERE trade_id = $1;
 -- name: ListOpenTradesForSync :many
 -- Phase 4 Round 3: rows position_manager iterates each tick. Returns enough
 -- for drift detection (qty/direction) + Redis zset rebuild + MARGIN_CALL calc.
+-- v0.2 Step 5: binance_disaster_stop_order_id added so the orphan branch can
+-- defensively call algo_reconciler.TryReconcile before tripping halt.
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
+       t.binance_disaster_stop_order_id,
        ps.current_qty, ps.highest_price
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status IN ('open', 'partial')
+ORDER BY t.entry_ts ASC;
+
+-- name: ListOpenTradesWithAlgo :many
+-- v0.2 Gap 1: rows algo_reconciler iterates to detect Algo FINISHED auto-close.
+-- Filters to status='open' AND has Algo (binance_disaster_stop_order_id NOT NULL).
+-- 'closing' trades excluded: regular close pipeline already cancelled the Algo.
+SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
+       t.binance_disaster_stop_order_id,
+       ps.current_qty
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status = 'open'
+  AND t.binance_disaster_stop_order_id IS NOT NULL
+  AND t.binance_disaster_stop_order_id != ''
 ORDER BY t.entry_ts ASC;
 
 -- name: CleanupOrphanEnteringTrades :execrows

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
@@ -100,6 +101,7 @@ func run() error {
 	log.Info().Msg("binance client ready")
 
 	// 8a. Postgres pool + ping.
+	// (api_error hook wired AFTER pool is ready — see SetAPIErrorHook below.)
 	pgCtx, pgCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pgCancel()
 	pgPool, err := pgxpool.New(pgCtx, cfg.DB.PostgresURL)
@@ -110,6 +112,39 @@ func run() error {
 		log.Fatal().Err(err).Msg("postgres ping failed")
 	}
 	log.Info().Msg("postgres ready")
+
+	// v0.2 Gap 2: wire api_errors auto-populate hook now that pgPool is ready.
+	// Each surfaced binance error → INSERT api_errors row. Round 6
+	// TripAPIErrorRate counts rows in the last 1min window and trips at ≥3.
+	apiErrLogger := log.With().Str("component", "api_error_hook").Logger()
+	apiErrQueries := gen.New(pgPool)
+	client.SetAPIErrorHook(func(hookCtx context.Context, source, endpoint string, httpCode, bizCode int, message string) {
+		// Truncate message to avoid pathological 100kb error bodies bloating DB.
+		const maxMsgLen = 1024
+		if len(message) > maxMsgLen {
+			message = message[:maxMsgLen]
+		}
+		params := gen.InsertAPIErrorParams{
+			Ts:        timez.NowUTC(),
+			Source:    source,
+			Endpoint:  pgtype.Text{String: endpoint, Valid: endpoint != ""},
+			HttpCode:  pgtype.Int4{Int32: int32(httpCode), Valid: httpCode != 0},
+			ErrorCode: pgtype.Int4{Int32: int32(bizCode), Valid: bizCode != 0},
+			Message:   pgtype.Text{String: message, Valid: message != ""},
+		}
+		// Non-blocking: insert with own short timeout so a stuck DB doesn't
+		// pile up goroutines on every API error during an outage. Errors here
+		// are logged + dropped (better than blocking caller's tick).
+		insertCtx, cancel := context.WithTimeout(hookCtx, 2*time.Second)
+		defer cancel()
+		if err := apiErrQueries.InsertAPIError(insertCtx, params); err != nil {
+			apiErrLogger.Warn().Err(err).
+				Str("source", source).Str("endpoint", endpoint).
+				Int("http_code", httpCode).Int("biz_code", bizCode).
+				Msg("api_errors insert failed (dropped)")
+		}
+	})
+	log.Info().Msg("api_error hook wired")
 
 	// Phase 4 Round 1 follow-up: startup orphan cleanup for Phase 3 v0.1 PARTIAL
 	// legacy 'entering' rows (no client_order_id, no entry_ts). Round 1+ in-flight
@@ -232,9 +267,23 @@ func run() error {
 		Int("leverage", cfg.Position.Leverage).
 		Msg("executor ready")
 
+	// v0.2 Gap 1: algo_polling — 1min poll of disaster-stop Algo orders to
+	// auto-close trades when Binance reports algoStatus=FINISHED. Registered
+	// BEFORE position_manager so the orphan-detection branch is the fallback,
+	// not the primary path (per mu §4.5 v0.2 mini-round directive).
+	algoReconciler := execution.NewAlgoReconciler(gen.New(pgPool), client, rdb, log)
+	algoPollingCol := collector.NewAlgoPollingCollector(algoReconciler, log, collector.AlgoPollingConfig{})
+	if err := runner.Register(algoPollingCol, "*/1 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register algo_polling collector")
+	}
+
 	// Phase 4 Round 3: position_manager — 1min sync of open positions against
 	// /fapi/v3/positionRisk + Redis zset positions_active + MARGIN_CALL detect.
 	positionManager := execution.NewPositionManager(gen.New(pgPool), client, rdb, log)
+	// v0.2 Step 5: wire algo_reconciler so the local_only_orphan branch can
+	// defensively reconcile FINISHED algos before tripping halt (cron-ordering
+	// race window elimination).
+	positionManager.SetAlgoReconciler(algoReconciler)
 	positionManagerCol := collector.NewPositionManagerCollector(positionManager, log, collector.PositionManagerConfig{})
 	if err := runner.Register(positionManagerCol, "*/1 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register position_manager collector")

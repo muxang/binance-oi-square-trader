@@ -31,6 +31,9 @@ type RecoveryDeps interface {
 	GetEnteringTradesForRecovery(ctx context.Context) ([]gen.GetEnteringTradesForRecoveryRow, error)
 	UpdateTradeOpen(ctx context.Context, arg gen.UpdateTradeOpenParams) error
 	UpdateTradeFailed(ctx context.Context, arg gen.UpdateTradeFailedParams) error
+	// v0.2 Catch 5: startup janitor for orphaned position_states rows whose
+	// owning trade is already closed/failed (pre-v0.2 close paths didn't DELETE).
+	CleanupOrphanPositionStates(ctx context.Context) (int64, error)
 }
 
 // BinanceQuerier is the minimal Binance-client interface used for recovery.
@@ -154,6 +157,7 @@ var _ = fmt.Sprintf
 type StartupRecoveryReport struct {
 	EnteringReconciled int
 	EnteringFailed     int
+	StateOrphansClean  int64 // v0.2 Catch 5: position_states rows deleted by janitor
 	HaltAfterRecovery  bool
 }
 
@@ -171,6 +175,18 @@ func RunStartupRecovery(
 ) StartupRecoveryReport {
 	log.Info().Msg("restart.recovery.start")
 	report := StartupRecoveryReport{}
+
+	// Step 0 (v0.2 Catch 5): clean stale position_states from pre-v0.2 close
+	// paths that didn't DELETE the state row. Runs before position_sync so the
+	// orphan-detection logic doesn't see ghost rows for closed/failed trades.
+	if n, err := db.CleanupOrphanPositionStates(ctx); err != nil {
+		log.Warn().Err(err).Msg("restart.recovery.state_janitor: cleanup failed (non-fatal)")
+	} else {
+		report.StateOrphansClean = n
+		if n > 0 {
+			log.Info().Int64("rows_deleted", n).Msg("restart.recovery.state_janitor")
+		}
+	}
 
 	// Step 1: entering trades.
 	report.EnteringReconciled, report.EnteringFailed = RecoverEnteringTrades(ctx, db, bc, log)
@@ -196,6 +212,7 @@ func RunStartupRecovery(
 	log.Info().
 		Int("entering_reconciled", report.EnteringReconciled).
 		Int("entering_failed", report.EnteringFailed).
+		Int64("state_orphans_clean", report.StateOrphansClean).
 		Bool("halt_after_recovery", report.HaltAfterRecovery).
 		Msg("restart.recovery.complete")
 	return report

@@ -42,6 +42,25 @@ type AlgoOrderResult struct {
 	Status       string
 }
 
+// AlgoOrderQuery holds the GET /fapi/v1/algoOrder response fields needed by
+// the v0.2 Algo polling reconciler. algoStatus enum: WORKING / FINISHED /
+// CANCELED / EXPIRED. Only FINISHED is the "Algo triggered + filled" state.
+//
+// ref: references/binance/urls.md §「Query Algo Order」GET /fapi/v1/algoOrder
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Algo-Order
+// fetched: 2026-05-12
+type AlgoOrderQuery struct {
+	AlgoID         int64
+	Symbol         string
+	AlgoStatus     string          // WORKING / FINISHED / CANCELED / EXPIRED
+	ActualOrderID  string          // underlying market order id (FINISHED only)
+	ActualPrice    decimal.Decimal // fill price (FINISHED only; 0 otherwise)
+	Quantity       decimal.Decimal // original Algo qty
+	TriggerPrice   decimal.Decimal
+	UpdateTime     time.Time
+	TriggerTime    time.Time // when Algo fired (FINISHED only)
+}
+
 // orderRESULTResp maps the RESULT-mode order response JSON.
 type orderRESULTResp struct {
 	OrderID       int64  `json:"orderId"`
@@ -65,6 +84,9 @@ func (c *Client) SetMarginType(ctx context.Context, symbol, marginType string) e
 	params.Set("symbol", symbol)
 	params.Set("marginType", marginType)
 	_, err := c.doWrite(ctx, http.MethodPost, "/fapi/v1/marginType", params, 1)
+	// v0.2 Gap 2: record before any error wrapping; recordAPIError filters
+	// out treat-as-success internally (-4046 won't trip the rate counter).
+	c.recordAPIError(ctx, "SetMarginType", "/fapi/v1/marginType", err)
 	if err == nil {
 		return nil
 	}
@@ -85,6 +107,8 @@ func (c *Client) SetLeverage(ctx context.Context, symbol string, leverage int) (
 	params.Set("symbol", symbol)
 	params.Set("leverage", strconv.Itoa(leverage))
 	body, err := c.doWrite(ctx, http.MethodPost, "/fapi/v1/leverage", params, 1)
+	// v0.2 Gap 2: record (filter handles -4059 idempotent success).
+	c.recordAPIError(ctx, "SetLeverage", "/fapi/v1/leverage", err)
 	if err != nil {
 		if apiErr, ok := err.(*APIError); ok && ClassifyError(apiErr.HTTPCode, apiErr.BizCode) == ActionTreatAsSuccess {
 			return leverage, nil // -4059: already at desired state
@@ -172,6 +196,8 @@ func (c *Client) CancelOrder(ctx context.Context, symbol string, orderID int64) 
 	params.Set("symbol", symbol)
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
 	_, err := c.doWrite(ctx, http.MethodDelete, "/fapi/v1/order", params, 1)
+	// v0.2 Gap 2: record (filter handles -2011/-2013 cancel-already-gone).
+	c.recordAPIError(ctx, "CancelOrder", "/fapi/v1/order", err)
 	if err == nil {
 		return nil
 	}
@@ -179,6 +205,53 @@ func (c *Client) CancelOrder(ctx context.Context, symbol string, orderID int64) 
 		return nil
 	}
 	return fmt.Errorf("cancel order %s %d: %w", symbol, orderID, err)
+}
+
+// QueryAlgoOrder fetches one Algo order by algoId (GET /fapi/v1/algoOrder,
+// weight=1). Used by v0.2 algo_reconciler to detect FINISHED status (Algo
+// triggered + market SELL filled) and auto-close the matching trade.
+//
+// ref: references/binance/urls.md §「Query Algo Order」GET /fapi/v1/algoOrder
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Algo-Order
+// fetched: 2026-05-12
+func (c *Client) QueryAlgoOrder(ctx context.Context, algoID int64) (AlgoOrderQuery, error) {
+	params := url.Values{}
+	params.Set("algoId", strconv.FormatInt(algoID, 10))
+	// Account data — testnet API key requires testnet base (DoReadAccount).
+	body, err := c.DoReadAccount(ctx, "/fapi/v1/algoOrder", params, 1)
+	if err != nil {
+		return AlgoOrderQuery{}, fmt.Errorf("query algo order %d: %w", algoID, err)
+	}
+	var resp struct {
+		AlgoID        int64  `json:"algoId"`
+		Symbol        string `json:"symbol"`
+		AlgoStatus    string `json:"algoStatus"`
+		ActualOrderID string `json:"actualOrderId"`
+		ActualPrice   string `json:"actualPrice"`
+		Quantity      string `json:"quantity"`
+		TriggerPrice  string `json:"triggerPrice"`
+		UpdateTime    int64  `json:"updateTime"`
+		TriggerTime   int64  `json:"triggerTime"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return AlgoOrderQuery{}, fmt.Errorf("parse algo order resp: %w", err)
+	}
+	q := AlgoOrderQuery{
+		AlgoID:        resp.AlgoID,
+		Symbol:        resp.Symbol,
+		AlgoStatus:    resp.AlgoStatus,
+		ActualOrderID: resp.ActualOrderID,
+		ActualPrice:   parseDecimalOrZero(resp.ActualPrice),
+		Quantity:      parseDecimalOrZero(resp.Quantity),
+		TriggerPrice:  parseDecimalOrZero(resp.TriggerPrice),
+	}
+	if resp.UpdateTime > 0 {
+		q.UpdateTime = time.UnixMilli(resp.UpdateTime).UTC()
+	}
+	if resp.TriggerTime > 0 {
+		q.TriggerTime = time.UnixMilli(resp.TriggerTime).UTC()
+	}
+	return q, nil
 }
 
 // CancelAlgoOrder cancels an Algo Service order by algoId.
