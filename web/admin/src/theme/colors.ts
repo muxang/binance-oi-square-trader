@@ -1,7 +1,7 @@
-// 中国 trader 习惯: 红涨绿跌 (与 Grafana 默认相反)
+// 币圈习惯: 绿涨红跌 (Binance 惯例 — green=up/profit, red=down/loss)
 export const colors = {
-  up: '#f04864',
-  down: '#30bf78',
+  up: '#30bf78',
+  down: '#f04864',
   normal: '#52c41a',
   warning: '#faad14',
   halt: '#ff4d4f',
