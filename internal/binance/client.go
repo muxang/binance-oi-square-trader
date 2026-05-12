@@ -69,6 +69,7 @@ type Client struct {
 	restBaseRead  string
 	restBaseWrite string
 	proxy         ProxyManager
+	directHTTP    *http.Client // direct (no-proxy) client for account/trading calls
 	limiter       RateLimiter
 	log           zerolog.Logger
 	nowFunc       func() time.Time
@@ -119,13 +120,14 @@ func New(cfg *config.Config, proxy ProxyManager, limiter RateLimiter, log zerolo
 		limiter = noopRateLimiter{}
 	}
 	c := &Client{
-		mode:      cfg.Mode,
-		apiKey:    cfg.Binance.APIKey,
-		apiSecret: cfg.Binance.APISecret,
-		proxy:     proxy,
-		limiter:   limiter,
-		log:       log,
-		nowFunc:   timez.NowUTC,
+		mode:       cfg.Mode,
+		apiKey:     cfg.Binance.APIKey,
+		apiSecret:  cfg.Binance.APISecret,
+		proxy:      proxy,
+		directHTTP: &http.Client{Timeout: 15 * time.Second},
+		limiter:    limiter,
+		log:        log,
+		nowFunc:    timez.NowUTC,
 	}
 	if cfg.Mode == "mainnet" {
 		if cfg.MainnetConfirm != "I_UNDERSTAND" {
@@ -162,7 +164,7 @@ func (c *Client) DoRead(ctx context.Context, path string, params url.Values, wei
 // This routing aligns with our defence-in-depth: testnet API keys can ONLY
 // hit testnet base, full stop.
 func (c *Client) DoReadAccount(ctx context.Context, path string, params url.Values, weight int) ([]byte, error) {
-	body, err := c.doRequest(ctx, http.MethodGet, c.restBaseWrite, path, params, weight)
+	body, err := c.doRequestDirect(ctx, http.MethodGet, c.restBaseWrite, path, params, weight)
 	c.recordAPIError(ctx, "DoReadAccount", path, err)
 	return body, err
 }
@@ -187,7 +189,7 @@ func (c *Client) doWrite(ctx context.Context, method, path string, params url.Va
 	case c.mode == "testnet" && base != TestnetREST:
 		return nil, fmt.Errorf("safety: testnet mode but write base %q is not testnet", base)
 	}
-	return c.doRequest(ctx, method, base, path, params, weight)
+	return c.doRequestDirect(ctx, method, base, path, params, weight)
 }
 
 // doRequest is the single egress point: it acquires rate budget, signs, sends,
@@ -247,6 +249,58 @@ func (c *Client) doRequest(ctx context.Context, method, base, path string, param
 		return nil, apiErr
 	}
 	c.proxy.ReportSuccess(proxyURL)
+	return io.ReadAll(resp.Body)
+}
+
+// doRequestDirect is identical to doRequest but bypasses the ProxyManager and
+// sends directly from the VPS IP. Used for account/trading endpoints that are
+// IP-whitelisted on the Binance API key — proxy egress IPs cause -2015.
+func (c *Client) doRequestDirect(ctx context.Context, method, base, path string, params url.Values, weight int) ([]byte, error) {
+	signed := url.Values{}
+	for k, vs := range params {
+		for _, v := range vs {
+			signed.Add(k, v)
+		}
+	}
+	signed.Set("timestamp", strconv.FormatInt(c.nowFunc().UnixMilli(), 10))
+	signed.Set("recvWindow", "60000")
+	if err := c.limiter.Acquire(ctx, weight); err != nil {
+		return nil, fmt.Errorf("rate limiter: %w", err)
+	}
+
+	var (
+		reqURL string
+		body   io.Reader
+	)
+	if method == http.MethodGet {
+		reqURL = base + path + "?" + BuildQueryString(signed, c.apiSecret)
+	} else {
+		reqURL = base + path
+		body = strings.NewReader(BuildBody(signed, c.apiSecret))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("X-MBX-APIKEY", c.apiKey)
+	if method != http.MethodGet {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+
+	resp, err := c.directHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 || resp.StatusCode == 418 || resp.StatusCode == 429 {
+		apiErr, _ := ParseError(resp)
+		return nil, apiErr
+	}
+	if resp.StatusCode >= 400 {
+		apiErr, _ := ParseError(resp)
+		return nil, apiErr
+	}
 	return io.ReadAll(resp.Body)
 }
 

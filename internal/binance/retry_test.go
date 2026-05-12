@@ -31,6 +31,7 @@ func retryTestClient(t *testing.T, srvURL string) *Client {
 		restBaseRead:  srvURL,
 		restBaseWrite: srvURL,
 		proxy:         &directProxy{},
+		directHTTP:    &http.Client{Timeout: 5 * time.Second},
 		limiter:       ratelimit.NewTokenBucket(100, 100),
 		nowFunc:       func() time.Time { return time.Unix(1700000000, 0) },
 		log:           zerolog.Nop(),
