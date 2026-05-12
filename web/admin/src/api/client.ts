@@ -191,7 +191,7 @@ export interface MarketData {
 }
 
 export type MarketScope = 'all' | 'watchlist' | 'positions'
-export type MarketSort  = 'oi_1h_pct' | 'oi_24h_pct' | 'oi_usd' | 'price_24h_pct' | 'square'
+export type MarketSort  = 'oi_1h_pct' | 'oi_24h_pct' | 'oi_usd' | 'price_24h_pct' | 'square' | 'square_24h_pct'
 
 export interface MarketParams {
   scope?: MarketScope

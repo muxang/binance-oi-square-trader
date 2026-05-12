@@ -220,7 +220,7 @@ export default function Market() {
                     <SortTH right current={sortBy} onSort={handleSort}>当前价</SortTH>
                     <SortTH right sortKey="price_24h_pct" current={sortBy} onSort={handleSort}>24h涨跌</SortTH>
                     <SortTH right sortKey="square"        current={sortBy} onSort={handleSort}>Square提及</SortTH>
-                    <SortTH right current={sortBy} onSort={handleSort}>Square 24h%</SortTH>
+                    <SortTH right sortKey="square_24h_pct" current={sortBy} onSort={handleSort}>Square 24h%</SortTH>
                     <SortTH current={sortBy} onSort={handleSort}>标记</SortTH>
                   </tr>
                 </thead>

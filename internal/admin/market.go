@@ -92,6 +92,7 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 		case "oi_usd":        return items[i].OiUsdM > items[j].OiUsdM
 		case "price_24h_pct": return items[i].Price24hPct > items[j].Price24hPct
 		case "square":        return items[i].SquareMentions > items[j].SquareMentions
+		case "square_24h_pct": return items[i].Square24hPct > items[j].Square24hPct
 		default:              return items[i].Oi1hPct > items[j].Oi1hPct
 		}
 	})
