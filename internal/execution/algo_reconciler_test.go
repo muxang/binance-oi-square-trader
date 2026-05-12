@@ -33,9 +33,9 @@ type fakeAlgoDeps struct {
 func (f *fakeAlgoDeps) ListOpenTradesWithAlgo(_ context.Context) ([]gen.ListOpenTradesWithAlgoRow, error) {
 	return f.openTrades, f.openTradesErr
 }
-func (f *fakeAlgoDeps) InsertTradeExit(_ context.Context, arg gen.InsertTradeExitParams) error {
+func (f *fakeAlgoDeps) InsertTradeExitIdempotent(_ context.Context, arg gen.InsertTradeExitParams) (int64, error) {
 	f.exits = append(f.exits, arg)
-	return nil
+	return 1, nil // simulate successful insert (no conflict)
 }
 func (f *fakeAlgoDeps) UpdateTradeClosed(_ context.Context, arg gen.UpdateTradeClosedParams) error {
 	f.closed = append(f.closed, arg)

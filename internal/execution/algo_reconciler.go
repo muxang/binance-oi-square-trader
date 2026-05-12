@@ -44,7 +44,10 @@ import (
 // AlgoReconcilerDeps is the minimal DB surface the reconciler needs.
 type AlgoReconcilerDeps interface {
 	ListOpenTradesWithAlgo(ctx context.Context) ([]gen.ListOpenTradesWithAlgoRow, error)
-	InsertTradeExit(ctx context.Context, arg gen.InsertTradeExitParams) error
+	// InsertTradeExitIdempotent returns (1, nil) on insert, (0, nil) on duplicate.
+	// The idempotent variant is required here because ReconcileTick and TryReconcile
+	// can both call autoCloseFromFields for the same trade concurrently.
+	InsertTradeExitIdempotent(ctx context.Context, arg gen.InsertTradeExitParams) (int64, error)
 	UpdateTradeClosed(ctx context.Context, arg gen.UpdateTradeClosedParams) error
 	DeletePositionState(ctx context.Context, tradeID int64) error
 	UpdateAfterTradeClose(ctx context.Context, arg gen.UpdateAfterTradeCloseParams) error
@@ -59,6 +62,7 @@ type AlgoQuerier interface {
 type AlgoReconciler struct {
 	db    AlgoReconcilerDeps
 	bc    AlgoQuerier
+	ff    FeesFetcher // optional; nil → fees=0
 	rdb   *redis.Client
 	log   zerolog.Logger
 	nowFn func() time.Time
@@ -66,6 +70,36 @@ type AlgoReconciler struct {
 
 func NewAlgoReconciler(db AlgoReconcilerDeps, bc AlgoQuerier, rdb *redis.Client, log zerolog.Logger) *AlgoReconciler {
 	return &AlgoReconciler{db: db, bc: bc, rdb: rdb, log: log, nowFn: timez.NowUTC}
+}
+
+// WithFeesFetcher wires the real commission fetcher (call after NewAlgoReconciler in main).
+func (ar *AlgoReconciler) WithFeesFetcher(ff FeesFetcher) *AlgoReconciler {
+	ar.ff = ff
+	return ar
+}
+
+// sumAlgoFees fetches commission for the SELL order that Binance placed when
+// the Algo triggered. actualOrderID is the string from AlgoOrderQuery.ActualOrderID.
+// Non-fatal: logs warning, returns decimal.Zero on any error.
+func (ar *AlgoReconciler) sumAlgoFees(ctx context.Context, symbol, actualOrderID string, log zerolog.Logger) decimal.Decimal {
+	if ar.ff == nil || actualOrderID == "" {
+		return decimal.Zero
+	}
+	orderID, err := strconv.ParseInt(actualOrderID, 10, 64)
+	if err != nil {
+		log.Warn().Err(err).Str("actual_order_id", actualOrderID).Msg("algo.triggered: parse ActualOrderID failed, fees=0")
+		return decimal.Zero
+	}
+	fills, err := ar.ff.GetUserTrades(ctx, symbol, orderID)
+	if err != nil {
+		log.Warn().Err(err).Int64("order_id", orderID).Msg("algo.triggered: GetUserTrades failed, fees=0")
+		return decimal.Zero
+	}
+	total := decimal.Zero
+	for _, f := range fills {
+		total = total.Add(f.Commission)
+	}
+	return total
 }
 
 // ReconcileTick polls every open trade with an Algo and auto-closes the ones
@@ -205,19 +239,29 @@ func (ar *AlgoReconciler) autoCloseFromFields(ctx context.Context, tradeID int64
 		return false
 	}
 
-	realizedPnl := closePrice.Sub(entryPrice).Mul(qty) // LONG only (v0.1 + v0.2 mini-round)
-	fees := decimal.Zero                               // placeholder, same as exit_manager.persistClose
+	// Fetch real exit commission. ActualOrderID is the SELL order Binance placed
+	// when the Algo triggered. Entry fees not captured yet (no entry_order_id in DB).
+	fees := ar.sumAlgoFees(ctx, symbol, q.ActualOrderID, log)
+	realizedPnl := closePrice.Sub(entryPrice).Mul(qty) // LONG only
 
-	if err := ar.db.InsertTradeExit(ctx, gen.InsertTradeExitParams{
+	n, err := ar.db.InsertTradeExitIdempotent(ctx, gen.InsertTradeExitParams{
 		TradeID: pgtype.Int8{Int64: tradeID, Valid: true},
 		Ts:      now,
 		Type:    ExitReasonDisaster,
 		Qty:     qty,
 		Price:   closePrice,
 		Pnl:     realizedPnl,
-	}); err != nil {
+	})
+	if err != nil {
 		log.Error().Err(err).Msg("algo.triggered: InsertTradeExit failed (next tick will retry)")
 		return false
+	}
+	if n == 0 {
+		// ON CONFLICT: another goroutine (ReconcileTick/TryReconcile) already closed
+		// this trade. Skip UpdateTradeClosed + UpdateAfterTradeClose to prevent
+		// duplicate circuit_breaker rollup (consecutive_losses double-increment).
+		log.Info().Int64("trade_id", tradeID).Msg("algo.triggered: duplicate close skipped (idempotent)")
+		return true
 	}
 	if err := ar.db.UpdateTradeClosed(ctx, gen.UpdateTradeClosedParams{
 		ID:          tradeID,

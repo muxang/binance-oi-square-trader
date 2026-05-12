@@ -72,10 +72,17 @@ type ExitBinanceClient interface {
 	GetOrderByClientID(ctx context.Context, symbol, clientOrderID string) (binance.OrderResult, error)
 }
 
+// FeesFetcher retrieves actual commission fills for a closed order.
+// Implemented by *binance.Client; nil → fees=0 (test default).
+type FeesFetcher interface {
+	GetUserTrades(ctx context.Context, symbol string, orderID int64) ([]binance.UserTrade, error)
+}
+
 // ExitManager owns the exit-evaluation cron + close pipeline.
 type ExitManager struct {
 	db    ExitManagerDeps
 	bc    ExitBinanceClient
+	ff    FeesFetcher // optional; nil → fees=0
 	rdb   *redis.Client
 	log   zerolog.Logger
 	nowFn func() time.Time
@@ -84,6 +91,12 @@ type ExitManager struct {
 // NewExitManager constructs an ExitManager.
 func NewExitManager(db ExitManagerDeps, bc ExitBinanceClient, rdb *redis.Client, log zerolog.Logger) *ExitManager {
 	return &ExitManager{db: db, bc: bc, rdb: rdb, log: log, nowFn: timez.NowUTC}
+}
+
+// WithFeesFetcher wires the real commission fetcher (call after NewExitManager in main).
+func (em *ExitManager) WithFeesFetcher(ff FeesFetcher) *ExitManager {
+	em.ff = ff
+	return em
 }
 
 // EvaluateTick runs one 1min exit-evaluation pass.
@@ -238,9 +251,27 @@ func (em *ExitManager) closePosition(ctx context.Context, t gen.ListOpenTradesFo
 	}
 
 	// Step 4: persistence — trade_exits + trades + position_states + circuit_breaker.
-	em.persistClose(ctx, t, exitReason, closePrice, qty, log)
+	em.persistClose(ctx, t, exitReason, closePrice, qty, res.OrderID, log)
 
 	metrics.ExitsTotal.WithLabelValues(t.Symbol, exitReason, "success").Inc()
+}
+
+// sumFees fetches commission fills for the exit order and returns the total.
+// Non-fatal: logs a warning and returns decimal.Zero on any error.
+func (em *ExitManager) sumFees(ctx context.Context, symbol string, exitOrderID int64, log zerolog.Logger) decimal.Decimal {
+	if em.ff == nil || exitOrderID == 0 {
+		return decimal.Zero
+	}
+	fills, err := em.ff.GetUserTrades(ctx, symbol, exitOrderID)
+	if err != nil {
+		log.Warn().Err(err).Int64("order_id", exitOrderID).Msg("exit.persist: GetUserTrades failed, fees=0")
+		return decimal.Zero
+	}
+	total := decimal.Zero
+	for _, f := range fills {
+		total = total.Add(f.Commission)
+	}
+	return total
 }
 
 // persistClose writes the terminal close artifacts. Per-step errors logged,
@@ -251,15 +282,16 @@ func (em *ExitManager) persistClose(
 	t gen.ListOpenTradesForExitRow,
 	exitReason string,
 	closePrice, qty decimal.Decimal,
+	exitOrderID int64,
 	log zerolog.Logger,
 ) {
 	now := em.nowFn()
 	entryPrice := decimalFromPgNumeric(t.EntryPrice)
-	// realized_pnl = (close - entry) × qty (LONG; Round 5 v0.1 only).
+	// fees: real exit commission from /fapi/v1/userTrades; entry fees not yet
+	// captured (entry_order_id not stored in DB). TODO: Round 6+ store entry_order_id.
+	fees := em.sumFees(ctx, t.Symbol, exitOrderID, log)
+	// realized_pnl = gross price-diff PnL (LONG). Net = realized_pnl - fees.
 	realizedPnl := closePrice.Sub(entryPrice).Mul(qty)
-	// fees: v0.1 not fetched from /fapi/v1/userTrades; placeholder 0.
-	// Round 6+ can poll userTrades to fill fees + adjust realized_pnl.
-	fees := decimal.Zero
 
 	holdHours := 0.0
 	if t.EntryTs.Valid {

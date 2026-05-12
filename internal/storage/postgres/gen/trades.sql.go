@@ -290,6 +290,7 @@ func (q *Queries) InsertPositionState(ctx context.Context, arg InsertPositionSta
 const insertTradeExit = `-- name: InsertTradeExit :exec
 INSERT INTO trade_exits (trade_id, ts, type, qty, price, pnl)
 VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (trade_id, type) DO NOTHING
 `
 
 type InsertTradeExitParams struct {

@@ -271,7 +271,8 @@ func run() error {
 	// auto-close trades when Binance reports algoStatus=FINISHED. Registered
 	// BEFORE position_manager so the orphan-detection branch is the fallback,
 	// not the primary path (per mu §4.5 v0.2 mini-round directive).
-	algoReconciler := execution.NewAlgoReconciler(gen.New(pgPool), client, rdb, log)
+	algoReconciler := execution.NewAlgoReconciler(gen.New(pgPool), client, rdb, log).
+		WithFeesFetcher(client)
 	algoPollingCol := collector.NewAlgoPollingCollector(algoReconciler, log, collector.AlgoPollingConfig{})
 	if err := runner.Register(algoPollingCol, "*/1 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register algo_polling collector")
@@ -291,7 +292,8 @@ func run() error {
 
 	// Phase 4 Round 5: exit_manager — 1min cron evaluates soft/hard timeout
 	// + drives close pipeline (cancel Algo + MARKET SELL + DB writes).
-	exitManager := execution.NewExitManager(gen.New(pgPool), client, rdb, log)
+	exitManager := execution.NewExitManager(gen.New(pgPool), client, rdb, log).
+		WithFeesFetcher(client)
 	exitManagerCol := collector.NewExitManagerCollector(exitManager, log, collector.ExitManagerConfig{})
 	if err := runner.Register(exitManagerCol, "*/1 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register exit_manager collector")

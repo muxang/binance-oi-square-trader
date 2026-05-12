@@ -307,6 +307,59 @@ func (c *Client) PlaceAlgoConditionalStop(ctx context.Context, symbol, quantity,
 	return AlgoOrderResult{AlgoID: resp.AlgoID, ClientAlgoID: resp.ClientAlgoID, Status: resp.AlgoStatus}, nil
 }
 
+// UserTrade holds one fill from GET /fapi/v1/userTrades.
+// Commission is always in commissionAsset (USDT for USDⓈ-M with BNB fee discount off).
+//
+// ref: GET /fapi/v1/userTrades (Account Trade List), weight=5
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Account-Trade-List
+// fetched: 2026-05-12
+type UserTrade struct {
+	OrderID         int64
+	Price           decimal.Decimal
+	Qty             decimal.Decimal
+	RealizedPnl     decimal.Decimal // position P&L for this fill (price-diff based, excl. commission)
+	Commission      decimal.Decimal // fee charged for this fill
+	CommissionAsset string
+	Time            time.Time
+}
+
+// GetUserTrades fetches all fills for a given order (weight=5).
+// Typically called after a close SELL fills to get the real commission paid.
+func (c *Client) GetUserTrades(ctx context.Context, symbol string, orderID int64) ([]UserTrade, error) {
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	params.Set("orderId", strconv.FormatInt(orderID, 10))
+	body, err := c.DoReadAccount(ctx, "/fapi/v1/userTrades", params, 5)
+	if err != nil {
+		return nil, fmt.Errorf("get user trades %s %d: %w", symbol, orderID, err)
+	}
+	var raw []struct {
+		OrderID         int64  `json:"orderId"`
+		Price           string `json:"price"`
+		Qty             string `json:"qty"`
+		RealizedPnl     string `json:"realizedPnl"`
+		Commission      string `json:"commission"`
+		CommissionAsset string `json:"commissionAsset"`
+		Time            int64  `json:"time"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("parse user trades resp: %w", err)
+	}
+	trades := make([]UserTrade, 0, len(raw))
+	for _, r := range raw {
+		trades = append(trades, UserTrade{
+			OrderID:         r.OrderID,
+			Price:           parseDecimalOrZero(r.Price),
+			Qty:             parseDecimalOrZero(r.Qty),
+			RealizedPnl:     parseDecimalOrZero(r.RealizedPnl),
+			Commission:      parseDecimalOrZero(r.Commission),
+			CommissionAsset: r.CommissionAsset,
+			Time:            time.UnixMilli(r.Time).UTC(),
+		})
+	}
+	return trades, nil
+}
+
 // parseOrderResult is shared by PlaceMarketOrder and GetOrder.
 func parseOrderResult(body []byte) (OrderResult, error) {
 	var r orderRESULTResp

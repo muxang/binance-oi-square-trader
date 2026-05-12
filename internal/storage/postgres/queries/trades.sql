@@ -87,8 +87,10 @@ ON CONFLICT (trade_id) DO NOTHING;
 
 -- name: InsertTradeExit :exec
 -- Phase 4: record each exit event (emergency_close / tp / trailing / timeout).
+-- ON CONFLICT: idempotent guard against ReconcileTick + TryReconcile race.
 INSERT INTO trade_exits (trade_id, ts, type, qty, price, pnl)
-VALUES ($1, $2, $3, $4, $5, $6);
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (trade_id, type) DO NOTHING;
 
 -- name: GetEnteringTradesForRecovery :many
 -- Phase 4 Round 2 startup recovery: trades stuck in 'entering' with a
