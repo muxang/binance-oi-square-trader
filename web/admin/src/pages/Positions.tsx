@@ -4,6 +4,14 @@ import dayjs from 'dayjs'
 import { fetchPositionsOpen, type OpenPosition, type RecentClosedTrade } from '../api/client'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 
+// Extended type — backend now returns signal fields
+type OpenPositionExt = OpenPosition & {
+  position_value?: number
+  decision?: string
+  oi_triggered?: boolean
+  square_hot?: boolean
+}
+
 function formatDuration(ms: number): string {
   const totalMin = Math.floor(ms / 60000)
   const h = Math.floor(totalMin / 60)
@@ -25,8 +33,28 @@ const TH = ({ children, right }: { children: React.ReactNode; right?: boolean })
   </th>
 )
 
-function PositionRow({ p, onClick }: { p: OpenPosition; onClick: () => void }) {
+function EntryReason({ p }: { p: OpenPositionExt }) {
+  const half = p.decision === 'entered_half'
+  return (
+    <div className="flex flex-wrap gap-1 justify-end">
+      {p.oi_triggered && (
+        <span className="text-xs px-1 py-0.5 rounded" style={{ color: colors.up, background: colors.up + '22' }}>OI↑</span>
+      )}
+      {p.square_hot && (
+        <span className="text-xs px-1 py-0.5 rounded" style={{ color: '#fa8c16', background: '#fa8c1622' }}>🔥热</span>
+      )}
+      {p.decision && (
+        <span className="text-xs px-1 py-0.5 rounded text-gray-500 bg-[#2d2d2d]">
+          {half ? '半仓' : '全仓'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function PositionRow({ p, onClick }: { p: OpenPositionExt; onClick: () => void }) {
   const marginDanger = p.margin_ratio > 0.8
+  const posValue = p.position_value ?? (p.current_qty * p.current_price)
   return (
     <tr
       onClick={onClick}
@@ -40,6 +68,12 @@ function PositionRow({ p, onClick }: { p: OpenPosition; onClick: () => void }) {
       <td className="py-2.5 px-3 text-xs text-right tabular-nums">{formatPrice(p.entry_price)}</td>
       <td className="py-2.5 px-3 text-xs text-right tabular-nums font-medium">
         {p.current_price > 0 ? formatPrice(p.current_price) : '—'}
+      </td>
+      <td className="py-2.5 px-3 text-xs text-right tabular-nums text-gray-400">
+        {posValue > 0 ? posValue.toFixed(2) : '—'}
+      </td>
+      <td className="py-2.5 px-3 text-xs text-right tabular-nums text-gray-400">
+        {p.margin.toFixed(2)}
       </td>
       <td className="py-2.5 px-3 text-xs text-right text-gray-400">{formatDuration(p.hold_duration_ms)}</td>
       <td className="py-2.5 px-3 text-right">
@@ -61,6 +95,7 @@ function PositionRow({ p, onClick }: { p: OpenPosition; onClick: () => void }) {
           {(p.margin_ratio * 100).toFixed(1)}%
         </span>
       </td>
+      <td className="py-2.5 px-3"><EntryReason p={p} /></td>
     </tr>
   )
 }
@@ -111,16 +146,19 @@ export default function Positions() {
               <tr>
                 <TH>Symbol</TH>
                 <TH>方向</TH>
-                <TH>开仓时间 (BJT)</TH>
+                <TH>开仓时间</TH>
                 <TH right>开仓价</TH>
                 <TH right>当前价</TH>
+                <TH right>市值(U)</TH>
+                <TH right>保证金(U)</TH>
                 <TH right>持仓时长</TH>
-                <TH right>Unrealized PnL</TH>
-                <TH right>Margin Ratio</TH>
+                <TH right>浮动PnL</TH>
+                <TH right>Margin%</TH>
+                <TH right>开仓原因</TH>
               </tr>
             </thead>
             <tbody>
-              {positions.map(p => (
+              {(positions as OpenPositionExt[]).map(p => (
                 <PositionRow
                   key={p.trade_id}
                   p={p}

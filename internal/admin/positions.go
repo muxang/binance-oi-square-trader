@@ -21,10 +21,14 @@ type OpenPosition struct {
 	CurrentPrice     float64 `json:"current_price"`      // 0 if Redis miss
 	CurrentQty       float64 `json:"current_qty"`
 	Margin           float64 `json:"margin"`
+	PositionValue    float64 `json:"position_value"`     // current_qty * current_price
 	HoldDurationMs   int64   `json:"hold_duration_ms"`
 	UnrealizedPnl    float64 `json:"unrealized_pnl"`
 	UnrealizedPnlPct float64 `json:"unrealized_pnl_pct"` // % of margin
 	MarginRatio      float64 `json:"margin_ratio"`        // 0-1; >0.8 = danger
+	Decision         string  `json:"decision,omitempty"` // entered_half / entered_full
+	OiTriggered      bool    `json:"oi_triggered"`
+	SquareHot        bool    `json:"square_hot"`
 }
 
 // RecentClosedTrade appears in the empty-state footer when open positions = 0.
@@ -52,9 +56,13 @@ func (s *Server) handlePositionsOpen(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			t.id, t.symbol, t.direction, t.entry_ts, t.entry_price,
 			t.margin, t.notional,
-			COALESCE(ps.current_qty, t.notional / NULLIF(t.entry_price, 0)) AS current_qty
+			COALESCE(ps.current_qty, t.notional / NULLIF(t.entry_price, 0)) AS current_qty,
+			COALESCE(s.decision, '')        AS decision,
+			COALESCE(s.oi_triggered, false) AS oi_triggered,
+			COALESCE(s.square_hot, false)   AS square_hot
 		FROM trades t
 		LEFT JOIN position_states ps ON ps.trade_id = t.id
+		LEFT JOIN signals s ON s.id = t.signal_id
 		WHERE t.status = 'open'
 		ORDER BY t.entry_ts ASC
 	`)
@@ -69,17 +77,21 @@ func (s *Server) handlePositionsOpen(w http.ResponseWriter, r *http.Request) {
 	var positions []OpenPosition
 	for rows.Next() {
 		var (
-			id         int64
-			symbol     string
-			direction  string
-			entryTs    pgtype.Timestamptz
-			entryPrice pgtype.Numeric
-			margin     pgtype.Numeric
-			notional   pgtype.Numeric
-			currentQty pgtype.Numeric
+			id          int64
+			symbol      string
+			direction   string
+			entryTs     pgtype.Timestamptz
+			entryPrice  pgtype.Numeric
+			margin      pgtype.Numeric
+			notional    pgtype.Numeric
+			currentQty  pgtype.Numeric
+			decision    string
+			oiTriggered bool
+			squareHot   bool
 		)
 		if err := rows.Scan(&id, &symbol, &direction, &entryTs,
-			&entryPrice, &margin, &notional, &currentQty); err != nil {
+			&entryPrice, &margin, &notional, &currentQty,
+			&decision, &oiTriggered, &squareHot); err != nil {
 			s.log.Error().Err(err).Msg("scan open position")
 			continue
 		}
@@ -120,10 +132,14 @@ func (s *Server) handlePositionsOpen(w http.ResponseWriter, r *http.Request) {
 			CurrentPrice:     cp,
 			CurrentQty:       qty,
 			Margin:           mg,
+			PositionValue:    qty * cp,
 			HoldDurationMs:   holdMs,
 			UnrealizedPnl:    unrealizedPnl,
 			UnrealizedPnlPct: pnlPct,
 			MarginRatio:      marginRatio,
+			Decision:         decision,
+			OiTriggered:      oiTriggered,
+			SquareHot:        squareHot,
 		})
 	}
 	rows.Close()

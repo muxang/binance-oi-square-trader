@@ -25,28 +25,49 @@ function MetricCard({ label, value, sub, valueColor }: {
   )
 }
 
+const COLLECTOR_NAMES: Record<string, string> = {
+  algo_polling:    '条件单监控',
+  btc_regime:      'BTC行情监控',
+  decision_engine: '入场决策',
+  exit_manager:    '出场管理',
+  klines:          'K线/ATR采集',
+  oi:              '持仓量采集',
+  position_manager:'持仓对账',
+  position_price:  '持仓价格',
+  signal_engine:   '信号扫描',
+  square_feed:     'Square推文',
+  square_hashtag:  'Square话题',
+  watchlist:       '候选池更新',
+}
+
 function CollectorRow({ c }: { c: CollectorStatus }) {
+  // last_tick_seconds gauge may be 0 if not yet implemented in trader metrics;
+  // fall back to inferring status from success_rate_5min.
   const lastTick = c.last_tick_seconds > 0
     ? dayjs.unix(c.last_tick_seconds).fromNow()
-    : '未运行'
+    : c.success_rate_5min >= 0 ? '运行中' : '无数据'
+
   const rate = c.success_rate_5min >= 0
     ? `${(c.success_rate_5min * 100).toFixed(0)}%`
     : '—'
   const dotColor =
-    c.status === 'active' ? colors.normal
-    : c.status === 'stale' ? colors.warning
+    c.success_rate_5min === 1 ? colors.normal
+    : c.success_rate_5min >= 0 ? colors.warning
     : colors.muted
   const rateColor =
     c.success_rate_5min >= 0 && c.success_rate_5min < 0.8 ? colors.warning : '#d0d0d0'
 
+  const displayName = COLLECTOR_NAMES[c.name] ?? c.name
+
   return (
     <div className="flex items-center justify-between py-1.5 text-sm border-b border-[#252525] last:border-0">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
-        <span className="text-gray-300 font-mono text-xs">{c.name}</span>
+        <span className="text-gray-300 text-xs">{displayName}</span>
+        <span className="text-gray-600 text-xs font-mono hidden sm:inline">({c.name})</span>
       </div>
-      <div className="flex gap-6 text-right">
-        <span className="text-gray-500 text-xs w-28 text-right">{lastTick}</span>
+      <div className="flex gap-6 text-right shrink-0">
+        <span className="text-gray-500 text-xs w-16 text-right">{lastTick}</span>
         <span className="text-xs w-10 text-right" style={{ color: rateColor }}>{rate}</span>
       </div>
     </div>
