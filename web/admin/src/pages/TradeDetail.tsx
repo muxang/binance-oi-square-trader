@@ -23,41 +23,70 @@ function fmtNum(v: unknown, d = 4): string {
 // ---- label translation maps ----
 
 const OI_LABELS: Record<string, string> = {
-  oi_latest:       '最新 OI (USD M)',
-  current_oi:      '最新 OI (USD M)',
-  oi_1h_pct:       'OI 1h 变化%',
-  oi_baseline:     '基准 OI',
-  baseline:        '基准 OI (中位数)',
-  baseline_median: '基准中位数',
-  ratio:           '近远比 (recent/baseline)',
-  near_far_ratio:  '近远比 (recent/baseline)',
-  threshold:       '触发阈值',
-  surge_pct:       'OI 暴涨幅度',
-  surge:           'OI 暴涨幅度',
-  window_min:      '检测窗口 (分钟)',
-  baseline_hours:  '基准窗口 (小时)',
-  samples:         '采样点数 N',
-  triggered:       '是否触发',
+  // 数值
+  oi_latest:            '最新 OI (USD M)',
+  current_oi:           '最新 OI (USD M)',
+  oi_value_usd:         '最新 OI (USD)',
+  oi_1h_pct:            'OI 1h 变化%',
+  oi_baseline:          '基准 OI',
+  baseline:             '基准 OI (中位数)',
+  baseline_median:      '基准中位数',
+  recent_avg:           '近期均值',
+  ratio:                '近远比 (recent/baseline)',
+  near_far_ratio:       '近远比 (recent/baseline)',
+  threshold:            '触发阈值',
+  threshold_ratio:      '近远比阈值',
+  surge_pct:            'OI 暴涨幅度',
+  surge:                'OI 暴涨幅度',
+  window_min:           '检测窗口 (分钟)',
+  baseline_hours:       '基准窗口 (小时)',
+  baseline_window_hours:'基准窗口 (小时)',
+  window_minutes:       '检测窗口 (分钟)',
+  lookback_periods:     '回溯期数',
+  samples:              '采样点数 N',
+  data_span_hours:      '数据跨度 (小时)',
+  // 布尔
+  triggered:            '是否触发',
 }
 
 const SQ_LABELS: Record<string, string> = {
-  content_count:   '当前内容数',
-  cur_count:       '当前内容数',
-  delta_60min:     '60min 增量 Δᵢ',
-  cur_delta:       '最新 60min 增量 Δᵢ',
-  max_delta:       '近期最大增量',
-  delta:           '最新增量',
-  pos_ratio:       '二阶差分正数比 pos_ratio',
-  ratio:           '近远比 (recent_avg / baseline_median)',
-  near_far_ratio:  '近远比 (recent_avg / baseline_median)',
-  baseline_median: '基准中位数',
-  recent_avg:      '近期均值',
-  hot:             '热点判定',
-  pattern:         '热度形态',
-  trend_type:      '趋势类型',
-  samples:         '采样点数 N',
-  threshold_ratio: '近远比阈值',
-  threshold_pos:   '正数比阈值',
+  // 数量
+  content_count:        '当前内容数',
+  cur_count:            '当前内容数',
+  content_count_prev:   '前期内容数',
+  min_count:            '窗口最小值',
+  max_count:            '窗口最大值',
+  // 增量
+  delta_60min:          '60min 增量 Δᵢ',
+  cur_delta:            '最新 60min 增量 Δᵢ',
+  max_delta:            '近期最大增量',
+  delta:                '最新增量',
+  recent_growth:        '近期累计增长量',
+  growth_from_min:      '较窗口最小值增长量',
+  // 统计
+  pos_ratio:            '二阶差分正数比 pos_ratio',
+  acceleration:         '加速度 (二阶差分均值)',
+  ratio:                '近远比 (recent_avg / baseline_median)',
+  near_far_ratio:       '近远比 (recent_avg / baseline_median)',
+  baseline_median:      '基准中位数',
+  recent_avg:           '近期均值',
+  samples:              '采样点数 N',
+  growing_periods:      '持续增长期数',
+  recent_periods_count: '近期统计期数',
+  data_span_hours:      '数据跨度 (小时)',
+  span_hours:           '数据跨度 (小时)',
+  // 阈值
+  threshold_ratio:      '近远比阈值',
+  threshold_pos:        '正数比阈值',
+  // 判定
+  hot:                  '热点判定',
+  pattern:              '热度形态',
+  trend_type:           '趋势类型',
+  verdict:              '判定结论',
+  failed_reason:        '判定失败原因',
+  // 布尔标志
+  price_moved_up:       '价格同步上涨',
+  low_acceleration:     '加速度不足',
 }
 
 const PATTERN_ZH: Record<string, string> = {
@@ -130,13 +159,17 @@ function DataBlock({
       {Object.entries(data).map(([k, v]) => {
         const label = labelMap[k] ?? k
         let display: React.ReactNode = '—'
-        if (typeof v === 'boolean') {
+        if (v == null) {
+          display = '—'
+        } else if (typeof v === 'boolean') {
           display = v ? '是' : '否'
         } else if (typeof v === 'number') {
-          display = v.toFixed(numDecimals)
+          display = Number.isInteger(v) ? v.toLocaleString() : v.toFixed(numDecimals)
         } else if (typeof v === 'string') {
           display = PATTERN_ZH[v] ?? v
-        } else if (v != null) {
+        } else if (Array.isArray(v)) {
+          display = `[${(v as number[]).map(n => typeof n === 'number' ? n.toFixed(1) : n).join(', ')}]`
+        } else {
           display = String(v)
         }
         return <ROW key={k} label={label} value={display} mono />
