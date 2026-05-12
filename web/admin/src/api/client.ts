@@ -154,5 +154,104 @@ export const fetchPnlBySymbol    = (range: RangeKey): Promise<SymbolPnl[]>      
 export const fetchPnlByExitReason = (range: RangeKey): Promise<ExitReasonPnl[]>   =>
   api.get<ExitReasonPnl[]>('/pnl/by_exit_reason',  rangeParam(range)).then(r => r.data)
 
-export const fetchPnlStats       = (range: RangeKey): Promise<PnlStats>           =>
-  api.get<PnlStats>('/pnl/stats',                  rangeParam(range)).then(r => r.data)
+export const fetchPnlStats       = (range: RangeKey, ds?: DataSource): Promise<PnlStats>           =>
+  api.get<PnlStats>('/pnl/stats',        { params: { ...rangeParam(range).params, data_source: ds } }).then(r => r.data)
+
+export const fetchPnlCumulative2  = (range: RangeKey, ds?: DataSource): Promise<CumulativePoint[]>  =>
+  api.get<CumulativePoint[]>('/pnl/cumulative',  { params: { ...rangeParam(range).params, data_source: ds } }).then(r => r.data)
+
+export const fetchPnlBySymbol2    = (range: RangeKey, ds?: DataSource): Promise<SymbolPnl[]>        =>
+  api.get<SymbolPnl[]>('/pnl/by_symbol',         { params: { ...rangeParam(range).params, data_source: ds } }).then(r => r.data)
+
+export const fetchPnlByExitReason2 = (range: RangeKey, ds?: DataSource): Promise<ExitReasonPnl[]>  =>
+  api.get<ExitReasonPnl[]>('/pnl/by_exit_reason',{ params: { ...rangeParam(range).params, data_source: ds } }).then(r => r.data)
+
+// ---- data_source ----
+
+export type DataSource = 'mainnet' | 'testnet' | 'all'
+
+// ---- Market ----
+
+export interface MarketItem {
+  symbol: string
+  oi_usd_m: number
+  oi_1h_pct: number
+  oi_24h_pct: number
+  current_price: number
+  price_24h_pct: number
+  square_mentions: number
+  in_watchlist: boolean
+  in_open_position: boolean
+}
+
+export interface MarketData {
+  total: number
+  items: MarketItem[]
+}
+
+export type MarketScope = 'all' | 'watchlist' | 'positions'
+export type MarketSort  = 'oi_1h_pct' | 'oi_24h_pct' | 'oi_usd' | 'price_24h_pct' | 'square'
+
+export interface MarketParams {
+  scope?: MarketScope
+  sort?: MarketSort
+  search?: string
+  page?: number
+  size?: number
+}
+
+export const fetchMarket = (p: MarketParams = {}): Promise<MarketData> => {
+  const params: Record<string, string> = {}
+  if (p.scope)  params.scope  = p.scope
+  if (p.sort)   params.sort   = p.sort
+  if (p.search) params.search = p.search
+  if (p.page)   params.page   = String(p.page)
+  if (p.size)   params.size   = String(p.size)
+  return api.get<MarketData>('/market', { params }).then(r => r.data)
+}
+
+// ---- Square ----
+
+export interface SquareTrendingItem {
+  symbol: string
+  content_count: number
+  view_count: number
+  growth_24h: number
+  latest_ts_ms: number
+}
+
+export interface SquareTrendingData {
+  total: number
+  items: SquareTrendingItem[]
+}
+
+export const fetchSquareTrending = (limit = 50): Promise<SquareTrendingData> =>
+  api.get<SquareTrendingData>('/square/trending', { params: { limit } }).then(r => r.data)
+
+// ---- Symbol Detail ----
+
+export interface OiPoint    { ts_ms: number; oi_usd_m: number }
+export interface PricePoint { ts_ms: number; close: number }
+
+export interface SymbolSquarePost {
+  ts_ms: number; title: string; content: string; views: number; likes: number
+}
+
+export interface SymbolTrade {
+  trade_id: number; entry_ts_ms: number; exit_ts_ms: number
+  entry_price: number; exit_price: number; realized_pnl: number
+  exit_reason: string; status: string; data_source: string
+}
+
+export interface SymbolDetailData {
+  symbol: string
+  current_price: number
+  price_24h_pct: number
+  oi_series:    OiPoint[]
+  price_series: PricePoint[]
+  square_posts: SymbolSquarePost[]
+  trades:       SymbolTrade[]
+}
+
+export const fetchSymbolDetail = (symbol: string, hours = 6, ds: DataSource = 'mainnet'): Promise<SymbolDetailData> =>
+  api.get<SymbolDetailData>(`/symbol/${symbol}`, { params: { hours, data_source: ds } }).then(r => r.data)

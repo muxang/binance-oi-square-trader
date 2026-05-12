@@ -1,14 +1,15 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// timeRangeQuery parses ?range=today|week|month (default: all) and returns
-// (args, sql-cond) for WHERE clauses that filter on exit_ts.
+// timeRangeQuery parses ?range=today|week|month and ?data_source=mainnet|testnet|all.
+// Returns (args, cond) for WHERE clauses filtering on exit_ts + data_source.
 func timeRangeQuery(r *http.Request) (args []any, cond string) {
 	until := time.Now().UTC()
 	var since time.Time
@@ -20,10 +21,24 @@ func timeRangeQuery(r *http.Request) (args []any, cond string) {
 	case "month":
 		since = until.AddDate(0, -1, 0)
 	}
-	if since.IsZero() {
-		return []any{until}, "exit_ts <= $1"
+
+	ds := r.URL.Query().Get("data_source") // mainnet | testnet | all
+	if ds == "" { ds = "mainnet" }
+
+	var dsCond string
+	switch ds {
+	case "testnet":
+		dsCond = "data_source = 'testnet'"
+	case "all":
+		dsCond = "TRUE"
+	default:
+		dsCond = "data_source = 'mainnet'"
 	}
-	return []any{since, until}, "exit_ts >= $1 AND exit_ts <= $2"
+
+	if since.IsZero() {
+		return []any{until}, fmt.Sprintf("exit_ts <= $1 AND %s", dsCond)
+	}
+	return []any{since, until}, fmt.Sprintf("exit_ts >= $1 AND exit_ts <= $2 AND %s", dsCond)
 }
 
 // --- /api/admin/pnl/cumulative ---

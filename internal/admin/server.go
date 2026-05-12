@@ -41,6 +41,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/pnl/by_symbol", s.handlePnlBySymbol)
 	mux.HandleFunc("GET /api/admin/pnl/by_exit_reason", s.handlePnlByExitReason)
 	mux.HandleFunc("GET /api/admin/pnl/stats", s.handlePnlStats)
+	mux.HandleFunc("GET /api/admin/market", s.handleMarket)
 	mux.HandleFunc("GET /api/admin/square/trending", s.handleSquareTrending)
 	mux.HandleFunc("GET /api/admin/watchlist", s.handleWatchlist)
 	mux.HandleFunc("GET /api/admin/symbol/{symbol}", s.handleSymbolDetail)
@@ -73,24 +74,18 @@ func (s *Server) writeError(w http.ResponseWriter, code int, msg string) {
 	s.writeJSON(w, code, map[string]string{"error": msg})
 }
 
-// --- Stub handlers (Round 5-6 will fill these in) ---
+// --- Stub handlers (Round 6 will fill these in) ---
 
-// handlePositionsOpen  implemented in positions.go
+// handlePositionsOpen    implemented in positions.go
 // handlePositionsHistory implemented in history.go
-// handlePnl* implemented in pnl.go
-
-func (s *Server) handleSquareTrending(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, []any{})
-}
+// handlePnl*             implemented in pnl.go
+// handleMarket           implemented in market.go
+// handleSquareTrending   implemented in square.go
+// handleSymbolDetail     implemented in symbol.go
 
 func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
+	// legacy alias for /api/admin/market?scope=watchlist
 	s.writeJSON(w, http.StatusOK, []any{})
-}
-
-func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"symbol": r.PathValue("symbol"),
-	})
 }
 
 func (s *Server) handleTradeDetail(w http.ResponseWriter, r *http.Request) {
