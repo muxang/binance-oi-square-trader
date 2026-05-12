@@ -179,7 +179,8 @@ export interface MarketItem {
   oi_24h_pct: number
   current_price: number
   price_24h_pct: number
-  square_mentions: number
+  square_mentions: number  // 24h mention count
+  square_24h_pct: number   // vs prior 24h; 0 = no prior data
   in_watchlist: boolean
   in_open_position: boolean
 }
@@ -230,8 +231,9 @@ export const fetchSquareTrending = (limit = 50): Promise<SquareTrendingData> =>
 
 // ---- Symbol Detail ----
 
-export interface OiPoint    { ts_ms: number; oi_usd_m: number }
-export interface PricePoint { ts_ms: number; close: number }
+export interface OiPoint             { ts_ms: number; oi_usd_m: number }
+export interface PricePoint          { ts_ms: number; close: number }
+export interface SquareMentionPoint  { ts_ms: number; mentions: number }
 
 export interface SymbolSquarePost {
   ts_ms: number; title: string; content: string; views: number; likes: number
@@ -247,10 +249,11 @@ export interface SymbolDetailData {
   symbol: string
   current_price: number
   price_24h_pct: number
-  oi_series:    OiPoint[]
-  price_series: PricePoint[]
-  square_posts: SymbolSquarePost[]
-  trades:       SymbolTrade[]
+  oi_series:     OiPoint[]
+  price_series:  PricePoint[]
+  square_series: SquareMentionPoint[]
+  square_posts:  SymbolSquarePost[]
+  trades:        SymbolTrade[]
 }
 
 export const fetchSymbolDetail = (symbol: string, hours = 6, ds: DataSource = 'mainnet'): Promise<SymbolDetailData> =>

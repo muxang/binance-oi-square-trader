@@ -5,7 +5,7 @@ import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type
 import { DataSourceContext } from '../context/DataSource'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
 
 function pct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
@@ -97,6 +97,22 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
                     formatter={(v: number) => [fmtPrice(v), '价格']} />
                   <Line type="monotone" dataKey="close" stroke="#52c41a" dot={false} strokeWidth={1.5} />
                 </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {data.square_series.length > 0 && (
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Square 提及 (6h, 每小时)</div>
+              <ResponsiveContainer width="100%" height={80}>
+                <BarChart data={data.square_series} barSize={8}>
+                  <XAxis dataKey="ts_ms" hide />
+                  <YAxis hide domain={[0, 'auto']} />
+                  <Tooltip contentStyle={ttStyle}
+                    labelFormatter={(v) => dayjs(v).format('HH:mm')}
+                    formatter={(v: number) => [v, '提及']} />
+                  <Bar dataKey="mentions" fill="#fa8c16" radius={[2,2,0,0]} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -198,52 +214,63 @@ export default function Market() {
                 <thead className="border-b border-[#2d2d2d]">
                   <tr>
                     <SortTH current={sortBy} onSort={handleSort}>Symbol</SortTH>
-                    <SortTH right sortKey="oi_usd"       current={sortBy} onSort={handleSort}>OI (USD)</SortTH>
-                    <SortTH right sortKey="oi_1h_pct"    current={sortBy} onSort={handleSort}>OI 1h%</SortTH>
-                    <SortTH right sortKey="oi_24h_pct"   current={sortBy} onSort={handleSort}>OI 24h%</SortTH>
+                    <SortTH right sortKey="oi_usd"        current={sortBy} onSort={handleSort}>OI (USD)</SortTH>
+                    <SortTH right sortKey="oi_1h_pct"     current={sortBy} onSort={handleSort}>OI 1h%</SortTH>
+                    <SortTH right sortKey="oi_24h_pct"    current={sortBy} onSort={handleSort}>OI 24h%</SortTH>
                     <SortTH right current={sortBy} onSort={handleSort}>当前价</SortTH>
                     <SortTH right sortKey="price_24h_pct" current={sortBy} onSort={handleSort}>24h涨跌</SortTH>
-                    <SortTH right sortKey="square"       current={sortBy} onSort={handleSort}>Square</SortTH>
+                    <SortTH right sortKey="square"        current={sortBy} onSort={handleSort}>Square提及</SortTH>
+                    <SortTH right current={sortBy} onSort={handleSort}>Square 24h%</SortTH>
                     <SortTH current={sortBy} onSort={handleSort}>标记</SortTH>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.items.map((item: MarketItem) => (
-                    <tr key={item.symbol}
-                      onClick={() => setSelected(selected === item.symbol ? null : item.symbol)}
-                      className={`border-b border-[#252525] cursor-pointer transition-colors ${selected === item.symbol ? 'bg-[#1e2a3a]' : 'hover:bg-[#252525]'}`}>
-                      <td className="py-2 px-2 font-mono text-sm text-white font-semibold">{item.symbol}</td>
-                      <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">{fmtOi(item.oi_usd_m)}</td>
-                      <td className="py-2 px-2 text-xs text-right tabular-nums font-semibold"
-                        style={{ color: item.oi_1h_pct > 0 ? colors.up : item.oi_1h_pct < 0 ? colors.down : '#8c8c8c' }}>
-                        {pct(item.oi_1h_pct)}
-                      </td>
-                      <td className="py-2 px-2 text-xs text-right tabular-nums"
-                        style={{ color: pnlColor(item.oi_24h_pct) }}>
-                        {pct(item.oi_24h_pct)}
-                      </td>
-                      <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">
-                        {fmtPrice(item.current_price)}
-                      </td>
-                      <td className="py-2 px-2 text-xs text-right tabular-nums"
-                        style={{ color: item.price_24h_pct !== 0 ? pnlColor(item.price_24h_pct) : '#8c8c8c' }}>
-                        {item.price_24h_pct !== 0 ? pct(item.price_24h_pct) : '—'}
-                      </td>
-                      <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-500">
-                        {item.square_mentions > 0 ? item.square_mentions.toLocaleString() : '—'}
-                      </td>
-                      <td className="py-2 px-2">
-                        {item.in_open_position && (
-                          <span className="text-xs px-1.5 py-0.5 rounded mr-1"
-                            style={{ color: colors.up, background: colors.up + '22' }}>持仓</span>
-                        )}
-                        {item.in_watchlist && (
-                          <span className="text-xs px-1.5 py-0.5 rounded"
-                            style={{ color: colors.normal, background: colors.normal + '22' }}>候选</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.items.map((item: MarketItem) => {
+                    const sqGrowthColor = item.square_24h_pct > 0 ? colors.up
+                      : item.square_24h_pct < 0 ? colors.down : '#8c8c8c'
+                    return (
+                      <tr key={item.symbol}
+                        onClick={() => setSelected(selected === item.symbol ? null : item.symbol)}
+                        className={`border-b border-[#252525] cursor-pointer transition-colors ${selected === item.symbol ? 'bg-[#1e2a3a]' : 'hover:bg-[#252525]'}`}>
+                        <td className="py-2 px-2 font-mono text-sm text-white font-semibold">{item.symbol}</td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">{fmtOi(item.oi_usd_m)}</td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums font-semibold"
+                          style={{ color: item.oi_1h_pct > 0 ? colors.up : item.oi_1h_pct < 0 ? colors.down : '#8c8c8c' }}>
+                          {pct(item.oi_1h_pct)}
+                        </td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums"
+                          style={{ color: pnlColor(item.oi_24h_pct) }}>
+                          {pct(item.oi_24h_pct)}
+                        </td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">
+                          {fmtPrice(item.current_price)}
+                        </td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums"
+                          style={{ color: item.price_24h_pct !== 0 ? pnlColor(item.price_24h_pct) : '#8c8c8c' }}>
+                          {item.price_24h_pct !== 0 ? pct(item.price_24h_pct) : '—'}
+                        </td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-500">
+                          {item.square_mentions > 0 ? item.square_mentions.toLocaleString() : '—'}
+                        </td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums font-semibold"
+                          style={{ color: item.square_mentions > 0 ? sqGrowthColor : '#555' }}>
+                          {item.square_mentions > 0 && item.square_24h_pct !== 0
+                            ? pct(item.square_24h_pct)
+                            : item.square_mentions > 0 ? '新' : '—'}
+                        </td>
+                        <td className="py-2 px-2">
+                          {item.in_open_position && (
+                            <span className="text-xs px-1.5 py-0.5 rounded mr-1"
+                              style={{ color: colors.up, background: colors.up + '22' }}>持仓</span>
+                          )}
+                          {item.in_watchlist && (
+                            <span className="text-xs px-1.5 py-0.5 rounded"
+                              style={{ color: colors.normal, background: colors.normal + '22' }}>候选</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
               <div className="flex items-center justify-between px-4 py-2 border-t border-[#2d2d2d]">

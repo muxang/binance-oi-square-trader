@@ -12,15 +12,16 @@ import (
 )
 
 type MarketItem struct {
-	Symbol         string  `json:"symbol"`
-	OiUsdM         float64 `json:"oi_usd_m"`       // OI in USD millions
-	Oi1hPct        float64 `json:"oi_1h_pct"`
-	Oi24hPct       float64 `json:"oi_24h_pct"`
-	CurrentPrice   float64 `json:"current_price"`  // 0 if no klines data
-	Price24hPct    float64 `json:"price_24h_pct"`
-	SquareMentions int64   `json:"square_mentions"`
-	InWatchlist    bool    `json:"in_watchlist"`
-	InOpenPosition bool    `json:"in_open_position"`
+	Symbol          string  `json:"symbol"`
+	OiUsdM          float64 `json:"oi_usd_m"`        // OI in USD millions
+	Oi1hPct         float64 `json:"oi_1h_pct"`
+	Oi24hPct        float64 `json:"oi_24h_pct"`
+	CurrentPrice    float64 `json:"current_price"`   // 0 if no klines data
+	Price24hPct     float64 `json:"price_24h_pct"`
+	SquareMentions  int64   `json:"square_mentions"` // 24h mention count
+	Square24hPct    float64 `json:"square_24h_pct"`  // vs prior 24h; 0 = no prior data
+	InWatchlist     bool    `json:"in_watchlist"`
+	InOpenPosition  bool    `json:"in_open_position"`
 }
 
 type MarketResponse struct {
@@ -125,9 +126,17 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			FROM oi_history WHERE ts <= NOW() - INTERVAL '24 hours'
 			ORDER BY symbol, ts DESC
 		),
-		sq AS (
-			SELECT DISTINCT ON (symbol) symbol, content_count
-			FROM square_hashtag_history ORDER BY symbol, ts DESC
+		sq_cur AS (
+			SELECT symbol, COUNT(DISTINCT post_id) AS mentions
+			FROM square_mentions
+			WHERE ts >= NOW() - INTERVAL '24 hours'
+			GROUP BY symbol
+		),
+		sq_prev AS (
+			SELECT symbol, COUNT(DISTINCT post_id) AS prev_mentions
+			FROM square_mentions
+			WHERE ts >= NOW() - INTERVAL '48 hours' AND ts < NOW() - INTERVAL '24 hours'
+			GROUP BY symbol
 		),
 		lp AS (
 			SELECT DISTINCT ON (symbol) symbol, close AS price
@@ -153,17 +162,21 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			CASE WHEN p24.price>0 AND lp.price>0
 			     THEN ((lp.price-p24.price)/p24.price*100)::float8
 			     ELSE 0 END,
-			COALESCE(sq.content_count, 0),
+			COALESCE(sq_cur.mentions, 0),
+			CASE WHEN COALESCE(sq_prev.prev_mentions, 0) > 0
+			     THEN ((COALESCE(sq_cur.mentions, 0) - sq_prev.prev_mentions)::float8 / sq_prev.prev_mentions * 100)
+			     ELSE 0 END,
 			(wl.sym IS NOT NULL),
 			(op.symbol IS NOT NULL)
 		FROM lo
-		LEFT JOIN h1  ON h1.symbol  = lo.symbol
-		LEFT JOIN h24 ON h24.symbol = lo.symbol
-		LEFT JOIN sq  ON sq.symbol  = lo.symbol
-		LEFT JOIN lp  ON lp.symbol  = lo.symbol
-		LEFT JOIN p24 ON p24.symbol = lo.symbol
-		LEFT JOIN wl  ON wl.sym     = lo.symbol
-		LEFT JOIN op  ON op.symbol  = lo.symbol
+		LEFT JOIN h1      ON h1.symbol      = lo.symbol
+		LEFT JOIN h24     ON h24.symbol     = lo.symbol
+		LEFT JOIN sq_cur  ON sq_cur.symbol  = lo.symbol
+		LEFT JOIN sq_prev ON sq_prev.symbol = lo.symbol
+		LEFT JOIN lp      ON lp.symbol      = lo.symbol
+		LEFT JOIN p24     ON p24.symbol     = lo.symbol
+		LEFT JOIN wl      ON wl.sym         = lo.symbol
+		LEFT JOIN op      ON op.symbol      = lo.symbol
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("market query: %w", err)
@@ -173,17 +186,18 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 	items := make([]MarketItem, 0, 600)
 	for rows.Next() {
 		var (
-			sym     string
-			oiUsdM  float64
-			oi1h    float64
-			oi24h   float64
-			price   float64
-			p24pct  float64
-			sqCnt   int64
-			inWl    bool
-			inPos   bool
+			sym      string
+			oiUsdM   float64
+			oi1h     float64
+			oi24h    float64
+			price    float64
+			p24pct   float64
+			sqCnt    int64
+			sqGrowth float64
+			inWl     bool
+			inPos    bool
 		)
-		if err := rows.Scan(&sym, &oiUsdM, &oi1h, &oi24h, &price, &p24pct, &sqCnt, &inWl, &inPos); err != nil {
+		if err := rows.Scan(&sym, &oiUsdM, &oi1h, &oi24h, &price, &p24pct, &sqCnt, &sqGrowth, &inWl, &inPos); err != nil {
 			s.log.Error().Err(err).Str("sym", sym).Msg("scan market row")
 			continue
 		}
@@ -191,7 +205,8 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			Symbol: sym, OiUsdM: oiUsdM,
 			Oi1hPct: oi1h, Oi24hPct: oi24h,
 			CurrentPrice: price, Price24hPct: p24pct,
-			SquareMentions: sqCnt, InWatchlist: inWl, InOpenPosition: inPos,
+			SquareMentions: sqCnt, Square24hPct: sqGrowth,
+			InWatchlist: inWl, InOpenPosition: inPos,
 		})
 	}
 	return items, nil

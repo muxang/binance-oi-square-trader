@@ -17,6 +17,11 @@ type PricePoint struct {
 	Close float64 `json:"close"`
 }
 
+type SquareMentionPoint struct {
+	TsMs     int64 `json:"ts_ms"`
+	Mentions int64 `json:"mentions"`
+}
+
 type SymbolSquarePost struct {
 	TsMs    int64  `json:"ts_ms"`
 	Title   string `json:"title"`
@@ -38,13 +43,14 @@ type SymbolTrade struct {
 }
 
 type SymbolDetailResponse struct {
-	Symbol       string             `json:"symbol"`
-	CurrentPrice float64            `json:"current_price"`
-	Price24hPct  float64            `json:"price_24h_pct"`
-	OiSeries     []OiPoint          `json:"oi_series"`
-	PriceSeries  []PricePoint       `json:"price_series"`
-	SquarePosts  []SymbolSquarePost `json:"square_posts"`
-	Trades       []SymbolTrade      `json:"trades"`
+	Symbol        string                `json:"symbol"`
+	CurrentPrice  float64               `json:"current_price"`
+	Price24hPct   float64               `json:"price_24h_pct"`
+	OiSeries      []OiPoint             `json:"oi_series"`
+	PriceSeries   []PricePoint          `json:"price_series"`
+	SquareSeries  []SquareMentionPoint  `json:"square_series"`
+	SquarePosts   []SymbolSquarePost    `json:"square_posts"`
+	Trades        []SymbolTrade         `json:"trades"`
 }
 
 func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +122,28 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 	`, symbol).Scan(&prev24h)
 	if prev24h > 0 && currentPrice > 0 {
 		price24hPct = (currentPrice - prev24h) / prev24h * 100
+	}
+
+	// Square mention trend: count per hour for the requested window
+	sqSeriesRows, err := s.db.Query(ctx, `
+		SELECT date_trunc('hour', ts) AS h, COUNT(DISTINCT post_id) AS mentions
+		FROM square_mentions
+		WHERE symbol = $1 AND ts >= NOW() - ($2 || ' hours')::INTERVAL
+		GROUP BY h ORDER BY h ASC
+	`, symbol, strconv.Itoa(hours))
+
+	squareSeries := make([]SquareMentionPoint, 0)
+	if err == nil {
+		defer sqSeriesRows.Close()
+		for sqSeriesRows.Next() {
+			var ts pgtype.Timestamptz
+			var cnt int64
+			if err := sqSeriesRows.Scan(&ts, &cnt); err != nil { continue }
+			if ts.Valid {
+				squareSeries = append(squareSeries, SquareMentionPoint{TsMs: ts.Time.UnixMilli(), Mentions: cnt})
+			}
+		}
+		sqSeriesRows.Close()
 	}
 
 	// Square posts (last 24h for this symbol via square_mentions)
@@ -199,6 +227,6 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, SymbolDetailResponse{
 		Symbol: symbol, CurrentPrice: currentPrice, Price24hPct: price24hPct,
 		OiSeries: oiSeries, PriceSeries: priceSeries,
-		SquarePosts: squarePosts, Trades: trades,
+		SquareSeries: squareSeries, SquarePosts: squarePosts, Trades: trades,
 	})
 }
