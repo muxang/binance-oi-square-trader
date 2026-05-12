@@ -25,3 +25,38 @@ export interface DashboardData {
 
 export const fetchDashboard = (): Promise<DashboardData> =>
   api.get<DashboardData>('/dashboard').then(r => r.data)
+
+// ---- Positions ----
+
+export interface OpenPosition {
+  trade_id: number
+  symbol: string
+  direction: string
+  entry_ts_ms: number
+  entry_price: number
+  current_price: number
+  current_qty: number
+  margin: number
+  hold_duration_ms: number
+  unrealized_pnl: number
+  unrealized_pnl_pct: number // % of margin
+  margin_ratio: number       // 0-1; >0.8 danger
+}
+
+export interface RecentClosedTrade {
+  trade_id: number
+  symbol: string
+  exit_ts_ms: number
+  entry_price: number
+  exit_price: number
+  realized_pnl: number
+  exit_reason: string
+}
+
+export interface PositionsOpenData {
+  positions: OpenPosition[]
+  recent: RecentClosedTrade[]
+}
+
+export const fetchPositionsOpen = (): Promise<PositionsOpenData> =>
+  api.get<PositionsOpenData>('/positions/open').then(r => r.data)

@@ -75,9 +75,7 @@ func (s *Server) writeError(w http.ResponseWriter, code int, msg string) {
 
 // --- Stub handlers (Round 2-6 will fill these in) ---
 
-func (s *Server) handlePositionsOpen(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, []any{})
-}
+// handlePositionsOpen implemented in positions.go
 
 func (s *Server) handlePositionsHistory(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"total": 0, "page": 1, "items": []any{}})

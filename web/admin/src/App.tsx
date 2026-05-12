@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
+import Positions from './pages/Positions'
 
 function Stub({ label }: { label: string }) {
   return (
@@ -41,7 +42,7 @@ export default function App() {
         <main className="flex-1 overflow-auto">
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/positions" element={<Stub label="当前持仓" />} />
+            <Route path="/positions" element={<Positions />} />
             <Route path="/history" element={<Stub label="历史仓位" />} />
             <Route path="/pnl" element={<Stub label="PnL 分析" />} />
             <Route path="/square" element={<Stub label="Square 热点" />} />
