@@ -26,9 +26,28 @@
         reverse_proxy trader:8080
     }
 
-    # /api/* — 公开 (Phase 5+ frontend 调用)
+    # /api/admin/* — basicauth → admin-api (必须在 /api/* 之前)
+    handle /api/admin/* {
+        basicauth {
+            {$ADMIN_USER} {$ADMIN_HASHED_PASS}
+        }
+        reverse_proxy admin-api:3002
+    }
+
+    # /api/* — 公开 (trader API)
     handle /api/* {
         reverse_proxy trader:8080
+    }
+
+    # /admin* — basicauth → admin-web SPA 静态文件
+    handle /admin* {
+        basicauth {
+            {$ADMIN_USER} {$ADMIN_HASHED_PASS}
+        }
+        uri strip_prefix /admin
+        root * /srv/admin
+        try_files {path} /index.html
+        file_server
     }
 
     # /metrics — 公开 (Prometheus scrape, 也允许 mu 浏览器直访)
