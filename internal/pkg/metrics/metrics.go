@@ -38,6 +38,17 @@ var (
 		[]string{"collector"},
 	)
 
+	// CollectorLastTickSeconds is the Unix timestamp (seconds) of the last
+	// successful run per collector. Set on success only; never set on error/panic.
+	// Used by admin-api dashboard to show "last tick X min ago" and infer stale status.
+	CollectorLastTickSeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "trader_collector_last_tick_seconds",
+			Help: "Unix timestamp of the last successful collector run.",
+		},
+		[]string{"collector"},
+	)
+
 	// SignalEvaluationsTotal counts Phase 2 signal_engine per-symbol
 	// evaluations by outcome. {outcome} only — symbol label intentionally
 	// excluded to keep cardinality bounded (530 × 4 = 2120 series risk
@@ -364,7 +375,7 @@ var (
 
 func init() {
 	prometheus.MustRegister(
-		CollectorRunsTotal, CollectorDurationSeconds,
+		CollectorRunsTotal, CollectorDurationSeconds, CollectorLastTickSeconds,
 		SignalEvaluationsTotal,
 		DecisionEvaluationsTotal, DecisionSizingDeviationPct,
 		OrdersTotal, DisasterStopsPlacedTotal, OrderLatencySeconds,

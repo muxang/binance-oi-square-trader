@@ -30,6 +30,7 @@ var (
 	metricSuccess = func(name string, duration time.Duration) {
 		metrics.CollectorRunsTotal.WithLabelValues(name, "success").Inc()
 		metrics.CollectorDurationSeconds.WithLabelValues(name).Observe(duration.Seconds())
+		metrics.CollectorLastTickSeconds.WithLabelValues(name).SetToCurrentTime()
 	}
 	metricFailed = func(name, outcome string, duration time.Duration) {
 		metrics.CollectorRunsTotal.WithLabelValues(name, outcome).Inc()
