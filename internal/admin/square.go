@@ -8,11 +8,11 @@ import (
 )
 
 type SquareTrendingItem struct {
-	Symbol       string  `json:"symbol"`
-	ContentCount int64   `json:"content_count"`
-	ViewCount    int64   `json:"view_count"`
-	Growth24h    int64   `json:"growth_24h"`    // content_count delta vs 24h ago
-	LatestTsMs   int64   `json:"latest_ts_ms"`
+	Symbol     string `json:"symbol"`
+	Mentions   int64  `json:"mentions"`
+	Views      int64  `json:"views"`
+	Likes      int64  `json:"likes"`
+	LatestTsMs int64  `json:"latest_ts_ms"`
 }
 
 type SquareTrendingResponse struct {
@@ -28,28 +28,18 @@ func (s *Server) handleSquareTrending(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	rows, err := s.db.Query(ctx, `
-		WITH latest AS (
-			SELECT DISTINCT ON (symbol)
-				symbol, content_count, view_count, ts
-			FROM square_hashtag_history
-			ORDER BY symbol, ts DESC
-		),
-		prev24h AS (
-			SELECT DISTINCT ON (symbol)
-				symbol, content_count AS prev_count
-			FROM square_hashtag_history
-			WHERE ts <= NOW() - INTERVAL '24 hours'
-			ORDER BY symbol, ts DESC
-		)
 		SELECT
-			l.symbol, l.content_count, l.view_count,
-			l.content_count - COALESCE(p.prev_count, 0) AS growth_24h,
-			l.ts,
-			COUNT(*) OVER() AS total
-		FROM latest l
-		LEFT JOIN prev24h p ON p.symbol = l.symbol
-		WHERE l.content_count > 0
-		ORDER BY l.content_count DESC
+			m.symbol,
+			COUNT(DISTINCT m.post_id) AS mentions,
+			COALESCE(SUM(p.view_count), 0)  AS views,
+			COALESCE(SUM(p.like_count), 0)  AS likes,
+			MAX(m.ts)                        AS latest_ts,
+			COUNT(*) OVER()                  AS total
+		FROM square_mentions m
+		JOIN square_posts p ON p.id = m.post_id
+		WHERE m.ts >= NOW() - INTERVAL '24 hours'
+		GROUP BY m.symbol
+		ORDER BY mentions DESC
 		LIMIT $1
 	`, limit)
 	if err != nil {
@@ -64,13 +54,13 @@ func (s *Server) handleSquareTrending(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var (
 			sym      string
-			cnt      int64
+			mentions int64
 			views    int64
-			growth   int64
+			likes    int64
 			ts       pgtype.Timestamptz
 			totalCnt int
 		)
-		if err := rows.Scan(&sym, &cnt, &views, &growth, &ts, &totalCnt); err != nil {
+		if err := rows.Scan(&sym, &mentions, &views, &likes, &ts, &totalCnt); err != nil {
 			continue
 		}
 		total = totalCnt
@@ -79,11 +69,11 @@ func (s *Server) handleSquareTrending(w http.ResponseWriter, r *http.Request) {
 			tsMs = ts.Time.UnixMilli()
 		}
 		items = append(items, SquareTrendingItem{
-			Symbol:       sym,
-			ContentCount: cnt,
-			ViewCount:    views,
-			Growth24h:    growth,
-			LatestTsMs:   tsMs,
+			Symbol:     sym,
+			Mentions:   mentions,
+			Views:      views,
+			Likes:      likes,
+			LatestTsMs: tsMs,
 		})
 	}
 	s.writeJSON(w, http.StatusOK, SquareTrendingResponse{Total: total, Items: items})

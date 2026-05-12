@@ -8,14 +8,6 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
 
-const SORTS: { key: MarketSort; label: string }[] = [
-  { key: 'oi_1h_pct',    label: 'OI 1h%' },
-  { key: 'oi_24h_pct',   label: 'OI 24h%' },
-  { key: 'oi_usd',       label: 'OI 规模' },
-  { key: 'price_24h_pct',label: '价格涨跌' },
-  { key: 'square',       label: 'Square热度' },
-]
-
 function pct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 function fmtOi(m: number) { return m >= 1000 ? (m / 1000).toFixed(1) + 'B' : m.toFixed(1) + 'M' }
 function fmtPrice(p: number) {
@@ -25,11 +17,28 @@ function fmtPrice(p: number) {
   return p.toFixed(6)
 }
 
-const TH = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
-  <th className={`py-2 px-2 text-xs font-medium text-gray-500 ${right ? 'text-right' : 'text-left'}`}>
-    {children}
-  </th>
-)
+function SortTH({
+  children, right, sortKey, current, onSort,
+}: {
+  children: React.ReactNode
+  right?: boolean
+  sortKey?: MarketSort
+  current: MarketSort
+  onSort: (k: MarketSort) => void
+}) {
+  const active = sortKey && current === sortKey
+  return (
+    <th
+      onClick={sortKey ? () => onSort(sortKey) : undefined}
+      className={`py-2 px-2 text-xs font-medium select-none
+        ${right ? 'text-right' : 'text-left'}
+        ${sortKey ? 'cursor-pointer hover:text-gray-300' : ''}
+        ${active ? 'text-blue-400' : 'text-gray-500'}`}
+    >
+      {children}{active ? ' ▲' : ''}
+    </th>
+  )
+}
 
 function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => void }) {
   const { dataSource } = useContext(DataSourceContext)
@@ -60,7 +69,6 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
 
       {data && (
         <div className="flex-1 overflow-y-auto space-y-4 p-3">
-          {/* OI chart */}
           {data.oi_series.length > 0 && (
             <div>
               <div className="text-xs text-gray-500 mb-1">OI (6h, USD M)</div>
@@ -77,7 +85,6 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
             </div>
           )}
 
-          {/* Price chart */}
           {data.price_series.length > 0 && (
             <div>
               <div className="text-xs text-gray-500 mb-1">价格 (6h, 15m K)</div>
@@ -94,7 +101,6 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
             </div>
           )}
 
-          {/* Square posts */}
           {data.square_posts.length > 0 && (
             <div>
               <div className="text-xs text-gray-500 mb-1">Square 帖子 (24h, {data.square_posts.length})</div>
@@ -109,7 +115,6 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
             </div>
           )}
 
-          {/* Trade history */}
           {data.trades.length > 0 && (
             <div>
               <div className="text-xs text-gray-500 mb-1">历史交易 ({data.trades.length})</div>
@@ -135,12 +140,12 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
 }
 
 export default function Market() {
-  const [scope,     setScope]    = useState<MarketScope>('all')
-  const [sortBy,    setSortBy]   = useState<MarketSort>('oi_1h_pct')
-  const [search,    setSearch]   = useState('')
-  const [page,      setPage]     = useState(1)
-  const [size,      setSize]     = useState(50)
-  const [selected,  setSelected] = useState<string | null>(null)
+  const [scope,    setScope]   = useState<MarketScope>('all')
+  const [sortBy,   setSortBy]  = useState<MarketSort>('oi_1h_pct')
+  const [search,   setSearch]  = useState('')
+  const [page,     setPage]    = useState(1)
+  const [size,     setSize]    = useState(50)
+  const [selected, setSelected] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['market', scope, sortBy, search, page, size],
@@ -151,18 +156,26 @@ export default function Market() {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / size)) : 1
 
+  function handleSort(k: MarketSort) {
+    setSortBy(k)
+    setPage(1)
+  }
+
   return (
     <div className="flex h-full">
       <div className="flex-1 flex flex-col min-w-0 p-6 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-base font-semibold text-gray-200">市场扫描</h1>
-          <div className="flex gap-1 text-xs">
-            {(['all','watchlist','positions'] as MarketScope[]).map(s => (
-              <button key={s} onClick={() => { setScope(s); setPage(1) }}
-                className={`px-2 py-1 rounded ${scope === s ? 'bg-blue-700 text-white' : 'bg-[#252525] text-gray-400 hover:text-white'}`}>
-                {s === 'all' ? '全市场' : s === 'watchlist' ? '候选池' : '持仓'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 text-xs">
+              {(['all','watchlist','positions'] as MarketScope[]).map(s => (
+                <button key={s} onClick={() => { setScope(s); setPage(1) }}
+                  className={`px-2 py-1 rounded ${scope === s ? 'bg-blue-700 text-white' : 'bg-[#252525] text-gray-400 hover:text-white'}`}>
+                  {s === 'all' ? '全市场' : s === 'watchlist' ? '候选池' : '持仓'}
+                </button>
+              ))}
+            </div>
+            {data && <span className="text-xs text-gray-600">{data.total} symbols · 30s刷新</span>}
           </div>
         </div>
 
@@ -170,20 +183,11 @@ export default function Market() {
           <input className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 w-28 focus:outline-none"
             placeholder="Symbol..." value={search}
             onChange={e => { setSearch(e.target.value.toUpperCase()); setPage(1) }} />
-          <div className="flex gap-1">
-            {SORTS.map(s => (
-              <button key={s.key} onClick={() => { setSortBy(s.key); setPage(1) }}
-                className={`px-2 py-1 text-xs rounded ${sortBy === s.key ? 'bg-blue-700 text-white' : 'bg-[#252525] text-gray-400 hover:text-white'}`}>
-                {s.label}
-              </button>
-            ))}
-          </div>
           <select value={size} onChange={e => { setSize(Number(e.target.value)); setPage(1) }}
             className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 focus:outline-none ml-auto">
             <option value={50}>50/页</option>
             <option value={100}>100/页</option>
           </select>
-          {data && <span className="text-xs text-gray-600">{data.total} symbols · 30s刷新</span>}
         </div>
 
         <div className="bg-[#1f1f1f] border border-[#2d2d2d] rounded-lg overflow-hidden flex-1">
@@ -193,14 +197,14 @@ export default function Market() {
               <table className="w-full">
                 <thead className="border-b border-[#2d2d2d]">
                   <tr>
-                    <TH>Symbol</TH>
-                    <TH right>OI (USD)</TH>
-                    <TH right>OI 1h%</TH>
-                    <TH right>OI 24h%</TH>
-                    <TH right>当前价</TH>
-                    <TH right>24h涨跌</TH>
-                    <TH right>Square</TH>
-                    <TH>标记</TH>
+                    <SortTH current={sortBy} onSort={handleSort}>Symbol</SortTH>
+                    <SortTH right sortKey="oi_usd"       current={sortBy} onSort={handleSort}>OI (USD)</SortTH>
+                    <SortTH right sortKey="oi_1h_pct"    current={sortBy} onSort={handleSort}>OI 1h%</SortTH>
+                    <SortTH right sortKey="oi_24h_pct"   current={sortBy} onSort={handleSort}>OI 24h%</SortTH>
+                    <SortTH right current={sortBy} onSort={handleSort}>当前价</SortTH>
+                    <SortTH right sortKey="price_24h_pct" current={sortBy} onSort={handleSort}>24h涨跌</SortTH>
+                    <SortTH right sortKey="square"       current={sortBy} onSort={handleSort}>Square</SortTH>
+                    <SortTH current={sortBy} onSort={handleSort}>标记</SortTH>
                   </tr>
                 </thead>
                 <tbody>

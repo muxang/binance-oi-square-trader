@@ -214,9 +214,9 @@ export const fetchMarket = (p: MarketParams = {}): Promise<MarketData> => {
 
 export interface SquareTrendingItem {
   symbol: string
-  content_count: number
-  view_count: number
-  growth_24h: number
+  mentions: number
+  views: number
+  likes: number
   latest_ts_ms: number
 }
 

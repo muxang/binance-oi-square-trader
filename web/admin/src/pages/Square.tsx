@@ -2,13 +2,18 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { fetchSquareTrending } from '../api/client'
-import { colors } from '../theme/colors'
 
 const TH = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
   <th className={`py-2 px-3 text-xs font-medium text-gray-500 ${right ? 'text-right' : 'text-left'}`}>
     {children}
   </th>
 )
+
+function fmtCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K'
+  return n.toString()
+}
 
 export default function Square() {
   const [limit, setLimit] = useState(50)
@@ -58,9 +63,9 @@ export default function Square() {
               <tr>
                 <TH>#</TH>
                 <TH>Symbol</TH>
-                <TH right>提及数</TH>
-                <TH right>24h增长</TH>
-                <TH right>浏览量</TH>
+                <TH right>推荐流提及</TH>
+                <TH right>总浏览</TH>
+                <TH right>总点赞</TH>
                 <TH>最新时间</TH>
               </tr>
             </thead>
@@ -70,33 +75,25 @@ export default function Square() {
                   <td colSpan={6} className="py-8 text-center text-gray-500 text-sm">暂无数据</td>
                 </tr>
               ) : (
-                items.map((item, idx) => {
-                  const growthColor = item.growth_24h > 0
-                    ? colors.up
-                    : item.growth_24h < 0
-                    ? colors.down
-                    : '#8c8c8c'
-                  return (
-                    <tr key={item.symbol}
-                      className="border-b border-[#252525] hover:bg-[#252525] transition-colors">
-                      <td className="py-2 px-3 text-xs text-gray-600 tabular-nums w-10">{idx + 1}</td>
-                      <td className="py-2 px-3 font-mono text-sm text-white font-semibold">{item.symbol}</td>
-                      <td className="py-2 px-3 text-xs text-right tabular-nums text-gray-300">
-                        {item.content_count.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-3 text-xs text-right tabular-nums font-semibold"
-                        style={{ color: growthColor }}>
-                        {item.growth_24h > 0 ? '+' : ''}{item.growth_24h.toLocaleString()}
-                      </td>
-                      <td className="py-2 px-3 text-xs text-right tabular-nums text-gray-500">
-                        {item.view_count > 0 ? item.view_count.toLocaleString() : '—'}
-                      </td>
-                      <td className="py-2 px-3 text-xs text-gray-500">
-                        {item.latest_ts_ms ? dayjs(item.latest_ts_ms).format('MM-DD HH:mm') : '—'}
-                      </td>
-                    </tr>
-                  )
-                })
+                items.map((item, idx) => (
+                  <tr key={item.symbol}
+                    className="border-b border-[#252525] hover:bg-[#252525] transition-colors">
+                    <td className="py-2 px-3 text-xs text-gray-600 tabular-nums w-10">{idx + 1}</td>
+                    <td className="py-2 px-3 font-mono text-sm text-white font-semibold">{item.symbol}</td>
+                    <td className="py-2 px-3 text-xs text-right tabular-nums text-gray-300 font-semibold">
+                      {item.mentions.toLocaleString()}
+                    </td>
+                    <td className="py-2 px-3 text-xs text-right tabular-nums text-gray-500">
+                      {item.views > 0 ? fmtCount(item.views) : '—'}
+                    </td>
+                    <td className="py-2 px-3 text-xs text-right tabular-nums text-gray-500">
+                      {item.likes > 0 ? fmtCount(item.likes) : '—'}
+                    </td>
+                    <td className="py-2 px-3 text-xs text-gray-500">
+                      {item.latest_ts_ms ? dayjs(item.latest_ts_ms).format('MM-DD HH:mm') : '—'}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
