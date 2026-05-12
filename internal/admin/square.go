@@ -40,13 +40,12 @@ func (s *Server) handleSquareTrending(w http.ResponseWriter, r *http.Request) {
 			FROM square_hashtag_history
 			WHERE ts <= NOW() - INTERVAL '24 hours'
 			ORDER BY symbol, ts DESC
-		),
-		total_cnt AS (SELECT COUNT(*) FROM latest WHERE content_count > 0)
+		)
 		SELECT
 			l.symbol, l.content_count, l.view_count,
 			l.content_count - COALESCE(p.prev_count, 0) AS growth_24h,
 			l.ts,
-			(SELECT COUNT(*) FROM total_cnt) AS total
+			COUNT(*) OVER() AS total
 		FROM latest l
 		LEFT JOIN prev24h p ON p.symbol = l.symbol
 		WHERE l.content_count > 0

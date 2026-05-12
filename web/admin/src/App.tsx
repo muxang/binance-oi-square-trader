@@ -5,14 +5,9 @@ import History from './pages/History'
 import Pnl from './pages/Pnl'
 import Market from './pages/Market'
 import Square from './pages/Square'
+import TradeDetail from './pages/TradeDetail'
 import { DataSourceProvider, useDataSource } from './context/DataSource'
 import type { DataSource } from './api/client'
-
-function Stub({ label }: { label: string }) {
-  return (
-    <div className="p-8 text-gray-500 text-lg">{label} — 待 Round 6 实施</div>
-  )
-}
 
 function DataSourceToggle() {
   const { dataSource, setDataSource } = useDataSource()
@@ -85,7 +80,7 @@ function AppLayout() {
               <Route path="/pnl"       element={<Pnl />} />
               <Route path="/square"    element={<Square />} />
               <Route path="/market"    element={<Market />} />
-              <Route path="/trade/:id" element={<Stub label="开仓决策详情" />} />
+              <Route path="/trade/:id" element={<TradeDetail />} />
               <Route path="*"          element={<Navigate to="/" replace />} />
             </Routes>
           </main>

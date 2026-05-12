@@ -255,3 +255,73 @@ export interface SymbolDetailData {
 
 export const fetchSymbolDetail = (symbol: string, hours = 6, ds: DataSource = 'mainnet'): Promise<SymbolDetailData> =>
   api.get<SymbolDetailData>(`/symbol/${symbol}`, { params: { hours, data_source: ds } }).then(r => r.data)
+
+// ---- Trade Detail ----
+
+export interface TradeDetailSignal {
+  signal_id: number
+  ts_ms: number
+  oi_triggered: boolean
+  oi_data: Record<string, unknown> | null
+  square_hot: boolean
+  square_data: Record<string, unknown> | null
+  decision: string
+  rejection_reason?: string
+}
+
+export interface TradeDetailPosition {
+  current_qty: number
+  highest_price?: number
+  trailing_stop_active: boolean
+  trailing_stop_price?: number
+  tp_stage1_done: boolean
+  tp_stage2_done: boolean
+  entry_oi?: number
+  last_check_ts_ms?: number
+}
+
+export interface TradeDetailExit {
+  ts_ms: number
+  type: string
+  qty: number
+  price: number
+  pnl: number
+}
+
+export interface TradeDetailApiError {
+  ts_ms: number
+  source: string
+  endpoint: string
+  http_code: number
+  error_code: number
+  message: string
+}
+
+export interface TradeDetailData {
+  trade_id: number
+  symbol: string
+  direction: string
+  status: string
+  data_source: string
+  margin: number
+  notional: number
+  leverage: number
+  entry_ts_ms?: number
+  entry_price?: number
+  initial_atr?: number
+  initial_stop_loss?: number
+  initial_take_profit_1?: number
+  initial_take_profit_2?: number
+  exit_ts_ms?: number
+  exit_price?: number
+  exit_reason?: string
+  realized_pnl?: number
+  fees?: number
+  signal: TradeDetailSignal | null
+  position: TradeDetailPosition | null
+  exits: TradeDetailExit[]
+  api_errors: TradeDetailApiError[]
+}
+
+export const fetchTradeDetail = (id: number): Promise<TradeDetailData> =>
+  api.get<TradeDetailData>(`/trade/${id}`).then(r => r.data)

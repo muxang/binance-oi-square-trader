@@ -74,22 +74,15 @@ func (s *Server) writeError(w http.ResponseWriter, code int, msg string) {
 	s.writeJSON(w, code, map[string]string{"error": msg})
 }
 
-// --- Stub handlers (Round 6 will fill these in) ---
-
 // handlePositionsOpen    implemented in positions.go
 // handlePositionsHistory implemented in history.go
 // handlePnl*             implemented in pnl.go
 // handleMarket           implemented in market.go
 // handleSquareTrending   implemented in square.go
 // handleSymbolDetail     implemented in symbol.go
+// handleTradeDetail      implemented in tradedetail.go
 
 func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 	// legacy alias for /api/admin/market?scope=watchlist
 	s.writeJSON(w, http.StatusOK, []any{})
-}
-
-func (s *Server) handleTradeDetail(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"trade_id": r.PathValue("trade_id"),
-	})
 }
