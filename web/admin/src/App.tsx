@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import Positions from './pages/Positions'
+import History from './pages/History'
+import Pnl from './pages/Pnl'
 
 function Stub({ label }: { label: string }) {
   return (
@@ -43,8 +45,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/positions" element={<Positions />} />
-            <Route path="/history" element={<Stub label="历史仓位" />} />
-            <Route path="/pnl" element={<Stub label="PnL 分析" />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/pnl" element={<Pnl />} />
             <Route path="/square" element={<Stub label="Square 热点" />} />
             <Route path="/watchlist" element={<Stub label="候选池 OI" />} />
             <Route path="/trade/:id" element={<Stub label="开仓决策详情" />} />

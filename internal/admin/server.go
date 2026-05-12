@@ -73,29 +73,11 @@ func (s *Server) writeError(w http.ResponseWriter, code int, msg string) {
 	s.writeJSON(w, code, map[string]string{"error": msg})
 }
 
-// --- Stub handlers (Round 2-6 will fill these in) ---
+// --- Stub handlers (Round 5-6 will fill these in) ---
 
-// handlePositionsOpen implemented in positions.go
-
-func (s *Server) handlePositionsHistory(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]any{"total": 0, "page": 1, "items": []any{}})
-}
-
-func (s *Server) handlePnlCumulative(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, []any{})
-}
-
-func (s *Server) handlePnlBySymbol(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, []any{})
-}
-
-func (s *Server) handlePnlByExitReason(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, []any{})
-}
-
-func (s *Server) handlePnlStats(w http.ResponseWriter, r *http.Request) {
-	s.writeJSON(w, http.StatusOK, map[string]any{})
-}
+// handlePositionsOpen  implemented in positions.go
+// handlePositionsHistory implemented in history.go
+// handlePnl* implemented in pnl.go
 
 func (s *Server) handleSquareTrending(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, []any{})
