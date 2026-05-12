@@ -256,16 +256,23 @@ func run() error {
 	if err := runner.Register(sigEngineCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register signal_engine collector")
 	}
-	// Phase 4 v0.1: Executor — wires binance client + DB into the entry flow.
-	// DisasterStopPct and Leverage read from cfg (DISASTER_STOP_PCT, LEVERAGE).
-	executor := execution.New(client, gen.New(pgPool), execution.Config{
+	// v0.1.x: Executor — wires binance client + DB + Redis into the entry flow.
+	// ATR-based disaster stop: clip(ATR/price × ATRStopMult, MinStopPct, MaxStopPct).
+	// Falls back to DisasterStopPct when ATR is unavailable in Redis.
+	executor := execution.New(client, gen.New(pgPool), rdb, execution.Config{
 		DisasterStopPct: cfg.Exit.DisasterStopPct,
+		ATRStopMult:     cfg.Exit.TrailingDistanceATRMult,
+		MinStopPct:      cfg.Exit.MinStopPct,
+		MaxStopPct:      cfg.Exit.MaxStopPct,
 		Leverage:        cfg.Position.Leverage,
 	}, log)
 	log.Info().
-		Str("disaster_stop_pct", cfg.Exit.DisasterStopPct.String()).
+		Str("disaster_stop_pct_fallback", cfg.Exit.DisasterStopPct.String()).
+		Str("atr_stop_mult", cfg.Exit.TrailingDistanceATRMult.String()).
+		Str("min_stop_pct", cfg.Exit.MinStopPct.String()).
+		Str("max_stop_pct", cfg.Exit.MaxStopPct.String()).
 		Int("leverage", cfg.Position.Leverage).
-		Msg("executor ready")
+		Msg("executor ready (ATR-based disaster stop)")
 
 	// v0.2 Gap 1: algo_polling — 1min poll of disaster-stop Algo orders to
 	// auto-close trades when Binance reports algoStatus=FINISHED. Registered

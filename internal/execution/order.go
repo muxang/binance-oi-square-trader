@@ -10,11 +10,14 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 	"github.com/shopspring/decimal"
 
@@ -26,9 +29,14 @@ import (
 
 // Config holds execution-layer constants sourced from environment config.
 type Config struct {
-	// DisasterStopPct is the fraction below entry price for the Algo stop trigger.
+	// DisasterStopPct is the fallback fraction when ATR is unavailable.
 	// Env: DISASTER_STOP_PCT (e.g. 0.06 → stop at entry × 0.94).
 	DisasterStopPct decimal.Decimal
+	// ATR-based stop bounds: stop_pct = clip(ATR/price × ATRStopMult, MinStopPct, MaxStopPct).
+	// Env: TRAILING_DISTANCE_ATR_MULT / MIN_STOP_PCT / MAX_STOP_PCT.
+	ATRStopMult decimal.Decimal
+	MinStopPct  decimal.Decimal
+	MaxStopPct  decimal.Decimal
 	// Leverage is the target initial leverage for all new positions.
 	// Env: LEVERAGE (e.g. 10).
 	Leverage int
@@ -39,14 +47,60 @@ type Config struct {
 type Executor struct {
 	bc    *binance.Client
 	db    *gen.Queries
+	rdb   *redis.Client
 	cfg   Config
 	log   zerolog.Logger
 	nowFn func() time.Time
 }
 
-// New creates an Executor. bc and db must not be nil.
-func New(bc *binance.Client, db *gen.Queries, cfg Config, log zerolog.Logger) *Executor {
-	return &Executor{bc: bc, db: db, cfg: cfg, log: log, nowFn: timez.NowUTC}
+// New creates an Executor. bc, db, and rdb must not be nil.
+func New(bc *binance.Client, db *gen.Queries, rdb *redis.Client, cfg Config, log zerolog.Logger) *Executor {
+	return &Executor{bc: bc, db: db, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
+}
+
+// atrPayload matches the JSON written by klines_writers.go under atr:{symbol}.
+type atrPayload struct {
+	Value string `json:"value"`
+}
+
+// computeStopPct reads ATR from Redis and computes the stop fraction for a new entry.
+// Formula: clip(ATR / entryPrice × ATRStopMult, MinStopPct, MaxStopPct).
+// Falls back to DisasterStopPct when Redis is unavailable or ATR is missing.
+func (e *Executor) computeStopPct(ctx context.Context, symbol string, entryPrice decimal.Decimal, log zerolog.Logger) decimal.Decimal {
+	raw, err := e.rdb.Get(ctx, "atr:"+symbol).Result()
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			log.Warn().Err(err).Str("symbol", symbol).Msg("executor: ATR redis GET failed, using fallback stop")
+		} else {
+			log.Warn().Str("symbol", symbol).Msg("executor: ATR not in Redis (klines may be stale), using fallback stop")
+		}
+		log.Info().Str("stop_pct", e.cfg.DisasterStopPct.String()).Msg("executor: stop_pct=fallback (atr_missing)")
+		return e.cfg.DisasterStopPct
+	}
+	var p atrPayload
+	if err := json.Unmarshal([]byte(raw), &p); err != nil || p.Value == "" {
+		log.Warn().Str("raw", raw).Msg("executor: ATR payload parse failed, using fallback stop")
+		return e.cfg.DisasterStopPct
+	}
+	atr, err := decimal.NewFromString(p.Value)
+	if err != nil || atr.IsZero() || atr.IsNegative() {
+		log.Warn().Str("atr_value", p.Value).Msg("executor: ATR value invalid, using fallback stop")
+		return e.cfg.DisasterStopPct
+	}
+
+	stopPct := atr.Div(entryPrice).Mul(e.cfg.ATRStopMult)
+	if stopPct.LessThan(e.cfg.MinStopPct) {
+		stopPct = e.cfg.MinStopPct
+	}
+	if stopPct.GreaterThan(e.cfg.MaxStopPct) {
+		stopPct = e.cfg.MaxStopPct
+	}
+	log.Info().
+		Str("atr", atr.String()).
+		Str("atr_mult", e.cfg.ATRStopMult.String()).
+		Str("stop_pct", stopPct.String()).
+		Msg("executor: stop_pct=ATR-based")
+	return stopPct
 }
 
 // PlaceEntry runs Steps 1-9 for a trade that passed the decision engine.
@@ -207,8 +261,8 @@ func (e *Executor) placeDisasterStop(
 	fillQty, fillPrice, tickSize decimal.Decimal,
 	log zerolog.Logger,
 ) {
-	one := decimal.NewFromInt(1)
-	stopPrice := fillPrice.Mul(one.Sub(e.cfg.DisasterStopPct))
+	stopPct := e.computeStopPct(ctx, symbol, fillPrice, log)
+	stopPrice := fillPrice.Mul(decimal.NewFromInt(1).Sub(stopPct))
 	// Round to symbol tickSize multiple — Binance rejects with -1111 otherwise.
 	// Truncate (floor for positive) = round down = looser stop, conservative re slippage.
 	if !tickSize.IsZero() {

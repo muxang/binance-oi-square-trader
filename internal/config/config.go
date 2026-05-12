@@ -114,6 +114,8 @@ type PositionConfig struct {
 }
 type ExitConfig struct {
 	DisasterStopPct             decimal.Decimal `mapstructure:"DISASTER_STOP_PCT"`
+	MinStopPct                  decimal.Decimal `mapstructure:"MIN_STOP_PCT"`
+	MaxStopPct                  decimal.Decimal `mapstructure:"MAX_STOP_PCT"`
 	ATRPeriod                   int             `mapstructure:"ATR_PERIOD"`
 	ATRTimeframe                string          `mapstructure:"ATR_TIMEFRAME"`
 	SignalFailOIDropPct         decimal.Decimal `mapstructure:"SIGNAL_FAIL_OI_DROP_PCT"`
@@ -209,6 +211,7 @@ func setDefaults(v *viper.Viper) {
 		"BINANCE_PROXY_MODE": "none", "BINANCE_PROXY_POOL_STRATEGY": "round_robin",
 		"BINANCE_PROXY_FAILURE_THRESHOLD": 5, "BINANCE_PROXY_RECOVERY_MINUTES": 5,
 		"HTTP_PORT": 8080, "DASHBOARD_PORT": 3000,
+		"MIN_STOP_PCT": "0.06", "MAX_STOP_PCT": "0.075",
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
 		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
 		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,
