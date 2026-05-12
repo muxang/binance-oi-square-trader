@@ -232,7 +232,7 @@ export default function TradeDetail() {
   const decisionZh = d.signal?.decision ? (DECISION_ZH[d.signal.decision] ?? d.signal.decision) : null
 
   return (
-    <div className="p-6 space-y-4 max-w-3xl">
+    <div className="p-6 space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3 flex-wrap">
         <button onClick={() => navigate(-1)}
@@ -248,126 +248,131 @@ export default function TradeDetail() {
         </span>
       </div>
 
-      {/* A: Signal & Decision */}
-      <Card title="A. 信号触发 & 决策">
-        {d.signal ? (
-          <>
-            <ROW label="信号时间" value={fmtTs(d.signal.ts_ms)} />
-            <ROW label="OI 暴涨触发" value={
-              <span style={{ color: d.signal.oi_triggered ? '#52c41a' : '#8c8c8c' }}>
-                {d.signal.oi_triggered ? '✓ 触发' : '✗ 未触发'}
-              </span>
-            } />
-            {d.signal.oi_data && (
-              <div className="pl-2 border-l-2 border-[#3a3a3a] my-1">
-                <DataBlock data={d.signal.oi_data as Record<string, unknown>} labelMap={OI_LABELS} />
-              </div>
-            )}
+      {/* Two-column grid */}
+      <div className="grid grid-cols-2 gap-4 items-start">
 
-            <ROW label="Square 热点" value={
-              <span style={{ color: d.signal.square_hot ? '#fa8c16' : '#8c8c8c' }}>
-                {d.signal.square_hot ? '✓ 热点 🔥' : '✗ 非热点'}
-              </span>
-            } />
-            {d.signal.square_data && (
-              <div className="pl-2 border-l-2 border-[#3a3a3a] my-1">
-                <DataBlock data={d.signal.square_data as Record<string, unknown>} labelMap={SQ_LABELS} />
-                <SquareAlgoNote data={d.signal.square_data as Record<string, unknown>} />
-              </div>
-            )}
-
-            <ROW label="入场决策" value={
-              <span style={{ color: d.signal.decision === 'rejected' ? '#ff4d4f' : '#52c41a' }}>
-                {decisionZh}
-              </span>
-            } />
-            {d.signal.rejection_reason && (
-              <ROW label="拒绝原因" value={d.signal.rejection_reason} />
-            )}
-          </>
-        ) : <div className="text-xs text-gray-600 py-2">无信号数据</div>}
-      </Card>
-
-      {/* B: Entry Execution */}
-      <Card title="B. 开仓执行">
-        <ROW label="开仓时间"   value={fmtTs(d.entry_ts_ms)} />
-        <ROW label="开仓价"     value={fmtP(d.entry_price)} mono />
-        <ROW label="名义价值"   value={d.notional?.toFixed(2) + ' USDT'} mono />
-        {d.initial_atr         != null && <ROW label="ATR (入场时)"   value={fmtP(d.initial_atr, 6)} mono />}
-        {d.initial_stop_loss   != null && <ROW label="初始止损价"      value={fmtP(d.initial_stop_loss)} mono />}
-        {d.initial_take_profit_1 != null && <ROW label="初始止盈1 (TP1)" value={fmtP(d.initial_take_profit_1)} mono />}
-        {d.initial_take_profit_2 != null && <ROW label="初始止盈2 (TP2)" value={fmtP(d.initial_take_profit_2)} mono />}
-        {d.api_errors.length > 0 && (
-          <div className="mt-3 pt-2 border-t border-[#2d2d2d]">
-            <div className="text-xs text-red-400 mb-2">API 错误 ({d.api_errors.length} 条)</div>
-            {d.api_errors.map((e, i) => (
-              <div key={i} className="py-1.5 border-b border-[#252525] last:border-0">
-                <div className="flex gap-2 text-xs">
-                  <span className="text-gray-500 shrink-0">{dayjs(e.ts_ms).format('HH:mm:ss')}</span>
-                  <span className="text-red-300 font-mono shrink-0">
-                    {e.error_code ? `错误码 ${e.error_code}` : `HTTP ${e.http_code}`}
-                  </span>
-                  <span className="text-gray-400 font-mono truncate">{e.endpoint}</span>
+        {/* ── 左列: A 信号 ── */}
+        <Card title="A. 信号触发 & 决策">
+          {d.signal ? (
+            <>
+              <ROW label="信号时间" value={fmtTs(d.signal.ts_ms)} />
+              <ROW label="OI 暴涨触发" value={
+                <span style={{ color: d.signal.oi_triggered ? '#52c41a' : '#8c8c8c' }}>
+                  {d.signal.oi_triggered ? '✓ 触发' : '✗ 未触发'}
+                </span>
+              } />
+              {d.signal.oi_data && (
+                <div className="pl-2 border-l-2 border-[#3a3a3a] my-1">
+                  <DataBlock data={d.signal.oi_data as Record<string, unknown>} labelMap={OI_LABELS} />
                 </div>
-                {e.message && <div className="text-xs text-gray-500 mt-0.5">{e.message}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+              )}
 
-      {/* C: Position State */}
-      {d.position && (
-        <Card title="C. 持仓状态">
-          <ROW label="当前持仓数量"   value={fmtNum(d.position.current_qty, 4)} mono />
-          <ROW label="历史最高价"     value={fmtP(d.position.highest_price)} mono />
-          <ROW label="移动止损"       value={
-            d.position.trailing_stop_active
-              ? `已激活 @ ${fmtP(d.position.trailing_stop_price)}`
-              : '未激活'
-          } />
-          <ROW label="止盈1 (TP1) 完成" value={d.position.tp_stage1_done ? '✓ 已完成' : '—'} />
-          <ROW label="止盈2 (TP2) 完成" value={d.position.tp_stage2_done ? '✓ 已完成' : '—'} />
-          {d.position.entry_oi != null && (
-            <ROW label="入场时 OI" value={d.position.entry_oi.toFixed(2) + ' M USD'} mono />
-          )}
-          <ROW label="最后检查时间" value={fmtTs(d.position.last_check_ts_ms)} />
+              <ROW label="Square 热点" value={
+                <span style={{ color: d.signal.square_hot ? '#fa8c16' : '#8c8c8c' }}>
+                  {d.signal.square_hot ? '✓ 热点 🔥' : '✗ 非热点'}
+                </span>
+              } />
+              {d.signal.square_data && (
+                <div className="pl-2 border-l-2 border-[#3a3a3a] my-1">
+                  <DataBlock data={d.signal.square_data as Record<string, unknown>} labelMap={SQ_LABELS} />
+                  <SquareAlgoNote data={d.signal.square_data as Record<string, unknown>} />
+                </div>
+              )}
+
+              <ROW label="入场决策" value={
+                <span style={{ color: d.signal.decision === 'rejected' ? '#ff4d4f' : '#52c41a' }}>
+                  {decisionZh}
+                </span>
+              } />
+              {d.signal.rejection_reason && (
+                <ROW label="拒绝原因" value={d.signal.rejection_reason} />
+              )}
+            </>
+          ) : <div className="text-xs text-gray-600 py-2">无信号数据</div>}
         </Card>
-      )}
 
-      {/* D: Close Record */}
-      <Card title="D. 平仓记录">
-        {d.exits.length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs text-gray-500 mb-1">平仓事件 ({d.exits.length} 笔)</div>
-            {d.exits.map((ex, i) => (
-              <div key={i}
-                className="flex gap-3 py-1.5 border-b border-[#252525] last:border-0 text-xs items-center">
-                <span className="text-gray-500 w-16 shrink-0">{dayjs(ex.ts_ms).format('HH:mm:ss')}</span>
-                <span className="text-gray-400 font-mono w-20 shrink-0">
-                  {EXIT_TYPE_ZH[ex.type] ?? ex.type}
-                </span>
-                <span className="text-gray-400 tabular-nums w-16 shrink-0">{ex.qty.toFixed(4)}</span>
-                <span className="text-gray-400 tabular-nums w-20 shrink-0">{fmtP(ex.price)}</span>
-                <span className="tabular-nums" style={{ color: pnlColor(ex.pnl) }}>
-                  {pnlPrefix(ex.pnl)}{ex.pnl.toFixed(2)}
-                </span>
+        {/* ── 右列: B + C + D ── */}
+        <div className="space-y-4">
+          <Card title="B. 开仓执行">
+            <ROW label="开仓时间"   value={fmtTs(d.entry_ts_ms)} />
+            <ROW label="开仓价"     value={fmtP(d.entry_price)} mono />
+            <ROW label="名义价值"   value={d.notional?.toFixed(2) + ' USDT'} mono />
+            {d.initial_atr           != null && <ROW label="ATR (入场时)"      value={fmtP(d.initial_atr, 6)} mono />}
+            {d.initial_stop_loss     != null && <ROW label="初始止损价"         value={fmtP(d.initial_stop_loss)} mono />}
+            {d.initial_take_profit_1 != null && <ROW label="初始止盈1 (TP1)"   value={fmtP(d.initial_take_profit_1)} mono />}
+            {d.initial_take_profit_2 != null && <ROW label="初始止盈2 (TP2)"   value={fmtP(d.initial_take_profit_2)} mono />}
+            {d.api_errors.length > 0 && (
+              <div className="mt-3 pt-2 border-t border-[#2d2d2d]">
+                <div className="text-xs text-red-400 mb-2">API 错误 ({d.api_errors.length} 条)</div>
+                {d.api_errors.map((e, i) => (
+                  <div key={i} className="py-1.5 border-b border-[#252525] last:border-0">
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-gray-500 shrink-0">{dayjs(e.ts_ms).format('HH:mm:ss')}</span>
+                      <span className="text-red-300 font-mono shrink-0">
+                        {e.error_code ? `错误码 ${e.error_code}` : `HTTP ${e.http_code}`}
+                      </span>
+                      <span className="text-gray-400 font-mono truncate">{e.endpoint}</span>
+                    </div>
+                    {e.message && <div className="text-xs text-gray-500 mt-0.5">{e.message}</div>}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-        <ROW label="平仓时间"    value={fmtTs(d.exit_ts_ms)} />
-        <ROW label="平仓价"      value={fmtP(d.exit_price)} mono />
-        <ROW label="平仓原因"    value={d.exit_reason ?? '—'} />
-        <ROW label="已实现 PnL"  value={
-          d.realized_pnl != null
-            ? <span style={{ color: pnlColor(d.realized_pnl) }}>
-                {pnlPrefix(d.realized_pnl)}{d.realized_pnl.toFixed(2)} USDT
-              </span>
-            : null
-        } />
-        {d.fees != null && <ROW label="手续费" value={d.fees.toFixed(4) + ' USDT'} mono />}
-      </Card>
+            )}
+          </Card>
+
+          {d.position && (
+            <Card title="C. 持仓状态">
+              <ROW label="当前持仓数量"      value={fmtNum(d.position.current_qty, 4)} mono />
+              <ROW label="历史最高价"        value={fmtP(d.position.highest_price)} mono />
+              <ROW label="移动止损"          value={
+                d.position.trailing_stop_active
+                  ? `已激活 @ ${fmtP(d.position.trailing_stop_price)}`
+                  : '未激活'
+              } />
+              <ROW label="止盈1 (TP1) 完成" value={d.position.tp_stage1_done ? '✓ 已完成' : '—'} />
+              <ROW label="止盈2 (TP2) 完成" value={d.position.tp_stage2_done ? '✓ 已完成' : '—'} />
+              {d.position.entry_oi != null && (
+                <ROW label="入场时 OI" value={d.position.entry_oi.toFixed(2) + ' M USD'} mono />
+              )}
+              <ROW label="最后检查时间" value={fmtTs(d.position.last_check_ts_ms)} />
+            </Card>
+          )}
+
+          <Card title="D. 平仓记录">
+            {d.exits.length > 0 && (
+              <div className="mb-3">
+                <div className="text-xs text-gray-500 mb-1">平仓事件 ({d.exits.length} 笔)</div>
+                {d.exits.map((ex, i) => (
+                  <div key={i}
+                    className="flex gap-3 py-1.5 border-b border-[#252525] last:border-0 text-xs items-center">
+                    <span className="text-gray-500 w-16 shrink-0">{dayjs(ex.ts_ms).format('HH:mm:ss')}</span>
+                    <span className="text-gray-400 font-mono w-20 shrink-0">
+                      {EXIT_TYPE_ZH[ex.type] ?? ex.type}
+                    </span>
+                    <span className="text-gray-400 tabular-nums w-16 shrink-0">{ex.qty.toFixed(4)}</span>
+                    <span className="text-gray-400 tabular-nums w-20 shrink-0">{fmtP(ex.price)}</span>
+                    <span className="tabular-nums" style={{ color: pnlColor(ex.pnl) }}>
+                      {pnlPrefix(ex.pnl)}{ex.pnl.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <ROW label="平仓时间"   value={fmtTs(d.exit_ts_ms)} />
+            <ROW label="平仓价"     value={fmtP(d.exit_price)} mono />
+            <ROW label="平仓原因"   value={d.exit_reason ?? '—'} />
+            <ROW label="已实现 PnL" value={
+              d.realized_pnl != null
+                ? <span style={{ color: pnlColor(d.realized_pnl) }}>
+                    {pnlPrefix(d.realized_pnl)}{d.realized_pnl.toFixed(2)} USDT
+                  </span>
+                : null
+            } />
+            {d.fees != null && <ROW label="手续费" value={d.fees.toFixed(4) + ' USDT'} mono />}
+          </Card>
+        </div>
+
+      </div>
     </div>
   )
 }
