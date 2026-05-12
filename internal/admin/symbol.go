@@ -124,10 +124,16 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 		price24hPct = (currentPrice - prev24h) / prev24h * 100
 	}
 
-	// Square hashtag trend: new content per hour (delta of content_count snapshots)
+	// Square hashtag trend: cumulative new posts relative to window start.
+	// Baseline-subtracted so curve starts near 0; slope shows activity rate.
 	sqSeriesRows, err := s.db.Query(ctx, `
+		WITH baseline AS (
+			SELECT COALESCE(MIN(content_count), 0) AS base
+			FROM square_hashtag_history
+			WHERE symbol = $1 AND ts >= NOW() - ($2 || ' hours')::INTERVAL
+		)
 		SELECT date_trunc('hour', ts) AS h,
-		       (MAX(content_count) - MIN(content_count))::bigint AS delta
+		       (MAX(content_count) - (SELECT base FROM baseline))::bigint AS rel
 		FROM square_hashtag_history
 		WHERE symbol = $1 AND ts >= NOW() - ($2 || ' hours')::INTERVAL
 		GROUP BY h ORDER BY h ASC

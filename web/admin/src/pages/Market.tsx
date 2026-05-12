@@ -5,7 +5,7 @@ import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type
 import { DataSourceContext } from '../context/DataSource'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
 
 function pct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
@@ -44,7 +44,7 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
   const { dataSource } = useContext(DataSourceContext)
   const { data, isLoading } = useQuery({
     queryKey: ['symbol-detail', symbol, dataSource],
-    queryFn: () => fetchSymbolDetail(symbol, 6, dataSource),
+    queryFn: () => fetchSymbolDetail(symbol, 24, dataSource),
   })
   const ttStyle = { background: '#252525', border: '1px solid #3d3d3d', fontSize: 11 }
 
@@ -71,13 +71,13 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
         <div className="flex-1 overflow-y-auto space-y-4 p-3">
           {data.oi_series.length > 0 && (
             <div>
-              <div className="text-xs text-gray-500 mb-1">OI (6h, USD M)</div>
+              <div className="text-xs text-gray-500 mb-1">OI (24h, USD M)</div>
               <ResponsiveContainer width="100%" height={100}>
                 <LineChart data={data.oi_series}>
                   <XAxis dataKey="ts_ms" hide />
                   <YAxis hide domain={['auto','auto']} />
                   <Tooltip contentStyle={ttStyle}
-                    labelFormatter={(v) => dayjs(v).format('HH:mm')}
+                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
                     formatter={(v: number) => [v.toFixed(2) + 'M', 'OI']} />
                   <Line type="monotone" dataKey="oi_usd_m" stroke="#4096ff" dot={false} strokeWidth={1.5} />
                 </LineChart>
@@ -87,13 +87,13 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
 
           {data.price_series.length > 0 && (
             <div>
-              <div className="text-xs text-gray-500 mb-1">价格 (6h, 15m K)</div>
+              <div className="text-xs text-gray-500 mb-1">价格 (24h, 15m K)</div>
               <ResponsiveContainer width="100%" height={100}>
                 <LineChart data={data.price_series}>
                   <XAxis dataKey="ts_ms" hide />
                   <YAxis hide domain={['auto','auto']} />
                   <Tooltip contentStyle={ttStyle}
-                    labelFormatter={(v) => dayjs(v).format('HH:mm')}
+                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
                     formatter={(v: number) => [fmtPrice(v), '价格']} />
                   <Line type="monotone" dataKey="close" stroke="#52c41a" dot={false} strokeWidth={1.5} />
                 </LineChart>
@@ -103,16 +103,16 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
 
           {data.square_series.length > 0 && (
             <div>
-              <div className="text-xs text-gray-500 mb-1">Square 话题增量 (每小时新帖)</div>
+              <div className="text-xs text-gray-500 mb-1">Square 话题热度 (24h 累计新帖)</div>
               <ResponsiveContainer width="100%" height={80}>
-                <BarChart data={data.square_series} barSize={8}>
+                <LineChart data={data.square_series}>
                   <XAxis dataKey="ts_ms" hide />
                   <YAxis hide domain={[0, 'auto']} />
                   <Tooltip contentStyle={ttStyle}
-                    labelFormatter={(v) => dayjs(v).format('HH:mm')}
-                    formatter={(v: number) => [v, '提及']} />
-                  <Bar dataKey="mentions" fill="#fa8c16" radius={[2,2,0,0]} />
-                </BarChart>
+                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
+                    formatter={(v: number) => [v.toLocaleString(), '累计新帖']} />
+                  <Line type="monotone" dataKey="mentions" stroke="#fa8c16" dot={false} strokeWidth={1.5} />
+                </LineChart>
               </ResponsiveContainer>
             </div>
           )}
