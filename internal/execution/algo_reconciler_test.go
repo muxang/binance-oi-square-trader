@@ -135,6 +135,22 @@ func TestReconcileTick_AlgoWorking_NoClose(t *testing.T) {
 	assert.Empty(t, deps.exits)
 }
 
+func TestReconcileTick_AlgoNew_NoClose(t *testing.T) {
+	// Round 1.z: NEW = armed waiting (Binance Algo Service initial state before
+	// trigger condition met). Must be treated as actionable (no WRN log), and
+	// no close until status flips to FINISHED.
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRow(2, "BTCUSDT", 80000, 0.006, 10, "12346"),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		12346: {AlgoID: 12346, Symbol: "BTCUSDT", AlgoStatus: "NEW"},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	assert.Empty(t, deps.closed, "NEW → no close (waiting for trigger)")
+	assert.Empty(t, deps.exits)
+}
+
 func TestReconcileTick_AlgoFinished_AutoCloses(t *testing.T) {
 	const sym = "ALGOTRIG1"
 	metrics.PositionMarginRatio.WithLabelValues(sym).Set(0.55)

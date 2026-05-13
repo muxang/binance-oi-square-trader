@@ -240,7 +240,9 @@ func (ar *AlgoReconciler) queryAlgo(ctx context.Context, tradeID int64, symbol, 
 		return binance.AlgoOrderQuery{}, false
 	}
 	switch q.AlgoStatus {
-	case "WORKING", "FINISHED":
+	case "WORKING", "NEW", "FINISHED":
+		// NEW = armed, waiting for trigger condition (semantically same as WORKING
+		// for our poll path: caller checks FINISHED separately, NEW falls through).
 		return q, true
 	case "CANCELED", "EXPIRED":
 		// Trader upgrade (trail S1→S2) cancels old algo + rewrites algo_id atomically.
