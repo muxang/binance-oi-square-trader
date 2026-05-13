@@ -320,7 +320,14 @@ func run() error {
 	baselineRuntime := &config.Runtime{
 		DailyLossHaltPct:      cfg.Risk.DailyLossHaltPct,
 		ConsecutiveLossesHalt: cfg.Risk.ConsecutiveLossHaltCount,
+		// Round 2.y: 4 more wired keys.
+		TotalFloatLossHaltPct: cfg.Risk.TotalFloatLossHaltPct,
+		BTCCrashHaltPct:       cfg.Risk.BTCCrashHaltPct,
+		MaxStopPct:            cfg.Exit.MaxStopPct,
+		Leverage:               cfg.Position.Leverage,
 	}
+	// Seed atomic Runtime so consumer getters see baseline before the first reloader tick.
+	config.Set(baselineRuntime)
 	configReloader := collector.NewConfigReloader(pgPool, baselineRuntime, log, collector.ConfigReloaderConfig{})
 	if err := runner.Register(configReloader, "*/1 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register config_reloader collector")
@@ -328,7 +335,12 @@ func run() error {
 	log.Info().
 		Str("daily_loss_halt_pct_baseline", baselineRuntime.DailyLossHaltPct.String()).
 		Int("consecutive_losses_halt_baseline", baselineRuntime.ConsecutiveLossesHalt).
-		Msg("config_reloader ready (Phase 5.2 Round 2.x, 1min cron)")
+		Str("total_float_loss_halt_pct_baseline", baselineRuntime.TotalFloatLossHaltPct.String()).
+		Str("btc_panic_drop_pct_baseline", baselineRuntime.BTCCrashHaltPct.String()).
+		Str("max_stop_pct_baseline", baselineRuntime.MaxStopPct.String()).
+		Int("leverage_baseline", baselineRuntime.Leverage).
+		Int("wired_keys", 6).
+		Msg("config_reloader ready (Phase 5.2 Round 2.x + 2.y, 1min cron)")
 
 	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
 	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.
