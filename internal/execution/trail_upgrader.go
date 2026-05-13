@@ -68,6 +68,9 @@ type TrailConfig struct {
 	Stage3CallbackRate decimal.Decimal // 0.10 (trader-managed, applied to trail_high)
 	Stage4UpgradePct   decimal.Decimal // 0.60
 	Stage4CallbackRate decimal.Decimal // 0.15
+	// v0.2 Round 1.y: ratchet deadband. S3/S4 re-place only if trail_high advanced
+	// by >= RatchetMinPct since last persisted high. Zero disables (re-arm every tick).
+	RatchetMinPct decimal.Decimal // e.g. 0.005 = 0.5%
 }
 
 // TrailUpgrader runs the 5min trail tick.
@@ -147,14 +150,32 @@ func (tu *TrailUpgrader) handleRow(ctx context.Context, r gen.ListOpenTradesForT
 	case 3:
 		if pctGain.GreaterThanOrEqual(tu.cfg.Stage4UpgradePct) {
 			tu.upgradeTraderManagedStage(ctx, r, 4, tu.cfg.Stage4CallbackRate, newHigh, qty, log)
-		} else if newHigh.GreaterThan(prevHigh) {
+		} else if tu.shouldRatchet(prevHigh, newHigh) {
 			tu.rearmTraderManaged(ctx, r, 3, tu.cfg.Stage3CallbackRate, newHigh, qty, log)
+		} else if newHigh.GreaterThan(prevHigh) {
+			// High advanced but below deadband — persist high only (no algo churn).
+			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	case 4:
-		if newHigh.GreaterThan(prevHigh) {
+		if tu.shouldRatchet(prevHigh, newHigh) {
 			tu.rearmTraderManaged(ctx, r, 4, tu.cfg.Stage4CallbackRate, newHigh, qty, log)
+		} else if newHigh.GreaterThan(prevHigh) {
+			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	}
+}
+
+// shouldRatchet returns true when the new high moved up by ≥ RatchetMinPct (deadband).
+// Zero RatchetMinPct → re-arm on any upward move (legacy behavior).
+func (tu *TrailUpgrader) shouldRatchet(prev, next decimal.Decimal) bool {
+	if !next.GreaterThan(prev) {
+		return false
+	}
+	if tu.cfg.RatchetMinPct.IsZero() || prev.IsZero() {
+		return true
+	}
+	delta := next.Sub(prev).Div(prev)
+	return delta.GreaterThanOrEqual(tu.cfg.RatchetMinPct)
 }
 
 // getCurrentPrice reads latest_price:{symbol} (string decimal, set by position_price collector).

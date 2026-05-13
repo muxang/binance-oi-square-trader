@@ -387,6 +387,57 @@ func TestTrail_S0_S1_Activation_IncrementsMetric(t *testing.T) {
 	assert.Equal(t, 1.0, after-before, "metric incremented on S0→S1 activation")
 }
 
+// --- Round 1.y: ratchet deadband ---
+
+func TestTrail_S3_HighMoved_BelowDeadband_NoRearm(t *testing.T) {
+	// Deadband 0.5%; new high moved up only 0.1% → no API churn.
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	setLatest(t, mr, "BTCUSDT", "105105") // 105000 → 105105 = +0.1%
+	deps := &fakeTrailDeps{rows: []gen.ListOpenTradesForTrailRow{
+		mkTrailRow(1, "BTCUSDT", 80000, 0.01, 105000, 3, "300"),
+	}}
+	bc := &fakeTrailBC{}
+	tu := newTestTU(t, mr, deps, bc)
+	tu.cfg.RatchetMinPct = decimal.NewFromFloat(0.005)
+	tu.ReconcileTick(context.Background())
+	assert.Empty(t, bc.cancelled, "deadband: 0.1% < 0.5% → no ratchet")
+	assert.Empty(t, bc.placedConditional)
+	require.Len(t, deps.highs, 1, "high still persisted (next tick may cross deadband)")
+	assert.True(t, deps.highs[0].TrailHighPrice.Equal(decimal.NewFromFloat(105105)))
+}
+
+func TestTrail_S3_HighMoved_AboveDeadband_Rearms(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	setLatest(t, mr, "BTCUSDT", "106000") // 105000 → 106000 = +0.95% > 0.5%
+	deps := &fakeTrailDeps{rows: []gen.ListOpenTradesForTrailRow{
+		mkTrailRow(1, "BTCUSDT", 80000, 0.01, 105000, 3, "300"),
+	}}
+	bc := &fakeTrailBC{}
+	tu := newTestTU(t, mr, deps, bc)
+	tu.cfg.RatchetMinPct = decimal.NewFromFloat(0.005)
+	tu.ReconcileTick(context.Background())
+	assert.Equal(t, []int64{300}, bc.cancelled, "0.95% > 0.5% → ratchet")
+	require.Len(t, bc.placedConditional, 1)
+	// stop = 106000 × 0.90 = 95400
+	assert.Equal(t, "95400", bc.placedConditional[0].trigger)
+}
+
+func TestTrail_S4_DeadbandEnforced(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	setLatest(t, mr, "BTCUSDT", "130200") // 130000 → 130200 = +0.15%
+	deps := &fakeTrailDeps{rows: []gen.ListOpenTradesForTrailRow{
+		mkTrailRow(1, "BTCUSDT", 80000, 0.01, 130000, 4, "400"),
+	}}
+	bc := &fakeTrailBC{}
+	tu := newTestTU(t, mr, deps, bc)
+	tu.cfg.RatchetMinPct = decimal.NewFromFloat(0.005)
+	tu.ReconcileTick(context.Background())
+	assert.Empty(t, bc.cancelled, "S4 also subject to deadband")
+}
+
 func TestTrail_NoOpenTrades_NoCalls(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()

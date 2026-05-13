@@ -295,9 +295,9 @@ func run() error {
 		log.Fatal().Err(err).Msg("register algo_polling collector")
 	}
 
-	// v0.2 Round 1 Module B: trail_upgrader — 5min sweep. Activates S1 (fallback
-	// for entry-time arm failure), upgrades S1→S2→S3→S4, and ratchets S3/S4
-	// stop higher as trail_high advances. Disaster stop is the always-on backstop.
+	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
+	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.
+	// RatchetMinPct deadband prevents API churn at 1min cadence (default 0.5% high move).
 	trailUpgrader := execution.NewTrailUpgrader(gen.New(pgPool), client, symbolService, rdb, execution.TrailConfig{
 		Stage1ActivatePct:  cfg.Exit.TrailStage1ActivatePct,
 		Stage1CallbackRate: cfg.Exit.TrailStage1CallbackRate,
@@ -307,9 +307,10 @@ func run() error {
 		Stage3CallbackRate: cfg.Exit.TrailStage3CallbackRate,
 		Stage4UpgradePct:   cfg.Exit.TrailStage4UpgradePct,
 		Stage4CallbackRate: cfg.Exit.TrailStage4CallbackRate,
+		RatchetMinPct:      cfg.Exit.TrailRatchetMinPct,
 	}, log)
 	trailUpgraderCol := collector.NewTrailUpgraderCollector(trailUpgrader, log, collector.TrailUpgraderConfig{})
-	if err := runner.Register(trailUpgraderCol, "*/5 * * * *"); err != nil {
+	if err := runner.Register(trailUpgraderCol, "* * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register trail_upgrader collector")
 	}
 	log.Info().
@@ -317,7 +318,9 @@ func run() error {
 		Str("s2_upgrade", cfg.Exit.TrailStage2UpgradePct.String()).Str("s2_callback", cfg.Exit.TrailStage2CallbackRate.String()).
 		Str("s3_upgrade", cfg.Exit.TrailStage3UpgradePct.String()).Str("s3_callback", cfg.Exit.TrailStage3CallbackRate.String()).
 		Str("s4_upgrade", cfg.Exit.TrailStage4UpgradePct.String()).Str("s4_callback", cfg.Exit.TrailStage4CallbackRate.String()).
-		Msg("trail_upgrader ready (Module B 4-stage)")
+		Str("ratchet_min", cfg.Exit.TrailRatchetMinPct.String()).
+		Str("cron", "1min").
+		Msg("trail_upgrader ready (Module B 4-stage, Round 1.y 1min cron)")
 
 	// Phase 4 Round 3: position_manager — 1min sync of open positions against
 	// /fapi/v3/positionRisk + Redis zset positions_active + MARGIN_CALL detect.

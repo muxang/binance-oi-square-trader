@@ -142,6 +142,10 @@ type ExitConfig struct {
 	TrailStage3CallbackRate decimal.Decimal `mapstructure:"TRAIL_STAGE3_CALLBACK_RATE"`
 	TrailStage4UpgradePct   decimal.Decimal `mapstructure:"TRAIL_STAGE4_UPGRADE_PCT"`
 	TrailStage4CallbackRate decimal.Decimal `mapstructure:"TRAIL_STAGE4_CALLBACK_RATE"`
+	// v0.2 Round 1.y: ratchet deadband. S3/S4 only re-place STOP_MARKET if trail_high
+	// moved up by >= this fraction since last placement. Prevents API churn at 1min
+	// cron when price drifts ±0.01% per tick. Default 0.005 = 0.5% trail_high move.
+	TrailRatchetMinPct decimal.Decimal `mapstructure:"TRAIL_RATCHET_MIN_PCT"`
 	SoftTimeoutHours            int             `mapstructure:"SOFT_TIMEOUT_HOURS"`
 	HardTimeoutHours            int             `mapstructure:"HARD_TIMEOUT_HOURS"`
 }
@@ -234,6 +238,7 @@ func setDefaults(v *viper.Viper) {
 		"TRAIL_STAGE4_UPGRADE_PCT":  "0.60", "TRAIL_STAGE4_CALLBACK_RATE": "0.15",
 		"TP1_PCT": "0.10", "TP1_RATIO": "0.20",
 		"TP2_PCT": "0.25", "TP2_RATIO": "0.20",
+		"TRAIL_RATCHET_MIN_PCT": "0.005",
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
 		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
 		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,
