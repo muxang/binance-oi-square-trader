@@ -91,6 +91,8 @@ func (c *ConfigReloader) Run(ctx context.Context) error {
 		Str("btc_panic_drop_pct", newRt.BTCCrashHaltPct.String()).
 		Str("max_stop_pct", newRt.MaxStopPct.String()).
 		Int("leverage", newRt.Leverage).
+		Str("oi_growth_from_min_pct", newRt.OiGrowthFromMinPct.String()).
+		Str("square_hot_multiplier", newRt.SquareHotMultiplier.String()).
 		Msg("config_reloader.tick: runtime swapped")
 	metrics.ConfigReloadTotal.WithLabelValues("ok").Inc()
 	return nil
@@ -159,6 +161,16 @@ func (c *ConfigReloader) applyOverride(newRt *cfgpkg.Runtime, key string, val an
 			newRt.Leverage = n
 			return true
 		}
+	case "OI_GROWTH_FROM_MIN_PCT":
+		if d, ok := toDecimal(val); ok && !d.IsZero() {
+			newRt.OiGrowthFromMinPct = d
+			return true
+		}
+	case "SQUARE_HOT_MULTIPLIER":
+		if d, ok := toDecimal(val); ok && !d.IsZero() {
+			newRt.SquareHotMultiplier = d
+			return true
+		}
 	default:
 		c.log.Debug().Str("key", key).Msg("config_reloader: key not yet wired into Runtime")
 	}
@@ -208,5 +220,7 @@ func runtimesEqual(a, b *cfgpkg.Runtime) bool {
 		a.TotalFloatLossHaltPct.Equal(b.TotalFloatLossHaltPct) &&
 		a.BTCCrashHaltPct.Equal(b.BTCCrashHaltPct) &&
 		a.MaxStopPct.Equal(b.MaxStopPct) &&
-		a.Leverage == b.Leverage
+		a.Leverage == b.Leverage &&
+		a.OiGrowthFromMinPct.Equal(b.OiGrowthFromMinPct) &&
+		a.SquareHotMultiplier.Equal(b.SquareHotMultiplier)
 }

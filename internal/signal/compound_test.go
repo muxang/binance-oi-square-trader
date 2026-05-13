@@ -10,6 +10,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	cfgpkg "trader/internal/config"
 )
 
 // fakeDataAccess implements SignalDataAccess. Tests configure each return
@@ -192,4 +194,60 @@ func TestSignalRecord_SquareData_MarshalsToJSONBSchema(t *testing.T) {
 	assert.Contains(t, string(b), `"hot"`)
 	assert.Contains(t, string(b), `"mode":"standard"`)
 	assert.Contains(t, string(b), `"data_span_hours"`)
+}
+
+// Round 2.y signal_engine refactor: hot-reloadable OI_GROWTH_FROM_MIN_PCT —
+// runtime override tightens the OI surge threshold without restart.
+//
+// burstOI() has growth_from_min = (130-90)/90 = 44.4%. With the default
+// internal 5% threshold and admin override 0.06 both let it through.
+// We instead override to 50% (impossibly tight) to prove the override
+// path actually drives the algo: trigger flips to rejected.
+func TestEvaluate_RuntimeOiGrowthOverride_TightensThreshold(t *testing.T) {
+	cfgpkg.Set(&cfgpkg.Runtime{OiGrowthFromMinPct: decimal.NewFromFloat(0.50)})
+	defer cfgpkg.Set(nil)
+
+	deps := &fakeDataAccess{
+		oiSeries: burstOI(), hashtagSeries: burstHashtag(),
+		closeNow: d(51000), closePrior: d(50000),
+	}
+	rec, err := Evaluate(context.Background(), "BTCUSDT", time.Now(), deps, CompoundConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, "rejected", rec.Decision, "runtime 50%% threshold should reject burst (~44%% growth)")
+	assert.Equal(t, "low_growth_from_min", rec.RejectionReason)
+}
+
+// Round 2.y signal_engine refactor: hot-reloadable SQUARE_HOT_MULTIPLIER —
+// runtime override tightens the Square ratio threshold across all 3 modes.
+//
+// burstHashtag()'s recent/baseline ratio is well above the default 2.0/2.5
+// thresholds. Setting an impossibly tight 1000.0 multiplier flips hot=false
+// while OI still triggers → decision = entered_half.
+func TestEvaluate_RuntimeSquareMultiplierOverride_BlocksHot(t *testing.T) {
+	cfgpkg.Set(&cfgpkg.Runtime{SquareHotMultiplier: decimal.NewFromFloat(1000.0)})
+	defer cfgpkg.Set(nil)
+
+	deps := &fakeDataAccess{
+		oiSeries: burstOI(), hashtagSeries: burstHashtag(),
+		closeNow: d(51000), closePrior: d(50000),
+	}
+	rec, err := Evaluate(context.Background(), "BTCUSDT", time.Now(), deps, CompoundConfig{})
+	require.NoError(t, err)
+	assert.True(t, rec.OITriggered, "OI still triggers")
+	assert.False(t, rec.SquareHot, "runtime 10.0 multiplier should suppress Square hot")
+	assert.Equal(t, "entered_half", rec.Decision)
+}
+
+// Zero runtime → algorithm cfg / internal defaults still apply (no clobber).
+func TestEvaluate_RuntimeZero_FallsThrough(t *testing.T) {
+	cfgpkg.Set(&cfgpkg.Runtime{}) // all zero fields
+	defer cfgpkg.Set(nil)
+
+	deps := &fakeDataAccess{
+		oiSeries: burstOI(), hashtagSeries: burstHashtag(),
+		closeNow: d(51000), closePrior: d(50000),
+	}
+	rec, err := Evaluate(context.Background(), "BTCUSDT", time.Now(), deps, CompoundConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, "entered_full", rec.Decision, "zero runtime → internal defaults reach algo")
 }

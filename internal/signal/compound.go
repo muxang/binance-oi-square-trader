@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	cfgpkg "trader/internal/config"
 )
 
 // SignalRecord is the in-memory representation of one row in the signals
@@ -94,6 +96,11 @@ func Evaluate(
 		return SignalRecord{}, fmt.Errorf("get klines: %w", err)
 	}
 
+	// Round 2.y signal_engine refactor: overlay hot-reloadable runtime overrides
+	// onto the algorithm cfgs before the pure calls. Empty/zero runtime values
+	// fall through to whatever cfg/the algo's internal defaults already set.
+	cfg.OISurgeCfg, cfg.SquareHotCfg = applyRuntimeSignalOverrides(cfg.OISurgeCfg, cfg.SquareHotCfg)
+
 	// Algo layer: pure functions.
 	oiResult, err := OISurge(oiSeries, closeNow, closePrior, cfg.OISurgeCfg)
 	if err != nil {
@@ -128,6 +135,30 @@ func Evaluate(
 		return rec, fmt.Errorf("insert signal: %w", err)
 	}
 	return rec, nil
+}
+
+// applyRuntimeSignalOverrides overlays the hot-reloadable runtime knobs onto
+// the per-call OISurgeConfig + SquareHotConfig. Zero runtime values fall
+// through unchanged (algorithm internal defaults / cfg baseline still apply).
+//
+// SQUARE_HOT_MULTIPLIER is a single admin knob; we apply it to all 3 mode-
+// specific ratio thresholds so the admin Web UI's "one ratio" semantics
+// reach every mode (Standard / Medium / Short). Acceleration thresholds and
+// MinDataPoints stay on their cfg/internal defaults — out of scope.
+func applyRuntimeSignalOverrides(oi OISurgeConfig, hot SquareHotConfig) (OISurgeConfig, SquareHotConfig) {
+	rt := cfgpkg.Get()
+	if rt == nil {
+		return oi, hot
+	}
+	if !rt.OiGrowthFromMinPct.IsZero() {
+		oi.GrowthFromMinMin = rt.OiGrowthFromMinPct
+	}
+	if !rt.SquareHotMultiplier.IsZero() {
+		hot.StandardRatioThreshold = rt.SquareHotMultiplier
+		hot.MediumRatioThreshold = rt.SquareHotMultiplier
+		hot.ShortRatioThreshold = rt.SquareHotMultiplier
+	}
+	return oi, hot
 }
 
 // MarshalOIDataJSON returns the JSONB bytes for signals.oi_data.

@@ -324,7 +324,10 @@ func run() error {
 		TotalFloatLossHaltPct: cfg.Risk.TotalFloatLossHaltPct,
 		BTCCrashHaltPct:       cfg.Risk.BTCCrashHaltPct,
 		MaxStopPct:            cfg.Exit.MaxStopPct,
-		Leverage:               cfg.Position.Leverage,
+		Leverage:              cfg.Position.Leverage,
+		// signal_engine refactor (Round 2.y final 2 keys).
+		OiGrowthFromMinPct:  cfg.OISurge.FromLowPct,
+		SquareHotMultiplier: cfg.SquareHot.Multiplier,
 	}
 	// Seed atomic Runtime so consumer getters see baseline before the first reloader tick.
 	config.Set(baselineRuntime)
@@ -339,8 +342,10 @@ func run() error {
 		Str("btc_panic_drop_pct_baseline", baselineRuntime.BTCCrashHaltPct.String()).
 		Str("max_stop_pct_baseline", baselineRuntime.MaxStopPct.String()).
 		Int("leverage_baseline", baselineRuntime.Leverage).
-		Int("wired_keys", 6).
-		Msg("config_reloader ready (Phase 5.2 Round 2.x + 2.y, 1min cron)")
+		Str("oi_growth_from_min_pct_baseline", baselineRuntime.OiGrowthFromMinPct.String()).
+		Str("square_hot_multiplier_baseline", baselineRuntime.SquareHotMultiplier.String()).
+		Int("wired_keys", 8).
+		Msg("config_reloader ready (Phase 5.2 Round 2 complete, 1min cron)")
 
 	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
 	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.

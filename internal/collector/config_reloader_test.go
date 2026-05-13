@@ -135,6 +135,40 @@ func TestApplyOverride_Leverage_OutOfRange(t *testing.T) {
 	assert.Equal(t, 10, rt.Leverage, "out-of-range value skipped, baseline preserved")
 }
 
+// signal_engine refactor: final 2 wired keys (Round 2.y).
+func TestApplyOverride_OiGrowthFromMinPct(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{OiGrowthFromMinPct: decimal.NewFromFloat(0.05)}
+	ok := c.applyOverride(rt, "OI_GROWTH_FROM_MIN_PCT", "0.06")
+	assert.True(t, ok)
+	assert.True(t, rt.OiGrowthFromMinPct.Equal(decimal.NewFromFloat(0.06)))
+}
+
+func TestApplyOverride_OiGrowthFromMinPct_Zero_Skipped(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{OiGrowthFromMinPct: decimal.NewFromFloat(0.05)}
+	ok := c.applyOverride(rt, "OI_GROWTH_FROM_MIN_PCT", "0")
+	assert.False(t, ok)
+	assert.True(t, rt.OiGrowthFromMinPct.Equal(decimal.NewFromFloat(0.05)))
+}
+
+func TestApplyOverride_SquareHotMultiplier(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{SquareHotMultiplier: decimal.NewFromFloat(2.0)}
+	ok := c.applyOverride(rt, "SQUARE_HOT_MULTIPLIER", "2.5")
+	assert.True(t, ok)
+	assert.True(t, rt.SquareHotMultiplier.Equal(decimal.NewFromFloat(2.5)))
+}
+
+func TestRuntimesEqual_SignalKeys(t *testing.T) {
+	a := &cfgpkg.Runtime{OiGrowthFromMinPct: decimal.NewFromFloat(0.06)}
+	b := &cfgpkg.Runtime{OiGrowthFromMinPct: decimal.NewFromFloat(0.05)}
+	assert.False(t, runtimesEqual(a, b))
+	c := &cfgpkg.Runtime{SquareHotMultiplier: decimal.NewFromFloat(2.0)}
+	d := &cfgpkg.Runtime{SquareHotMultiplier: decimal.NewFromFloat(2.5)}
+	assert.False(t, runtimesEqual(c, d))
+}
+
 func TestRuntime_GetSet_Atomic(t *testing.T) {
 	r1 := &cfgpkg.Runtime{DailyLossHaltPct: decimal.NewFromFloat(0.06)}
 	cfgpkg.Set(r1)

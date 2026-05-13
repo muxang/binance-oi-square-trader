@@ -25,16 +25,15 @@ import (
 // Runtime is the hot-swappable config subset. Add fields incrementally as
 // admin Web UI exposes more overrides.
 //
-// Round 2.x Part 1 wired 2 keys; Round 2.y adds 4 more (6 wired total):
+// 8 wired keys (Round 2.x Part 1 + 2.y + signal_engine refactor):
 //   DAILY_LOSS_HALT_PCT       → DailyLossHaltPct        (circuit_breaker)
 //   CONSECUTIVE_LOSSES_HALT   → ConsecutiveLossesHalt   (circuit_breaker)
 //   TOTAL_FLOAT_LOSS_HALT_PCT → TotalFloatLossHaltPct   (circuit_breaker, R.2y)
 //   BTC_PANIC_DROP_PCT        → BTCCrashHaltPct         (circuit_breaker, R.2y)
 //   MAX_STOP_PCT              → MaxStopPct              (executor, R.2y)
 //   LEVERAGE                  → Leverage                (executor, R.2y)
-//
-// Deferred (signal_engine refactor too invasive for current scope):
-//   OI_SURGE_MIN_GROWING_RATIO, SQUARE_HOT_MULTIPLIER
+//   OI_GROWTH_FROM_MIN_PCT    → OiGrowthFromMinPct      (signal_engine, R.2y refactor)
+//   SQUARE_HOT_MULTIPLIER     → SquareHotMultiplier     (signal_engine, R.2y refactor)
 type Runtime struct {
 	DailyLossHaltPct      decimal.Decimal
 	ConsecutiveLossesHalt int
@@ -43,6 +42,9 @@ type Runtime struct {
 	BTCCrashHaltPct       decimal.Decimal
 	MaxStopPct            decimal.Decimal
 	Leverage              int
+	// signal_engine refactor (Round 2.y final 2 keys):
+	OiGrowthFromMinPct  decimal.Decimal
+	SquareHotMultiplier decimal.Decimal
 }
 
 var runtime atomic.Pointer[Runtime]
@@ -71,5 +73,7 @@ func InitRuntimeFromConfig(cfg *Config) {
 		BTCCrashHaltPct:       cfg.Risk.BTCCrashHaltPct,
 		MaxStopPct:            cfg.Exit.MaxStopPct,
 		Leverage:              cfg.Position.Leverage,
+		OiGrowthFromMinPct:    cfg.OISurge.FromLowPct,
+		SquareHotMultiplier:   cfg.SquareHot.Multiplier,
 	})
 }
