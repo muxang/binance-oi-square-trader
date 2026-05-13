@@ -26,6 +26,34 @@ export interface DashboardData {
 export const fetchDashboard = (): Promise<DashboardData> =>
   api.get<DashboardData>('/dashboard').then(r => r.data)
 
+// ---- Circuit Breaker (Round R.1 Part 2: manual reset) ----
+
+export interface CBResetResponse {
+  ok: boolean
+  previous_halt_reason: string
+  previous_halt_until: string
+  manual_reset_at: string
+  manual_reset_by: string
+}
+
+export const resetCircuitBreaker = (note?: string): Promise<CBResetResponse> =>
+  api.post<CBResetResponse>('/circuit-breaker/reset', { confirm: true, actor: 'mu', note: note ?? '' }).then(r => r.data)
+
+export interface CBEvent {
+  id: number
+  ts: string
+  event_type: string
+  halt_reason: string
+  halt_until_before: string | null
+  actor: string
+  daily_pnl_snapshot: string
+  consecutive_losses_snapshot: number
+  note: string
+}
+
+export const fetchCBEvents = (): Promise<{ events: CBEvent[] }> =>
+  api.get<{ events: CBEvent[] }>('/circuit-breaker/events').then(r => r.data)
+
 // ---- Positions ----
 
 export interface OpenPosition {

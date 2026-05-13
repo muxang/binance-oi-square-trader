@@ -46,13 +46,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/watchlist", s.handleWatchlist)
 	mux.HandleFunc("GET /api/admin/symbol/{symbol}", s.handleSymbolDetail)
 	mux.HandleFunc("GET /api/admin/trade/{trade_id}", s.handleTradeDetail)
+	// v0.2 Round R.1 Part 2: first admin WRITE endpoint (manual halt reset).
+	mux.HandleFunc("POST /api/admin/circuit-breaker/reset", s.handleCircuitBreakerReset)
+	mux.HandleFunc("GET /api/admin/circuit-breaker/events", s.handleCircuitBreakerEvents)
 	return s.cors(mux)
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -1,8 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
-import { fetchDashboard, type CollectorStatus } from '../api/client'
+import { fetchDashboard, resetCircuitBreaker, type CollectorStatus } from '../api/client'
 import { colors, pnlColor, pnlPrefix, haltColor } from '../theme/colors'
 
 dayjs.extend(relativeTime)
@@ -75,10 +76,22 @@ function CollectorRow({ c }: { c: CollectorStatus }) {
 }
 
 export default function Dashboard() {
+  const qc = useQueryClient()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [resetNote, setResetNote] = useState('')
   const { data, isLoading, error, dataUpdatedAt } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboard,
     refetchInterval: 5_000,
+  })
+
+  const resetMut = useMutation({
+    mutationFn: (note: string) => resetCircuitBreaker(note),
+    onSuccess: () => {
+      setConfirmOpen(false)
+      setResetNote('')
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
   })
 
   if (isLoading) {
@@ -108,6 +121,20 @@ export default function Dashboard() {
           >
             {data.halt_reason}
           </span>
+        )}
+        {data.halt_status === 'HALTED' && (
+          <button
+            onClick={() => setConfirmOpen(true)}
+            className="text-xs px-3 py-1 rounded font-medium transition-colors"
+            style={{
+              background: colors.warning + '22',
+              color: colors.warning,
+              border: `1px solid ${colors.warning}66`,
+            }}
+            title="手动解除 halt — 二次确认"
+          >
+            🔓 手动解除 halt
+          </button>
         )}
         <div className="ml-auto flex items-baseline gap-1">
           <span className="text-2xl font-bold tabular-nums">{data.balance_usdt.toFixed(2)}</span>
@@ -178,6 +205,66 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* 手动解除 halt 二次确认对话框 */}
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={() => !resetMut.isPending && setConfirmOpen(false)}
+        >
+          <div
+            className="bg-[#1f1f1f] border border-[#3d3d3d] rounded-lg p-6 max-w-md w-full mx-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold mb-3" style={{ color: colors.warning }}>
+              ⚠️ 手动解除 trader halt
+            </h3>
+            <div className="text-sm text-gray-300 space-y-2 mb-4">
+              <div><span className="text-gray-500">当前 halt 原因:</span> <span style={{ color: colors.halt }}>{data.halt_reason ?? '(unknown)'}</span></div>
+              <div><span className="text-gray-500">今日 PnL:</span> <span style={{ color: pnlColor(data.daily_pnl) }}>{pnlPrefix(data.daily_pnl)}{data.daily_pnl.toFixed(2)} USDT</span></div>
+              <div><span className="text-gray-500">连续亏损:</span> <span>{data.consecutive_losses} 次</span></div>
+            </div>
+            <div
+              className="text-xs px-3 py-2 rounded mb-4"
+              style={{ background: colors.warning + '15', color: colors.warning, border: `1px solid ${colors.warning}44` }}
+            >
+              <b>风险提示:</b> 解除后 trader 立即恢复入场, 真实资金继续暴露。仅在你 informed 决策的前提下确认。
+            </div>
+            <label className="block text-xs text-gray-500 mb-1">备注 (可选, audit log):</label>
+            <input
+              type="text"
+              value={resetNote}
+              onChange={e => setResetNote(e.target.value)}
+              placeholder="e.g. RCA 完成 + Round R.1 5x 部署"
+              className="w-full mb-4 px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+              disabled={resetMut.isPending}
+            />
+            {resetMut.isError && (
+              <div className="text-xs mb-3 px-3 py-2 rounded" style={{ background: colors.halt + '15', color: colors.halt }}>
+                解除失败: {resetMut.error instanceof Error ? resetMut.error.message : String(resetMut.error)}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmOpen(false)}
+                disabled={resetMut.isPending}
+                className="px-4 py-1.5 text-sm rounded bg-[#2d2d2d] text-gray-300 hover:bg-[#3d3d3d] disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => resetMut.mutate(resetNote)}
+                disabled={resetMut.isPending}
+                className="px-4 py-1.5 text-sm rounded font-medium disabled:opacity-50"
+                style={{ background: colors.halt, color: '#fff' }}
+              >
+                {resetMut.isPending ? '解除中...' : '确认解除 halt'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
