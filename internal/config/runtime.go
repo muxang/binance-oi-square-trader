@@ -60,6 +60,12 @@ type Runtime struct {
 	TrailStage2UpgradePct  decimal.Decimal
 	TrailStage3UpgradePct  decimal.Decimal
 	TrailStage4UpgradePct  decimal.Decimal
+	// Round 2.w trail callback rates (mu 真盘 owner 2026-05-14 catch — 之前
+	// Round 2.z 只 wire 了 activate/upgrade,callback 改 .env 不生效):
+	TrailStage1CallbackRate decimal.Decimal // S1: ≤ 0.05 (Binance native upper bound)
+	TrailStage2CallbackRate decimal.Decimal // S2: ≤ 0.05 (Binance native upper bound)
+	TrailStage3CallbackRate decimal.Decimal // S3: trader-managed, no Binance limit
+	TrailStage4CallbackRate decimal.Decimal // S4: trader-managed, no Binance limit
 }
 
 var runtime atomic.Pointer[Runtime]
@@ -95,5 +101,10 @@ func InitRuntimeFromConfig(cfg *Config) {
 		TrailStage2UpgradePct:  cfg.Exit.TrailStage2UpgradePct,
 		TrailStage3UpgradePct:  cfg.Exit.TrailStage3UpgradePct,
 		TrailStage4UpgradePct:  cfg.Exit.TrailStage4UpgradePct,
+		// Round 2.w trail callback rates:
+		TrailStage1CallbackRate: cfg.Exit.TrailStage1CallbackRate,
+		TrailStage2CallbackRate: cfg.Exit.TrailStage2CallbackRate,
+		TrailStage3CallbackRate: cfg.Exit.TrailStage3CallbackRate,
+		TrailStage4CallbackRate: cfg.Exit.TrailStage4CallbackRate,
 	})
 }

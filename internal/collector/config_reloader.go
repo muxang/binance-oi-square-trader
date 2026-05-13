@@ -97,6 +97,10 @@ func (c *ConfigReloader) Run(ctx context.Context) error {
 		Str("trail_s2_upgrade", newRt.TrailStage2UpgradePct.String()).
 		Str("trail_s3_upgrade", newRt.TrailStage3UpgradePct.String()).
 		Str("trail_s4_upgrade", newRt.TrailStage4UpgradePct.String()).
+		Str("trail_s1_callback", newRt.TrailStage1CallbackRate.String()).
+		Str("trail_s2_callback", newRt.TrailStage2CallbackRate.String()).
+		Str("trail_s3_callback", newRt.TrailStage3CallbackRate.String()).
+		Str("trail_s4_callback", newRt.TrailStage4CallbackRate.String()).
 		Msg("config_reloader.tick: runtime swapped")
 	metrics.ConfigReloadTotal.WithLabelValues("ok").Inc()
 	return nil
@@ -198,6 +202,29 @@ func (c *ConfigReloader) applyOverride(newRt *cfgpkg.Runtime, key string, val an
 			newRt.TrailStage4UpgradePct = d
 			return true
 		}
+	// Round 2.w trail callback rates. Range 0 < x < 1 (decimal pct, e.g. 0.03 = 3%).
+	// S1/S2 enforced ≤ 0.05 on the Binance side (-1102 if violated) — accept here
+	// but trader will surface the place-order error metric.
+	case "TRAIL_STAGE1_CALLBACK_RATE":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage1CallbackRate = d
+			return true
+		}
+	case "TRAIL_STAGE2_CALLBACK_RATE":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage2CallbackRate = d
+			return true
+		}
+	case "TRAIL_STAGE3_CALLBACK_RATE":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage3CallbackRate = d
+			return true
+		}
+	case "TRAIL_STAGE4_CALLBACK_RATE":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage4CallbackRate = d
+			return true
+		}
 	default:
 		c.log.Debug().Str("key", key).Msg("config_reloader: key not yet wired into Runtime")
 	}
@@ -253,5 +280,9 @@ func runtimesEqual(a, b *cfgpkg.Runtime) bool {
 		a.TrailStage1ActivatePct.Equal(b.TrailStage1ActivatePct) &&
 		a.TrailStage2UpgradePct.Equal(b.TrailStage2UpgradePct) &&
 		a.TrailStage3UpgradePct.Equal(b.TrailStage3UpgradePct) &&
-		a.TrailStage4UpgradePct.Equal(b.TrailStage4UpgradePct)
+		a.TrailStage4UpgradePct.Equal(b.TrailStage4UpgradePct) &&
+		a.TrailStage1CallbackRate.Equal(b.TrailStage1CallbackRate) &&
+		a.TrailStage2CallbackRate.Equal(b.TrailStage2CallbackRate) &&
+		a.TrailStage3CallbackRate.Equal(b.TrailStage3CallbackRate) &&
+		a.TrailStage4CallbackRate.Equal(b.TrailStage4CallbackRate)
 }

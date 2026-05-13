@@ -120,6 +120,35 @@ func (tu *TrailUpgrader) stage4UpgradePct() decimal.Decimal {
 	return tu.cfg.Stage4UpgradePct
 }
 
+// Round 2.w callback rate getters — pair with the activate/upgrade getters above.
+func (tu *TrailUpgrader) stage1CallbackRate() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage1CallbackRate.IsPositive() {
+		return rt.TrailStage1CallbackRate
+	}
+	return tu.cfg.Stage1CallbackRate
+}
+
+func (tu *TrailUpgrader) stage2CallbackRate() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage2CallbackRate.IsPositive() {
+		return rt.TrailStage2CallbackRate
+	}
+	return tu.cfg.Stage2CallbackRate
+}
+
+func (tu *TrailUpgrader) stage3CallbackRate() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage3CallbackRate.IsPositive() {
+		return rt.TrailStage3CallbackRate
+	}
+	return tu.cfg.Stage3CallbackRate
+}
+
+func (tu *TrailUpgrader) stage4CallbackRate() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage4CallbackRate.IsPositive() {
+		return rt.TrailStage4CallbackRate
+	}
+	return tu.cfg.Stage4CallbackRate
+}
+
 // ReconcileTick is the 5min cron entry point. Per-row errors are logged and
 // don't abort the sweep (best-effort, retries next tick).
 func (tu *TrailUpgrader) ReconcileTick(ctx context.Context) {
@@ -169,28 +198,28 @@ func (tu *TrailUpgrader) handleRow(ctx context.Context, r gen.ListOpenTradesForT
 		}
 	case 1:
 		if pctGain.GreaterThanOrEqual(tu.stage2UpgradePct()) {
-			tu.upgradeBinanceNative(ctx, r, 2, tu.cfg.Stage2CallbackRate, current, qty, log)
+			tu.upgradeBinanceNative(ctx, r, 2, tu.stage2CallbackRate(), current, qty, log)
 		} else {
 			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	case 2:
 		if pctGain.GreaterThanOrEqual(tu.stage3UpgradePct()) {
-			tu.upgradeToTraderManaged(ctx, r, 3, tu.cfg.Stage3CallbackRate, newHigh, qty, log)
+			tu.upgradeToTraderManaged(ctx, r, 3, tu.stage3CallbackRate(), newHigh, qty, log)
 		} else {
 			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	case 3:
 		if pctGain.GreaterThanOrEqual(tu.stage4UpgradePct()) {
-			tu.upgradeTraderManagedStage(ctx, r, 4, tu.cfg.Stage4CallbackRate, newHigh, qty, log)
+			tu.upgradeTraderManagedStage(ctx, r, 4, tu.stage4CallbackRate(), newHigh, qty, log)
 		} else if tu.shouldRatchet(prevHigh, newHigh) {
-			tu.rearmTraderManaged(ctx, r, 3, tu.cfg.Stage3CallbackRate, newHigh, qty, log)
+			tu.rearmTraderManaged(ctx, r, 3, tu.stage3CallbackRate(), newHigh, qty, log)
 		} else if newHigh.GreaterThan(prevHigh) {
 			// High advanced but below deadband — persist high only (no algo churn).
 			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	case 4:
 		if tu.shouldRatchet(prevHigh, newHigh) {
-			tu.rearmTraderManaged(ctx, r, 4, tu.cfg.Stage4CallbackRate, newHigh, qty, log)
+			tu.rearmTraderManaged(ctx, r, 4, tu.stage4CallbackRate(), newHigh, qty, log)
 		} else if newHigh.GreaterThan(prevHigh) {
 			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
@@ -242,7 +271,7 @@ func (tu *TrailUpgrader) persistTrailHigh(ctx context.Context, tradeID int64, pr
 // activateS1 places the first Binance native TRAILING_STOP_MARKET (callbackRate 3%).
 func (tu *TrailUpgrader) activateS1(ctx context.Context, r gen.ListOpenTradesForTrailRow, current, qty decimal.Decimal, log zerolog.Logger) {
 	activation := tu.roundPrice(ctx, r.Symbol, current, log)
-	cb := mustFloat(tu.cfg.Stage1CallbackRate.Mul(decimal.NewFromInt(100)))
+	cb := mustFloat(tu.stage1CallbackRate().Mul(decimal.NewFromInt(100)))
 	res, err := tu.bc.PlaceAlgoTrailingStop(ctx, r.Symbol, qty.String(), activation.String(), cb)
 	if err != nil {
 		log.Error().Err(err).Msg("trail.activate.S1: place failed")

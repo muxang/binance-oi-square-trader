@@ -110,6 +110,11 @@ type cbThresholdsRequest struct {
 	TrailStage2UpgradePct  *string `json:"trail_stage2_upgrade_pct"`
 	TrailStage3UpgradePct  *string `json:"trail_stage3_upgrade_pct"`
 	TrailStage4UpgradePct  *string `json:"trail_stage4_upgrade_pct"`
+	// Round 2.w trail callback rates (回撤百分比).
+	TrailStage1CallbackRate *string `json:"trail_stage1_callback_rate"`
+	TrailStage2CallbackRate *string `json:"trail_stage2_callback_rate"`
+	TrailStage3CallbackRate *string `json:"trail_stage3_callback_rate"`
+	TrailStage4CallbackRate *string `json:"trail_stage4_callback_rate"`
 	Note                   string  `json:"note"`
 }
 
@@ -162,6 +167,37 @@ func (s *Server) handleCBThresholds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updates["TRAIL_STAGE4_UPGRADE_PCT"] = *req.TrailStage4UpgradePct
+	}
+	// Round 2.w callback rates: same (0, 1) range validation. S1/S2 Binance hard
+	// limit 5% — accept here, Binance-side reject if violated (trader logs the
+	// place-order error).
+	if req.TrailStage1CallbackRate != nil {
+		if err := validateDecimalRange(*req.TrailStage1CallbackRate, "trail_stage1_callback_rate"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE1_CALLBACK_RATE"] = *req.TrailStage1CallbackRate
+	}
+	if req.TrailStage2CallbackRate != nil {
+		if err := validateDecimalRange(*req.TrailStage2CallbackRate, "trail_stage2_callback_rate"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE2_CALLBACK_RATE"] = *req.TrailStage2CallbackRate
+	}
+	if req.TrailStage3CallbackRate != nil {
+		if err := validateDecimalRange(*req.TrailStage3CallbackRate, "trail_stage3_callback_rate"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE3_CALLBACK_RATE"] = *req.TrailStage3CallbackRate
+	}
+	if req.TrailStage4CallbackRate != nil {
+		if err := validateDecimalRange(*req.TrailStage4CallbackRate, "trail_stage4_callback_rate"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE4_CALLBACK_RATE"] = *req.TrailStage4CallbackRate
 	}
 	if len(updates) == 0 {
 		s.writeError(w, http.StatusBadRequest, "no threshold provided")

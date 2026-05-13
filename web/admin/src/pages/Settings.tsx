@@ -57,6 +57,10 @@ function CBThresholdsCard() {
     trail_stage2_upgrade_pct: '',
     trail_stage3_upgrade_pct: '',
     trail_stage4_upgrade_pct: '',
+    trail_stage1_callback_rate: '',
+    trail_stage2_callback_rate: '',
+    trail_stage3_callback_rate: '',
+    trail_stage4_callback_rate: '',
     note: '',
   })
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -73,6 +77,10 @@ function CBThresholdsCard() {
     if (form.trail_stage2_upgrade_pct)   out.trail_stage2_upgrade_pct   = form.trail_stage2_upgrade_pct
     if (form.trail_stage3_upgrade_pct)   out.trail_stage3_upgrade_pct   = form.trail_stage3_upgrade_pct
     if (form.trail_stage4_upgrade_pct)   out.trail_stage4_upgrade_pct   = form.trail_stage4_upgrade_pct
+    if (form.trail_stage1_callback_rate) out.trail_stage1_callback_rate = form.trail_stage1_callback_rate
+    if (form.trail_stage2_callback_rate) out.trail_stage2_callback_rate = form.trail_stage2_callback_rate
+    if (form.trail_stage3_callback_rate) out.trail_stage3_callback_rate = form.trail_stage3_callback_rate
+    if (form.trail_stage4_callback_rate) out.trail_stage4_callback_rate = form.trail_stage4_callback_rate
     if (form.note)                       out.note                       = form.note
     return out
   }
@@ -89,6 +97,8 @@ function CBThresholdsCard() {
         total_float_loss_halt_pct: '', btc_panic_drop_pct: '', max_stop_pct: '',
         trail_stage1_activate_pct: '', trail_stage2_upgrade_pct: '',
         trail_stage3_upgrade_pct: '', trail_stage4_upgrade_pct: '',
+        trail_stage1_callback_rate: '', trail_stage2_callback_rate: '',
+        trail_stage3_callback_rate: '', trail_stage4_callback_rate: '',
         note: '',
       })
     },
@@ -127,6 +137,21 @@ function CBThresholdsCard() {
           </FieldRow>
           <FieldRow label="TRAIL_STAGE4_UPGRADE_PCT" hint="S3→S4 升级">
             <TextInput value={form.trail_stage4_upgrade_pct} onChange={upd('trail_stage4_upgrade_pct')} placeholder="e.g. 0.65" />
+          </FieldRow>
+        </div>
+        <div className="border-t border-[#2d2d2d] mt-3 pt-3">
+          <div className="text-xs text-gray-500 mb-2">Trail callback rates (回撤百分比, Round 2.w):</div>
+          <FieldRow label="TRAIL_STAGE1_CALLBACK_RATE" hint="S1 回撤,Binance 上限 0.05">
+            <TextInput value={form.trail_stage1_callback_rate} onChange={upd('trail_stage1_callback_rate')} placeholder="e.g. 0.03" />
+          </FieldRow>
+          <FieldRow label="TRAIL_STAGE2_CALLBACK_RATE" hint="S2 回撤,Binance 上限 0.05">
+            <TextInput value={form.trail_stage2_callback_rate} onChange={upd('trail_stage2_callback_rate')} placeholder="e.g. 0.05" />
+          </FieldRow>
+          <FieldRow label="TRAIL_STAGE3_CALLBACK_RATE" hint="S3 回撤 (trader-managed,无 Binance 上限)">
+            <TextInput value={form.trail_stage3_callback_rate} onChange={upd('trail_stage3_callback_rate')} placeholder="e.g. 0.10" />
+          </FieldRow>
+          <FieldRow label="TRAIL_STAGE4_CALLBACK_RATE" hint="S4 回撤 (trader-managed)">
+            <TextInput value={form.trail_stage4_callback_rate} onChange={upd('trail_stage4_callback_rate')} placeholder="e.g. 0.15" />
           </FieldRow>
         </div>
         <div className="border-t border-[#2d2d2d] mt-3 pt-3">

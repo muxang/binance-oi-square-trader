@@ -101,6 +101,14 @@ func (e *Executor) trailStage1ActivatePct() decimal.Decimal {
 	return e.cfg.TrailStage1ActivatePct
 }
 
+// Round 2.w: hot-reloadable trail S1 callback rate (回撤百分比). Same pattern.
+func (e *Executor) trailStage1CallbackRate() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage1CallbackRate.IsPositive() {
+		return rt.TrailStage1CallbackRate
+	}
+	return e.cfg.TrailStage1CallbackRate
+}
+
 // atrPayload matches the JSON written by klines_writers.go under atr:{symbol}.
 type atrPayload struct {
 	Value string `json:"value"`
@@ -409,7 +417,8 @@ func (e *Executor) placeTrailingStop(
 	log zerolog.Logger,
 ) {
 	s1Activate := e.trailStage1ActivatePct()
-	if s1Activate.IsZero() || e.cfg.TrailStage1CallbackRate.IsZero() {
+	s1Callback := e.trailStage1CallbackRate()
+	if s1Activate.IsZero() || s1Callback.IsZero() {
 		// Misconfigured — skip; cron path may still activate later.
 		log.Warn().Msg("order.trail.skip: TrailStage1ActivatePct/CallbackRate zero (config issue)")
 		return
@@ -419,7 +428,7 @@ func (e *Executor) placeTrailingStop(
 		activation = activation.Div(tickSize).Truncate(0).Mul(tickSize)
 	}
 	// Binance callbackRate unit is % (e.g. 3.0 = 3%). Project config stores decimal.
-	cb := mustFloat(e.cfg.TrailStage1CallbackRate.Mul(decimal.NewFromInt(100)))
+	cb := mustFloat(s1Callback.Mul(decimal.NewFromInt(100)))
 
 	start := e.nowFn()
 	res, err := e.bc.PlaceAlgoTrailingStop(ctx, symbol, fillQty.String(), activation.String(), cb)

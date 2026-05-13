@@ -220,6 +220,48 @@ func TestRuntimesEqual_TrailKeys(t *testing.T) {
 	assert.False(t, runtimesEqual(c, d))
 }
 
+// Round 2.w trail callback rates — same pattern as Round 2.z activate/upgrade.
+func TestApplyOverride_TrailStage1CallbackRate(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage1CallbackRate: decimal.NewFromFloat(0.03)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE1_CALLBACK_RATE", "0.04")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage1CallbackRate.Equal(decimal.NewFromFloat(0.04)))
+}
+
+func TestApplyOverride_TrailStage2CallbackRate(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage2CallbackRate: decimal.NewFromFloat(0.05)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE2_CALLBACK_RATE", "0.04")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage2CallbackRate.Equal(decimal.NewFromFloat(0.04)))
+}
+
+func TestApplyOverride_TrailStage3CallbackRate(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage3CallbackRate: decimal.NewFromFloat(0.10)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE3_CALLBACK_RATE", "0.12")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage3CallbackRate.Equal(decimal.NewFromFloat(0.12)))
+}
+
+func TestApplyOverride_TrailStage4CallbackRate(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage4CallbackRate: decimal.NewFromFloat(0.15)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE4_CALLBACK_RATE", "0.20")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage4CallbackRate.Equal(decimal.NewFromFloat(0.20)))
+}
+
+func TestRuntimesEqual_TrailCallbackKeys(t *testing.T) {
+	a := &cfgpkg.Runtime{TrailStage1CallbackRate: decimal.NewFromFloat(0.03)}
+	b := &cfgpkg.Runtime{TrailStage1CallbackRate: decimal.NewFromFloat(0.04)}
+	assert.False(t, runtimesEqual(a, b))
+	c := &cfgpkg.Runtime{TrailStage4CallbackRate: decimal.NewFromFloat(0.15)}
+	d := &cfgpkg.Runtime{TrailStage4CallbackRate: decimal.NewFromFloat(0.20)}
+	assert.False(t, runtimesEqual(c, d))
+}
+
 func TestRuntime_GetSet_Atomic(t *testing.T) {
 	r1 := &cfgpkg.Runtime{DailyLossHaltPct: decimal.NewFromFloat(0.06)}
 	cfgpkg.Set(r1)

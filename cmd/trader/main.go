@@ -334,6 +334,11 @@ func run() error {
 		TrailStage2UpgradePct:  cfg.Exit.TrailStage2UpgradePct,
 		TrailStage3UpgradePct:  cfg.Exit.TrailStage3UpgradePct,
 		TrailStage4UpgradePct:  cfg.Exit.TrailStage4UpgradePct,
+		// Round 2.w trail callback rates (mu owner 2026-05-14 catch — 回撤值之前没能调).
+		TrailStage1CallbackRate: cfg.Exit.TrailStage1CallbackRate,
+		TrailStage2CallbackRate: cfg.Exit.TrailStage2CallbackRate,
+		TrailStage3CallbackRate: cfg.Exit.TrailStage3CallbackRate,
+		TrailStage4CallbackRate: cfg.Exit.TrailStage4CallbackRate,
 	}
 	// Seed atomic Runtime so consumer getters see baseline before the first reloader tick.
 	config.Set(baselineRuntime)
@@ -354,8 +359,12 @@ func run() error {
 		Str("trail_s2_upgrade_baseline", baselineRuntime.TrailStage2UpgradePct.String()).
 		Str("trail_s3_upgrade_baseline", baselineRuntime.TrailStage3UpgradePct.String()).
 		Str("trail_s4_upgrade_baseline", baselineRuntime.TrailStage4UpgradePct.String()).
-		Int("wired_keys", 12).
-		Msg("config_reloader ready (Phase 5.2 Round 2.z, 1min cron)")
+		Str("trail_s1_callback_baseline", baselineRuntime.TrailStage1CallbackRate.String()).
+		Str("trail_s2_callback_baseline", baselineRuntime.TrailStage2CallbackRate.String()).
+		Str("trail_s3_callback_baseline", baselineRuntime.TrailStage3CallbackRate.String()).
+		Str("trail_s4_callback_baseline", baselineRuntime.TrailStage4CallbackRate.String()).
+		Int("wired_keys", 16).
+		Msg("config_reloader ready (Phase 5.2 Round 2.w, 1min cron)")
 
 	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
 	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.

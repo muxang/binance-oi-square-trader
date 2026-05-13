@@ -110,6 +110,11 @@ export interface CBThresholdsRequest {
   trail_stage2_upgrade_pct?: string
   trail_stage3_upgrade_pct?: string
   trail_stage4_upgrade_pct?: string
+  // Round 2.w: trail callback rates.
+  trail_stage1_callback_rate?: string
+  trail_stage2_callback_rate?: string
+  trail_stage3_callback_rate?: string
+  trail_stage4_callback_rate?: string
   note?: string
 }
 export interface ThresholdsAck { ok: boolean; updated_keys: number }
