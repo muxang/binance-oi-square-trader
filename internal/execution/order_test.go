@@ -24,7 +24,8 @@ func newTestExecutor(t *testing.T, mr *miniredis.Miniredis) *Executor {
 			DisasterStopPct: decimal.NewFromFloat(0.06),
 			ATRStopMult:     decimal.NewFromFloat(2.0),
 			MinStopPct:      decimal.NewFromFloat(0.06),
-			MaxStopPct:      decimal.NewFromFloat(0.075),
+			// Round R.1 (mu 2026-05-13): MAX 7.5% → 12% (5x leverage 适配高波动).
+			MaxStopPct: decimal.NewFromFloat(0.12),
 		},
 		log: zerolog.Nop(),
 	}
@@ -56,7 +57,7 @@ func TestComputeStopPct_MidCoin_ClipsToMin(t *testing.T) {
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "mid-coin: expect MIN=6%%, got %s", pct)
 }
 
-// Alt-coin (RIFUSDT-class): ATR/price ~3.5% → ATR×2=7% → in [6%, 7.5%]
+// Alt-coin (RIFUSDT-class): ATR/price ~3.5% → ATR×2=7% → in [6%, 12%]
 func TestComputeStopPct_AltCoin_ATRBased(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()
@@ -66,14 +67,24 @@ func TestComputeStopPct_AltCoin_ATRBased(t *testing.T) {
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.07)), "alt-coin: expect 7%%, got %s", pct)
 }
 
-// Extreme small-cap: ATR/price >4% → ATR×2 > MAX → clips to MAX=7.5%
+// Mid-volatility alt: ATR/price ~5% → ATR×2=10% → in [6%, 12%] post Round R.1
+func TestComputeStopPct_MidAlt_ATRBased(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	e := newTestExecutor(t, mr)
+	setATR(t, mr, "MIDALT", "0.05") // ATR=0.05, price=1.0 → 5% → ×2=10%
+	pct := e.computeStopPct(context.Background(), "MIDALT", decimal.NewFromFloat(1.0), zerolog.Nop())
+	assert.True(t, pct.Equal(decimal.NewFromFloat(0.10)), "mid-alt: expect 10%%, got %s", pct)
+}
+
+// Extreme small-cap: ATR/price >6% → ATR×2 > MAX 12% → clips to MAX=12%
 func TestComputeStopPct_ExtremeAlt_ClipsToMax(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
-	setATR(t, mr, "MEMECOIN", "0.05") // ATR=0.05, price=0.5 → 10% → ×2=20% > MAX
+	setATR(t, mr, "MEMECOIN", "0.05") // ATR=0.05, price=0.5 → 10% → ×2=20% > MAX 12%
 	pct := e.computeStopPct(context.Background(), "MEMECOIN", decimal.NewFromFloat(0.5), zerolog.Nop())
-	assert.True(t, pct.Equal(decimal.NewFromFloat(0.075)), "extreme: expect MAX=7.5%%, got %s", pct)
+	assert.True(t, pct.Equal(decimal.NewFromFloat(0.12)), "extreme: expect MAX=12%%, got %s", pct)
 }
 
 // ATR missing from Redis → fallback to DisasterStopPct
@@ -107,13 +118,13 @@ func TestComputeStopPct_ExactlyMin_NoClip(t *testing.T) {
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "exactly MIN: got %s", pct)
 }
 
-// Boundary: ATR/price × mult exactly at MAX → clips to MAX
+// Boundary: ATR/price × mult exactly at MAX 12% → clips to MAX
 func TestComputeStopPct_ExactlyMax_NoExtraClip(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
-	// ATR=3.75, price=100 → 3.75% → ×2=7.5% == MAX (no extra clip)
-	setATR(t, mr, "EXACTMAX", "3.75")
+	// ATR=6, price=100 → 6% → ×2=12% == MAX (no extra clip)
+	setATR(t, mr, "EXACTMAX", "6")
 	pct := e.computeStopPct(context.Background(), "EXACTMAX", decimal.NewFromFloat(100), zerolog.Nop())
-	assert.True(t, pct.Equal(decimal.NewFromFloat(0.075)), "exactly MAX: got %s", pct)
+	assert.True(t, pct.Equal(decimal.NewFromFloat(0.12)), "exactly MAX: got %s", pct)
 }
