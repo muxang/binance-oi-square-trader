@@ -29,9 +29,9 @@ type fakeFilterDeps struct {
 	activeCount int64
 	activeErr   error
 
-	has24h     bool
-	has24hErr  error
-	last24hSym string
+	hasActive    bool
+	hasActiveErr error
+	lastActiveSym string
 }
 
 func (f *fakeFilterDeps) GetBTCRegime(_ context.Context) (decimal.Decimal, error) {
@@ -56,9 +56,9 @@ func (f *fakeFilterDeps) ResetHalt(_ context.Context) error {
 func (f *fakeFilterDeps) CountActive(_ context.Context) (int64, error) {
 	return f.activeCount, f.activeErr
 }
-func (f *fakeFilterDeps) HasRecent24hAttempt(_ context.Context, symbol string, _ time.Time) (bool, error) {
-	f.last24hSym = symbol
-	return f.has24h, f.has24hErr
+func (f *fakeFilterDeps) HasActivePosition(_ context.Context, symbol string) (bool, error) {
+	f.lastActiveSym = symbol
+	return f.hasActive, f.hasActiveErr
 }
 
 func newDeps() *fakeFilterDeps {
@@ -66,7 +66,7 @@ func newDeps() *fakeFilterDeps {
 		btcDropPct:  decimal.NewFromFloat(0.01), // healthy default
 		state:       gen.CircuitBreakerState{ID: 1},
 		activeCount: 2,
-		has24h:      false,
+		hasActive:   false,
 	}
 }
 
@@ -78,7 +78,7 @@ func TestFilters_AllPass(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, r.Passed)
 	assert.Empty(t, r.Reason)
-	assert.Equal(t, "BTCUSDT", deps.last24hSym, "Step 3 must call HasRecent24hAttempt with correct symbol")
+	assert.Equal(t, "BTCUSDT", deps.lastActiveSym, "Step 3 must call HasActivePosition with correct symbol")
 }
 
 func TestFilters_BTCCrash_TripsAndRejects(t *testing.T) {
@@ -101,14 +101,37 @@ func TestFilters_PositionLimit_Reject(t *testing.T) {
 	assert.False(t, deps.tripped, "Step 1 passed → no trip")
 }
 
-func TestFilters_Recent24h_Reject(t *testing.T) {
+// Round R.6 (2026-05-14): replaces TestFilters_Recent24h_Reject. mu 真实
+// 诉求 — 24h 时间窗口 → 持仓状态检查. 同 symbol active position 即拒.
+func TestFilters_ActivePosition_Reject(t *testing.T) {
 	deps := newDeps()
-	deps.has24h = true
+	deps.hasActive = true
 	r, err := EvaluateGlobalFilters(context.Background(), "ETHUSDT", time.Now(), deps, FilterConfig{})
 	require.NoError(t, err)
 	assert.False(t, r.Passed)
-	assert.Equal(t, ReasonRecent24hTrade, r.Reason)
-	assert.Equal(t, "ETHUSDT", deps.last24hSym)
+	assert.Equal(t, ReasonSymbolHasActivePosition, r.Reason)
+	assert.Equal(t, "ETHUSDT", deps.lastActiveSym)
+}
+
+// Round R.6: closed/failed allows immediate re-entry (mu 真实诉求).
+// SQL 已直接 status IN ('entering','open','partial','closing') — closed/failed
+// 不在列表,所以 fake 设 hasActive=false 模拟"no active position",通过过滤.
+func TestFilters_ClosedPositionAllowsReentry(t *testing.T) {
+	deps := newDeps()
+	deps.hasActive = false // closed/failed symbol → no active row → allow
+	r, err := EvaluateGlobalFilters(context.Background(), "ARPAUSDT", time.Now(), deps, FilterConfig{})
+	require.NoError(t, err)
+	assert.True(t, r.Passed, "closed/failed 状态不应拦截再入场 (mu 真实诉求 R.6)")
+}
+
+// Round R.6: lookup error → reject (fail-safe per 数据不全不交易 spirit).
+func TestFilters_ActivePositionLookupErr_Reject(t *testing.T) {
+	deps := newDeps()
+	deps.hasActiveErr = errors.New("db timeout")
+	r, err := EvaluateGlobalFilters(context.Background(), "ETHUSDT", time.Now(), deps, FilterConfig{})
+	require.NoError(t, err)
+	assert.False(t, r.Passed)
+	assert.Equal(t, ReasonActivePositionLookupUnavailable, r.Reason)
 }
 
 // --- 3 边界 ---

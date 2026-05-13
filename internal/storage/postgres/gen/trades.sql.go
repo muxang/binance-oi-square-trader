@@ -79,28 +79,21 @@ func (q *Queries) GetOpenTrades(ctx context.Context) ([]GetOpenTradesRow, error)
 	return items, nil
 }
 
-const hasRecent24hAttemptForSymbol = `-- name: HasRecent24hAttemptForSymbol :one
+const hasActivePositionForSymbol = `-- name: HasActivePositionForSymbol :one
 SELECT EXISTS(
   SELECT 1 FROM trades t
-  JOIN signals s ON s.id = t.signal_id
   WHERE t.symbol = $1
-    AND s.ts > $2
-    AND t.status IN ('entering', 'open', 'partial', 'closed')
+    AND t.status IN ('entering', 'open', 'partial', 'closing')
 )
 `
 
-type HasRecent24hAttemptForSymbolParams struct {
-	Symbol string
-	Ts     time.Time
-}
-
-// Phase 3 v0.1 24h 不二次入场过滤 — 用 signals.ts JOIN (trades.entry_ts
-// 在 'entering' 状态为 NULL, Phase 4 真下单后才填). signals.ts NOT NULL
-// + trades.signal_id Phase 3 永远填 → 无遗漏. Phase 4 切回
-// HasRecent24hTradeForSymbol (entry_ts 路径).
-// $1 = symbol, $2 = cutoff_ts (caller passes NOW() - INTERVAL '24h').
-func (q *Queries) HasRecent24hAttemptForSymbol(ctx context.Context, arg HasRecent24hAttemptForSymbolParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasRecent24hAttemptForSymbol, arg.Symbol, arg.Ts)
+// HasActivePositionForSymbol — Round R.6 replacement for the 24h time-window
+// cooldown. Returns true if the symbol currently has a trade in any "active"
+// state: entering (in-flight order) / open / partial / closing (manual close
+// in progress). closed + failed are explicitly excluded (mu 真实诉求 — 平仓
+// 后立即可再 entry).
+func (q *Queries) HasActivePositionForSymbol(ctx context.Context, symbol string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActivePositionForSymbol, symbol)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

@@ -204,10 +204,11 @@ func (a *decisionDataAccess) CountActive(ctx context.Context) (int64, error) {
 	return a.queries.CountActiveTrades(ctx)
 }
 
-func (a *decisionDataAccess) HasRecent24hAttempt(ctx context.Context, symbol string, cutoff time.Time) (bool, error) {
-	return a.queries.HasRecent24hAttemptForSymbol(ctx, gen.HasRecent24hAttemptForSymbolParams{
-		Symbol: symbol, Ts: cutoff,
-	})
+// HasActivePosition (Round R.6) — replaces HasRecent24hAttempt. Returns true
+// when the symbol has a trade row in {entering, open, partial, closing}. The
+// closed / failed states allow immediate re-entry per mu 真实诉求.
+func (a *decisionDataAccess) HasActivePosition(ctx context.Context, symbol string) (bool, error) {
+	return a.queries.HasActivePositionForSymbol(ctx, symbol)
 }
 
 // SignalSource

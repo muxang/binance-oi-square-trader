@@ -109,11 +109,10 @@ func TestDecisionEngineAdapter_FullChain_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, count, int64(1), "trade just inserted should count")
 
-	// 4. Verify HasRecent24hAttempt (signals.ts JOIN path)
-	cutoff := time.Now().UTC().Add(-1 * time.Hour)
-	has, err := a.HasRecent24hAttempt(ctx, sym, cutoff)
+	// 4. Verify HasActivePosition (Round R.6: status-based, no time window)
+	has, err := a.HasActivePosition(ctx, sym)
 	require.NoError(t, err)
-	assert.True(t, has, "trade just inserted with signal.ts in window → has recent")
+	assert.True(t, has, "trade just inserted (status='entering') → active position present")
 
 	// 5. Verify GetState reads (defensive: row should exist from migration)
 	state, err := a.GetState(ctx)

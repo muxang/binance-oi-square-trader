@@ -338,17 +338,20 @@ UPDATE trades
 SET trail_high_price = $2
 WHERE id = $1;
 
--- name: HasRecent24hAttemptForSymbol :one
--- Phase 3 v0.1 24h 不二次入场过滤 — 用 signals.ts JOIN (trades.entry_ts
--- 在 'entering' 状态为 NULL, Phase 4 真下单后才填). signals.ts NOT NULL
--- + trades.signal_id Phase 3 永远填 → 无遗漏. Phase 4 切回
--- HasRecent24hTradeForSymbol (entry_ts 路径).
--- $1 = symbol, $2 = cutoff_ts (caller passes NOW() - INTERVAL '24h').
+-- name: HasActivePositionForSymbol :one
+-- Round R.6 (2026-05-14, mu 真实诉求): 同 symbol 入场过滤改用持仓状态判定
+-- (vs Phase 3 v0.1 的 24h 时间窗口). 真实诉求 "24 小时内只要没有仓位的代币
+-- 应该可以再次开仓" — closed/failed 立即可再 entry.
+--
+-- 状态映射:
+--   entering / open / partial / closing → reject (持仓中/in-flight)
+--   closed / failed                      → allow (无活动仓位)
+--
+-- 顺手修原 SQL 漏掉 closing 的潜在 bug — pre-R.6 手工平仓中可叠仓.
+-- $1 = symbol. 不再需要 cutoff_ts 参数.
 SELECT EXISTS(
   SELECT 1 FROM trades t
-  JOIN signals s ON s.id = t.signal_id
   WHERE t.symbol = $1
-    AND s.ts > $2
-    AND t.status IN ('entering', 'open', 'partial', 'closed')
+    AND t.status IN ('entering', 'open', 'partial', 'closing')
 );
 

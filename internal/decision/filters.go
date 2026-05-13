@@ -29,11 +29,15 @@ type CircuitBreakerStore interface {
 	ResetHalt(ctx context.Context) error
 }
 
-// TradesReader exposes the active-count + per-symbol 24h-window queries
+// TradesReader exposes the active-count + per-symbol position-state queries
 // the global filters need.
+//
+// Round R.6 (2026-05-14): HasRecent24hAttempt (24h time window) replaced
+// with HasActivePosition (status check). mu 真实诉求 — 24 小时内只要没有
+// 仓位的代币应该可以再次开仓.
 type TradesReader interface {
 	CountActive(ctx context.Context) (int64, error)
-	HasRecent24hAttempt(ctx context.Context, symbol string, cutoff time.Time) (bool, error)
+	HasActivePosition(ctx context.Context, symbol string) (bool, error)
 }
 
 // FilterDeps composes the 3 minimal-purpose interfaces (CLAUDE.md §18).
@@ -52,22 +56,23 @@ type FilterResult struct {
 
 // Rejection reason labels (also used as metric outcome= label values).
 const (
-	ReasonBTCCrash             = "btc_5m_crash"
-	ReasonBTCRegimeUnavailable = "btc_regime_unavailable"
-	ReasonCBStateUnavailable   = "circuit_breaker_state_unavailable"
-	ReasonAlreadyHalted        = "already_halted"
-	ReasonPositionLimit        = "position_limit"
-	ReasonRecent24hTrade       = "recent_24h_trade"
-	ReasonCountUnavailable     = "trades_count_unavailable"
-	Reason24hLookupUnavailable = "trades_24h_lookup_unavailable"
+	ReasonBTCCrash                       = "btc_5m_crash"
+	ReasonBTCRegimeUnavailable           = "btc_regime_unavailable"
+	ReasonCBStateUnavailable             = "circuit_breaker_state_unavailable"
+	ReasonAlreadyHalted                  = "already_halted"
+	ReasonPositionLimit                  = "position_limit"
+	ReasonCountUnavailable               = "trades_count_unavailable"
+	// Round R.6: status-based replacement for the legacy 24h cooldown reason.
+	ReasonSymbolHasActivePosition        = "symbol_has_active_position"
+	ReasonActivePositionLookupUnavailable = "active_position_lookup_unavailable"
 )
 
 // FilterConfig holds the v0.1 thresholds. v0.2 may calibrate after forward.
+// Round R.6: Recent24hWindow removed — same-symbol filter is now status-based.
 type FilterConfig struct {
 	BTCDropThreshold decimal.Decimal // 默认 0.03 (SPEC §全局过滤 L206 + §风控熔断 L278)
 	HaltDuration     time.Duration   // 默认 30 min (SPEC L278)
 	PositionLimit    int             // 默认 5 (SPEC §仓位规则 L190)
-	Recent24hWindow  time.Duration   // 默认 24h (SPEC L191/L205)
 }
 
 func filterDefaults(cfg FilterConfig) FilterConfig {
@@ -80,9 +85,6 @@ func filterDefaults(cfg FilterConfig) FilterConfig {
 	if cfg.PositionLimit == 0 {
 		cfg.PositionLimit = 5
 	}
-	if cfg.Recent24hWindow == 0 {
-		cfg.Recent24hWindow = 24 * time.Hour
-	}
 	return cfg
 }
 
@@ -90,7 +92,7 @@ func filterDefaults(cfg FilterConfig) FilterConfig {
 //
 //	#1 熔断 (BTC trip + auto-reset, folds in #5 BTC 5min)
 //	#3 持仓数 < PositionLimit
-//	#4 该 symbol 24h 内未尝试入场
+//	#4 该 symbol 当前无持仓 (Round R.6: 持仓状态检查 vs 24h 时间窗口)
 //
 // Returns FilterResult{Passed:true} only if all 3 pass; otherwise first
 // failure short-circuits with a labelled Reason. Deps errors surface as
@@ -116,7 +118,7 @@ func EvaluateGlobalFilters(
 	if r := stepPositionLimit(ctx, deps, cfg); !r.Passed {
 		return r, nil
 	}
-	if r := stepRecent24h(ctx, symbol, now, deps, cfg); !r.Passed {
+	if r := stepActivePosition(ctx, symbol, deps); !r.Passed {
 		return r, nil
 	}
 	return FilterResult{Passed: true}, nil
@@ -213,17 +215,21 @@ func stepPositionLimit(ctx context.Context, deps FilterDeps, cfg FilterConfig) F
 	return FilterResult{Passed: true}
 }
 
-// stepRecent24h — SPEC §全局过滤 #4 (24h 不二次入场).
-// Phase 3 v0.1: HasRecent24hAttempt 走 signals.ts JOIN (trades.entry_ts NULL
-// for 'entering'). Phase 4 真下单 entry_ts 填 → 切回 entry_ts 路径.
-func stepRecent24h(ctx context.Context, symbol string, now time.Time, deps FilterDeps, cfg FilterConfig) FilterResult {
-	cutoff := now.Add(-cfg.Recent24hWindow)
-	has, err := deps.HasRecent24hAttempt(ctx, symbol, cutoff)
+// stepActivePosition — SPEC §全局过滤 #4 revised (Round R.6, 2026-05-14).
+// mu 真实诉求: 24h 内只要无仓位的代币应该可以再次开仓. 旧 v0.1 用 24h
+// 时间窗口拒,新版改用 trades.status 直接判定:
+//
+//	entering / open / partial / closing → reject (持仓中或 in-flight)
+//	closed / failed                      → allow (无活动仓位)
+//
+// 顺手修原 SQL 漏掉 'closing' 状态的 bug — 手工平仓中之前能叠仓。
+func stepActivePosition(ctx context.Context, symbol string, deps FilterDeps) FilterResult {
+	has, err := deps.HasActivePosition(ctx, symbol)
 	if err != nil {
-		return FilterResult{Passed: false, Reason: Reason24hLookupUnavailable}
+		return FilterResult{Passed: false, Reason: ReasonActivePositionLookupUnavailable}
 	}
 	if has {
-		return FilterResult{Passed: false, Reason: ReasonRecent24hTrade}
+		return FilterResult{Passed: false, Reason: ReasonSymbolHasActivePosition}
 	}
 	return FilterResult{Passed: true}
 }
