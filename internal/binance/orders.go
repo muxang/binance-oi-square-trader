@@ -386,6 +386,14 @@ func (c *Client) PlaceAlgoConditionalStop(ctx context.Context, symbol, quantity,
 // mark price that arms the trail (Binance starts tracking from there).
 // Caller is responsible for rounding activationPrice to symbol tickSize.
 //
+// IMPORTANT (bug catch 2026-05-13, ARPA #68): the Algo Service request param
+// is `activatePrice` (no 'ion'), matching the response field naming. The
+// regular /fapi/v1/order endpoint uses `activationPrice` (with 'ion'). Binance
+// silently ignored the wrong param name and defaulted activation to current
+// mark price, so trails activated immediately every time. mu真盘 INJ #66 /
+// TURBOUSDT #67 / ESPORTSUSDT #59 / ARPA #68 all hit this — the Round 2.z
+// 5% activation was wired correctly client-side but never reached Binance.
+//
 // ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
 // docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
 // fetched: 2026-05-13
@@ -397,7 +405,7 @@ func (c *Client) PlaceAlgoTrailingStop(ctx context.Context, symbol, quantity, ac
 	params.Set("positionSide", "BOTH")
 	params.Set("type", "TRAILING_STOP_MARKET")
 	params.Set("quantity", quantity)
-	params.Set("activationPrice", activationPrice)
+	params.Set("activatePrice", activationPrice) // Algo Service spelling (NOT activationPrice)
 	params.Set("callbackRate", strconv.FormatFloat(callbackRate, 'f', -1, 64))
 	params.Set("workingType", "MARK_PRICE")
 	params.Set("reduceOnly", "true")
