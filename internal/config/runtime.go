@@ -34,6 +34,16 @@ import (
 //   LEVERAGE                  → Leverage                (executor, R.2y)
 //   OI_GROWTH_FROM_MIN_PCT    → OiGrowthFromMinPct      (signal_engine, R.2y refactor)
 //   SQUARE_HOT_MULTIPLIER     → SquareHotMultiplier     (signal_engine, R.2y refactor)
+//
+// Round 2.z (mu 真盘 owner 真实诉求): 4 trail stage thresholds added.
+// Note: S1 uses "Activate" (entry-time + S0→S1 transition); S2/S3/S4 use
+// "Upgrade" (existing trail tightening). Same semantic — "when pct_gain
+// reaches X, advance to next stage" — but key names follow the existing
+// config.Exit.* fields, not mu's spec wording.
+//   TRAIL_STAGE1_ACTIVATE_PCT → TrailStage1ActivatePct  (executor + trail_upgrader)
+//   TRAIL_STAGE2_UPGRADE_PCT  → TrailStage2UpgradePct   (trail_upgrader S1→S2)
+//   TRAIL_STAGE3_UPGRADE_PCT  → TrailStage3UpgradePct   (trail_upgrader S2→S3)
+//   TRAIL_STAGE4_UPGRADE_PCT  → TrailStage4UpgradePct   (trail_upgrader S3→S4)
 type Runtime struct {
 	DailyLossHaltPct      decimal.Decimal
 	ConsecutiveLossesHalt int
@@ -45,6 +55,11 @@ type Runtime struct {
 	// signal_engine refactor (Round 2.y final 2 keys):
 	OiGrowthFromMinPct  decimal.Decimal
 	SquareHotMultiplier decimal.Decimal
+	// Round 2.z trail thresholds (mu 真盘 owner catch — trail S1 +3% 太低):
+	TrailStage1ActivatePct decimal.Decimal
+	TrailStage2UpgradePct  decimal.Decimal
+	TrailStage3UpgradePct  decimal.Decimal
+	TrailStage4UpgradePct  decimal.Decimal
 }
 
 var runtime atomic.Pointer[Runtime]
@@ -75,5 +90,10 @@ func InitRuntimeFromConfig(cfg *Config) {
 		Leverage:              cfg.Position.Leverage,
 		OiGrowthFromMinPct:    cfg.OISurge.FromLowPct,
 		SquareHotMultiplier:   cfg.SquareHot.Multiplier,
+		// Round 2.z trail thresholds:
+		TrailStage1ActivatePct: cfg.Exit.TrailStage1ActivatePct,
+		TrailStage2UpgradePct:  cfg.Exit.TrailStage2UpgradePct,
+		TrailStage3UpgradePct:  cfg.Exit.TrailStage3UpgradePct,
+		TrailStage4UpgradePct:  cfg.Exit.TrailStage4UpgradePct,
 	})
 }

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 )
 
 // --- a. daily_pnl reset ---
@@ -104,6 +105,11 @@ type cbThresholdsRequest struct {
 	TotalFloatLossHaltPct  *string `json:"total_float_loss_halt_pct"`
 	BtcPanicDropPct        *string `json:"btc_panic_drop_pct"`
 	OiImbalanceRatio       *string `json:"oi_imbalance_ratio_threshold"`
+	// Round 2.z trail thresholds (mu admin Web UI 调阈值真实生效).
+	TrailStage1ActivatePct *string `json:"trail_stage1_activate_pct"`
+	TrailStage2UpgradePct  *string `json:"trail_stage2_upgrade_pct"`
+	TrailStage3UpgradePct  *string `json:"trail_stage3_upgrade_pct"`
+	TrailStage4UpgradePct  *string `json:"trail_stage4_upgrade_pct"`
 	Note                   string  `json:"note"`
 }
 
@@ -128,11 +134,53 @@ func (s *Server) handleCBThresholds(w http.ResponseWriter, r *http.Request) {
 	if req.OiImbalanceRatio != nil {
 		updates["OI_IMBALANCE_RATIO_THRESHOLD"] = *req.OiImbalanceRatio
 	}
+	// Round 2.z trail thresholds. Validate decimal in (0, 1) range before write.
+	if req.TrailStage1ActivatePct != nil {
+		if err := validateDecimalRange(*req.TrailStage1ActivatePct, "trail_stage1_activate_pct"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE1_ACTIVATE_PCT"] = *req.TrailStage1ActivatePct
+	}
+	if req.TrailStage2UpgradePct != nil {
+		if err := validateDecimalRange(*req.TrailStage2UpgradePct, "trail_stage2_upgrade_pct"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE2_UPGRADE_PCT"] = *req.TrailStage2UpgradePct
+	}
+	if req.TrailStage3UpgradePct != nil {
+		if err := validateDecimalRange(*req.TrailStage3UpgradePct, "trail_stage3_upgrade_pct"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE3_UPGRADE_PCT"] = *req.TrailStage3UpgradePct
+	}
+	if req.TrailStage4UpgradePct != nil {
+		if err := validateDecimalRange(*req.TrailStage4UpgradePct, "trail_stage4_upgrade_pct"); err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updates["TRAIL_STAGE4_UPGRADE_PCT"] = *req.TrailStage4UpgradePct
+	}
 	if len(updates) == 0 {
 		s.writeError(w, http.StatusBadRequest, "no threshold provided")
 		return
 	}
 	s.writeOverridesAndAudit(w, r, "cb_thresholds_update", updates, req.Note)
+}
+
+// validateDecimalRange parses a decimal string and returns an error if it's
+// not in the open interval (0, 1). Used by Round 2.z trail threshold inputs.
+func validateDecimalRange(s, field string) error {
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return fmt.Errorf("%s: invalid decimal %q", field, s)
+	}
+	if !d.IsPositive() || d.GreaterThanOrEqual(decimal.NewFromInt(1)) {
+		return fmt.Errorf("%s: must be in (0, 1), got %s", field, s)
+	}
+	return nil
 }
 
 // --- g. signal_engine thresholds ---

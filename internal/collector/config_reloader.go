@@ -93,6 +93,10 @@ func (c *ConfigReloader) Run(ctx context.Context) error {
 		Int("leverage", newRt.Leverage).
 		Str("oi_growth_from_min_pct", newRt.OiGrowthFromMinPct.String()).
 		Str("square_hot_multiplier", newRt.SquareHotMultiplier.String()).
+		Str("trail_s1_activate", newRt.TrailStage1ActivatePct.String()).
+		Str("trail_s2_upgrade", newRt.TrailStage2UpgradePct.String()).
+		Str("trail_s3_upgrade", newRt.TrailStage3UpgradePct.String()).
+		Str("trail_s4_upgrade", newRt.TrailStage4UpgradePct.String()).
 		Msg("config_reloader.tick: runtime swapped")
 	metrics.ConfigReloadTotal.WithLabelValues("ok").Inc()
 	return nil
@@ -171,6 +175,29 @@ func (c *ConfigReloader) applyOverride(newRt *cfgpkg.Runtime, key string, val an
 			newRt.SquareHotMultiplier = d
 			return true
 		}
+	// Round 2.z trail thresholds. Range 0-1 (decimal pct). S2/S3/S4 keys keep
+	// the existing _UPGRADE_PCT names even though mu's request labels them
+	// "_ACTIVATE" — semantics identical, only S1 uses "ACTIVATE" historically.
+	case "TRAIL_STAGE1_ACTIVATE_PCT":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage1ActivatePct = d
+			return true
+		}
+	case "TRAIL_STAGE2_UPGRADE_PCT":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage2UpgradePct = d
+			return true
+		}
+	case "TRAIL_STAGE3_UPGRADE_PCT":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage3UpgradePct = d
+			return true
+		}
+	case "TRAIL_STAGE4_UPGRADE_PCT":
+		if d, ok := toDecimal(val); ok && d.IsPositive() && d.LessThan(decimal.NewFromInt(1)) {
+			newRt.TrailStage4UpgradePct = d
+			return true
+		}
 	default:
 		c.log.Debug().Str("key", key).Msg("config_reloader: key not yet wired into Runtime")
 	}
@@ -222,5 +249,9 @@ func runtimesEqual(a, b *cfgpkg.Runtime) bool {
 		a.MaxStopPct.Equal(b.MaxStopPct) &&
 		a.Leverage == b.Leverage &&
 		a.OiGrowthFromMinPct.Equal(b.OiGrowthFromMinPct) &&
-		a.SquareHotMultiplier.Equal(b.SquareHotMultiplier)
+		a.SquareHotMultiplier.Equal(b.SquareHotMultiplier) &&
+		a.TrailStage1ActivatePct.Equal(b.TrailStage1ActivatePct) &&
+		a.TrailStage2UpgradePct.Equal(b.TrailStage2UpgradePct) &&
+		a.TrailStage3UpgradePct.Equal(b.TrailStage3UpgradePct) &&
+		a.TrailStage4UpgradePct.Equal(b.TrailStage4UpgradePct)
 }

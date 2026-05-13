@@ -163,3 +163,19 @@ func TestExecutor_Leverage_RuntimeOverride(t *testing.T) {
 	cfgpkg.Set(&cfgpkg.Runtime{Leverage: 0})
 	assert.Equal(t, 10, e.leverage(), "zero runtime → cfg fallback")
 }
+
+// Round 2.z: trail S1 activation threshold — admin Web UI override tightens or
+// loosens entry-time PlaceAlgoTrailingStop activation price.
+func TestExecutor_TrailStage1Activate_RuntimeOverride(t *testing.T) {
+	e := &Executor{cfg: Config{TrailStage1ActivatePct: decimal.NewFromFloat(0.03)}}
+	cfgpkg.Set(nil)
+	assert.True(t, e.trailStage1ActivatePct().Equal(decimal.NewFromFloat(0.03)), "no runtime → cfg fallback")
+
+	cfgpkg.Set(&cfgpkg.Runtime{TrailStage1ActivatePct: decimal.NewFromFloat(0.05)})
+	defer cfgpkg.Set(nil)
+	assert.True(t, e.trailStage1ActivatePct().Equal(decimal.NewFromFloat(0.05)),
+		"runtime override = 0.05 wins over cfg 0.03 (mu 真盘 owner 真实诉求 catch)")
+
+	cfgpkg.Set(&cfgpkg.Runtime{}) // zero runtime
+	assert.True(t, e.trailStage1ActivatePct().Equal(decimal.NewFromFloat(0.03)), "zero runtime → cfg fallback")
+}

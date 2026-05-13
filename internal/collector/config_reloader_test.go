@@ -169,6 +169,57 @@ func TestRuntimesEqual_SignalKeys(t *testing.T) {
 	assert.False(t, runtimesEqual(c, d))
 }
 
+// Round 2.z trail stage thresholds (mu 真盘 owner catch — trail S1 +3% 太低).
+func TestApplyOverride_TrailStage1Activate(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage1ActivatePct: decimal.NewFromFloat(0.03)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE1_ACTIVATE_PCT", "0.05")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage1ActivatePct.Equal(decimal.NewFromFloat(0.05)))
+}
+
+func TestApplyOverride_TrailStage2Upgrade(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage2UpgradePct: decimal.NewFromFloat(0.15)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE2_UPGRADE_PCT", "0.20")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage2UpgradePct.Equal(decimal.NewFromFloat(0.20)))
+}
+
+func TestApplyOverride_TrailStage3Upgrade(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage3UpgradePct: decimal.NewFromFloat(0.30)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE3_UPGRADE_PCT", "0.35")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage3UpgradePct.Equal(decimal.NewFromFloat(0.35)))
+}
+
+func TestApplyOverride_TrailStage4Upgrade(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage4UpgradePct: decimal.NewFromFloat(0.60)}
+	ok := c.applyOverride(rt, "TRAIL_STAGE4_UPGRADE_PCT", "0.65")
+	assert.True(t, ok)
+	assert.True(t, rt.TrailStage4UpgradePct.Equal(decimal.NewFromFloat(0.65)))
+}
+
+func TestApplyOverride_TrailStage_OutOfRange_Skipped(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TrailStage1ActivatePct: decimal.NewFromFloat(0.05)}
+	// 1.5 = 150%, > 1 → skipped, baseline preserved
+	ok := c.applyOverride(rt, "TRAIL_STAGE1_ACTIVATE_PCT", "1.5")
+	assert.False(t, ok)
+	assert.True(t, rt.TrailStage1ActivatePct.Equal(decimal.NewFromFloat(0.05)))
+}
+
+func TestRuntimesEqual_TrailKeys(t *testing.T) {
+	a := &cfgpkg.Runtime{TrailStage1ActivatePct: decimal.NewFromFloat(0.05)}
+	b := &cfgpkg.Runtime{TrailStage1ActivatePct: decimal.NewFromFloat(0.03)}
+	assert.False(t, runtimesEqual(a, b))
+	c := &cfgpkg.Runtime{TrailStage4UpgradePct: decimal.NewFromFloat(0.65)}
+	d := &cfgpkg.Runtime{TrailStage4UpgradePct: decimal.NewFromFloat(0.60)}
+	assert.False(t, runtimesEqual(c, d))
+}
+
 func TestRuntime_GetSet_Atomic(t *testing.T) {
 	r1 := &cfgpkg.Runtime{DailyLossHaltPct: decimal.NewFromFloat(0.06)}
 	cfgpkg.Set(r1)

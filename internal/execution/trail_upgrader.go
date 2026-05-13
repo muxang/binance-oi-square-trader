@@ -33,6 +33,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"trader/internal/binance"
+	cfgpkg "trader/internal/config"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 	"trader/internal/storage/postgres/gen"
@@ -88,6 +89,37 @@ func NewTrailUpgrader(db TrailUpgraderDeps, bc TrailBinanceClient, tf TickSizeFe
 	return &TrailUpgrader{db: db, bc: bc, tf: tf, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
 }
 
+// Round 2.z: hot-reloadable stage thresholds — runtime override wins;
+// fallback to cfg. Callback rates intentionally NOT wired (mu decision:
+// forward-evaluate callback behavior first).
+func (tu *TrailUpgrader) stage1ActivatePct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage1ActivatePct.IsPositive() {
+		return rt.TrailStage1ActivatePct
+	}
+	return tu.cfg.Stage1ActivatePct
+}
+
+func (tu *TrailUpgrader) stage2UpgradePct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage2UpgradePct.IsPositive() {
+		return rt.TrailStage2UpgradePct
+	}
+	return tu.cfg.Stage2UpgradePct
+}
+
+func (tu *TrailUpgrader) stage3UpgradePct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage3UpgradePct.IsPositive() {
+		return rt.TrailStage3UpgradePct
+	}
+	return tu.cfg.Stage3UpgradePct
+}
+
+func (tu *TrailUpgrader) stage4UpgradePct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage4UpgradePct.IsPositive() {
+		return rt.TrailStage4UpgradePct
+	}
+	return tu.cfg.Stage4UpgradePct
+}
+
 // ReconcileTick is the 5min cron entry point. Per-row errors are logged and
 // don't abort the sweep (best-effort, retries next tick).
 func (tu *TrailUpgrader) ReconcileTick(ctx context.Context) {
@@ -132,23 +164,23 @@ func (tu *TrailUpgrader) handleRow(ctx context.Context, r gen.ListOpenTradesForT
 
 	switch r.TrailStage {
 	case 0:
-		if pctGain.GreaterThanOrEqual(tu.cfg.Stage1ActivatePct) {
+		if pctGain.GreaterThanOrEqual(tu.stage1ActivatePct()) {
 			tu.activateS1(ctx, r, current, qty, log)
 		}
 	case 1:
-		if pctGain.GreaterThanOrEqual(tu.cfg.Stage2UpgradePct) {
+		if pctGain.GreaterThanOrEqual(tu.stage2UpgradePct()) {
 			tu.upgradeBinanceNative(ctx, r, 2, tu.cfg.Stage2CallbackRate, current, qty, log)
 		} else {
 			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	case 2:
-		if pctGain.GreaterThanOrEqual(tu.cfg.Stage3UpgradePct) {
+		if pctGain.GreaterThanOrEqual(tu.stage3UpgradePct()) {
 			tu.upgradeToTraderManaged(ctx, r, 3, tu.cfg.Stage3CallbackRate, newHigh, qty, log)
 		} else {
 			tu.persistTrailHigh(ctx, r.ID, prevHigh, newHigh, log)
 		}
 	case 3:
-		if pctGain.GreaterThanOrEqual(tu.cfg.Stage4UpgradePct) {
+		if pctGain.GreaterThanOrEqual(tu.stage4UpgradePct()) {
 			tu.upgradeTraderManagedStage(ctx, r, 4, tu.cfg.Stage4CallbackRate, newHigh, qty, log)
 		} else if tu.shouldRatchet(prevHigh, newHigh) {
 			tu.rearmTraderManaged(ctx, r, 3, tu.cfg.Stage3CallbackRate, newHigh, qty, log)

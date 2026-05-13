@@ -87,6 +87,15 @@ func (e *Executor) leverage() int {
 	return e.cfg.Leverage
 }
 
+// Round 2.z: hot-reloadable trail S1 activation threshold for entry-time
+// PlaceAlgoTrailingStop. mu admin Web UI can tighten/loosen without restart.
+func (e *Executor) trailStage1ActivatePct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && rt.TrailStage1ActivatePct.IsPositive() {
+		return rt.TrailStage1ActivatePct
+	}
+	return e.cfg.TrailStage1ActivatePct
+}
+
 // atrPayload matches the JSON written by klines_writers.go under atr:{symbol}.
 type atrPayload struct {
 	Value string `json:"value"`
@@ -384,12 +393,13 @@ func (e *Executor) placeTrailingStop(
 	fillQty, fillPrice, tickSize decimal.Decimal,
 	log zerolog.Logger,
 ) {
-	if e.cfg.TrailStage1ActivatePct.IsZero() || e.cfg.TrailStage1CallbackRate.IsZero() {
+	s1Activate := e.trailStage1ActivatePct()
+	if s1Activate.IsZero() || e.cfg.TrailStage1CallbackRate.IsZero() {
 		// Misconfigured — skip; cron path may still activate later.
 		log.Warn().Msg("order.trail.skip: TrailStage1ActivatePct/CallbackRate zero (config issue)")
 		return
 	}
-	activation := fillPrice.Mul(decimal.NewFromInt(1).Add(e.cfg.TrailStage1ActivatePct))
+	activation := fillPrice.Mul(decimal.NewFromInt(1).Add(s1Activate))
 	if !tickSize.IsZero() {
 		activation = activation.Div(tickSize).Truncate(0).Mul(tickSize)
 	}

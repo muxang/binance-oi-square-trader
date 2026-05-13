@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"trader/internal/binance"
+	cfgpkg "trader/internal/config"
 	"trader/internal/pkg/metrics"
 	"trader/internal/storage/postgres/gen"
 )
@@ -447,4 +448,40 @@ func TestTrail_NoOpenTrades_NoCalls(t *testing.T) {
 	tu.ReconcileTick(context.Background())
 	assert.Empty(t, bc.placedTrailing)
 	assert.Empty(t, bc.placedConditional)
+}
+
+// Round 2.z (mu 真盘 owner 真实诉求): runtime override drives the stage advance
+// thresholds — admin Web UI can re-tune without restart.
+func TestTrailUpgrader_RuntimeOverride_S1Activate(t *testing.T) {
+	tu := &TrailUpgrader{cfg: TrailConfig{Stage1ActivatePct: decimal.NewFromFloat(0.03)}}
+	cfgpkg.Set(nil)
+	assert.True(t, tu.stage1ActivatePct().Equal(decimal.NewFromFloat(0.03)), "no runtime → cfg fallback")
+
+	cfgpkg.Set(&cfgpkg.Runtime{TrailStage1ActivatePct: decimal.NewFromFloat(0.05)})
+	defer cfgpkg.Set(nil)
+	assert.True(t, tu.stage1ActivatePct().Equal(decimal.NewFromFloat(0.05)), "runtime wins")
+}
+
+func TestTrailUpgrader_RuntimeOverride_S2S3S4(t *testing.T) {
+	tu := &TrailUpgrader{cfg: TrailConfig{
+		Stage2UpgradePct: decimal.NewFromFloat(0.15),
+		Stage3UpgradePct: decimal.NewFromFloat(0.30),
+		Stage4UpgradePct: decimal.NewFromFloat(0.60),
+	}}
+	cfgpkg.Set(&cfgpkg.Runtime{
+		TrailStage2UpgradePct: decimal.NewFromFloat(0.20),
+		TrailStage3UpgradePct: decimal.NewFromFloat(0.35),
+		TrailStage4UpgradePct: decimal.NewFromFloat(0.65),
+	})
+	defer cfgpkg.Set(nil)
+	assert.True(t, tu.stage2UpgradePct().Equal(decimal.NewFromFloat(0.20)))
+	assert.True(t, tu.stage3UpgradePct().Equal(decimal.NewFromFloat(0.35)))
+	assert.True(t, tu.stage4UpgradePct().Equal(decimal.NewFromFloat(0.65)))
+}
+
+func TestTrailUpgrader_ZeroRuntime_FallsBackToCfg(t *testing.T) {
+	tu := &TrailUpgrader{cfg: TrailConfig{Stage1ActivatePct: decimal.NewFromFloat(0.03)}}
+	cfgpkg.Set(&cfgpkg.Runtime{}) // all zero
+	defer cfgpkg.Set(nil)
+	assert.True(t, tu.stage1ActivatePct().Equal(decimal.NewFromFloat(0.03)), "zero runtime → cfg fallback")
 }
