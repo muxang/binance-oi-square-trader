@@ -65,6 +65,36 @@
 > **2025-12-09 起**,STOP_MARKET / TAKE_PROFIT_MARKET / STOP / TAKE_PROFIT / TRAILING_STOP_MARKET
 > 必须通过 Algo Service 接口下单。本项目"灾难止损"依赖此类型,**必须**实现日期感知切换。
 
+#### ⚠️ Algo Service 与 Regular Order 参数命名差异
+
+**2026-05-13 真盘 catch** (commit `765834a`): `/fapi/v1/algoOrder` 和 `/fapi/v1/order`
+对**同一概念**用**不同 param 名**。Binance 对未知 param 静默忽略 → 用默认值,trader 代
+码以为下成功了实际行为完全不同。已知差异表:
+
+| 概念 | `/fapi/v1/order` (regular) | `/fapi/v1/algoOrder` (Algo Service) |
+|---|---|---|
+| Trail 激活价 | `activationPrice` (有 `ion`) | `activatePrice` (无 `ion`) ⚠️ |
+| Stop / TP 触发价 | `stopPrice` | `triggerPrice` ⚠️ |
+| 客户端订单 ID | `newClientOrderId` | `clientAlgoId` ⚠️ |
+| 数量精度要求 | LOT_SIZE.stepSize (整数对齐 alts) | 同 — Binance -1111 LOT_SIZE on violation |
+| 价格精度要求 | PRICE_FILTER.tickSize | 同 — Binance -1111 PRICE_FILTER on violation |
+
+**Response 字段命名**: Algo Service GET 接口返回的 JSON 字段名 = POST 的 param 名。
+所以遇到 response 解析时,struct tag 必须与 POST 用相同的命名。
+
+**红线检查**: 在 `internal/binance/orders.go` 内,任何接近 `/fapi/v1/algoOrder` 调用的
+代码出现 `activationPrice` / `stopPrice` / `newClientOrderId` 即为 bug,会导致 Binance
+silently 用默认值。grep:
+
+```
+grep -nE "algoOrder" internal/binance/orders.go | head
+grep -nE "activationPrice|stopPrice" internal/binance/orders.go  # 应只出现在 /fapi/v1/order 周围
+```
+
+历史影响范围(v0.2 Round 1 trail 上线 ~ 2026-05-13 20:32 fix):
+- 4 笔 mu 真盘 trail S1 全部以 `activatePrice = mark@fill` 落单(默认值),非设计的 entry × Pct
+- Round 2.z 阈值提升 (3/15/30/60 → 5/20/35/65 %) 客户端正确但**完全没传到 Binance**
+
 ---
 
 ## Account REST API

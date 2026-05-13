@@ -164,3 +164,66 @@ Bugs caught in this Round, fixed with audit + tests + deploy:
 
 mu decides timing on Round 4+. Forward 评估 continues passively — new
 entries with +5% S1 activate accumulate data for callback-rate decision.
+
+---
+
+## Postscript — 2026-05-13 20:32 activatePrice 真盘 bug catch
+
+**TL;DR**: 本 milestone §4 列的 3 笔 trade PnL 数据是在**有 bug**的代码下产生
+的,Round 2.z 的阈值提升从 v0.2 Round 1 上线 ~ 2026-05-13 20:32 fix 之间**完
+全没有传到 Binance**。这是 mu 真盘 owner 在 Binance UI 对账时发现的。
+
+### Bug
+
+`internal/binance/orders.go:PlaceAlgoTrailingStop` 用了 `activationPrice`
+(regular `/fapi/v1/order` 的 param 名) 而 Algo Service `/fapi/v1/algoOrder`
+要的是 `activatePrice` (无 `ion`)。Binance 对未知 param 静默忽略,fallback
+到官方文档默认: `"default as the latest price"` — 即用 placement 时的 mark
+price 作为 activation。
+
+结果: 所有 trail S1 在开仓那一刻就处于"可激活"状态,callback 从 mark@fill
+追踪。这是"永远活跃"的 trail,不是设计的"先涨 +5% 才激活" trail。
+
+### 影响范围
+
+| Trade | 设计 activate | 实际 activate (bug) | 设计 vs 实际行为 |
+|---|---|---|---|
+| INJ #66 | entry × 1.03 | mark@fill | trail 立即追踪,微亏 -$0.41 |
+| TURBOUSDT #67 | entry × 1.03 | mark@fill | trail 立即追踪,微利 +$0.63 |
+| ESPORTSUSDT #59 | entry × 1.15 (S2) | mark@upgrade | trail 立即追踪 (升级后),大利 +$30.94 |
+| **ARPA #68** | **entry × 1.05** | **mark@fill 0.01164** | bug 发现 + 修复 (commit `765834a`) → cancel + replace 至 0.01222 |
+
+§4 写的 "75x improvement vs v0.1 disaster cluster" 数据本身仍成立(v0.1
+是 -$129.79 损,v0.2 这 3 笔合计 +$31.16),但 **causal 归因错了**:
+我们 attribute 给 "trail S1/S2 设计 + ratchet" 的改善,实际机制是
+"always-on trail + ratchet"。真正的"先涨再活" trail 行为还没有真盘数据。
+
+### Round 2.z 重新评价
+
+Round 2.z (Phase 5.2 Round 2.z, commit `b8d238f`) 把 trail S1 activate
+从 +3% 提到 +5%,并 wire 到 admin Web UI 运行时可调。**代码正确,DB 正
+确,runtime swap 正确** — 但因为 binance client 的 param 命名 bug,这些
+值从未到达 Binance。
+
+mu owner observation 才发现这一点 — 不是工程方的 pre-deploy 验证。
+
+### 工程教训
+
+1. **单元测试 + fake client 无法 catch param 名问题** — fake 接受任何 key。
+   修复: cmd/algo-query 工具 dump raw JSON;Round 7+ scope 加 Binance testnet
+   integration smoke (task #36)。
+2. **Observability gap**: `AlgoOrderQuery` struct 丢弃了 Binance response 里
+   的 `activatePrice` / `callbackRate` 字段。已修 (commit 待定 — task #32),
+   `algo_polling` cron 此后可对比 DB vs Binance,WARN 当差异 > 0.5%。
+3. **API param 命名差异**未记录在 references。已补 (task #33,
+   `references/binance/urls.md` §「Algo Service 与 Regular Order 参数命名差异」)。
+4. **TP1/TP2 同期 catch**: LOT_SIZE.stepSize 没做 qty 取整 → 所有 stepSize≥1
+   的 alt symbols (ARPA/SAPIEN/DOGE-class) 的 TP1/TP2 silently 失败。已修
+   (commit 待定 — task #31)。
+
+### Forward 评估重启
+
+**ARPA #68 是第一笔 activatePrice fix 应用的真实 trade。** mu 真盘 forward 评估
+真正"从零重启"。Round 2.z 阈值 (5/20/35/65 %) 首次真实生效。建议 ≥3 笔新
+entry 数据后再考虑 callback rate wire (Round 2.w deferred 件) 或阈值调整。
+

@@ -156,7 +156,7 @@ func (e *Executor) PlaceEntry(
 	ctx context.Context,
 	tradeID, signalID int64,
 	symbol, decision string,
-	qty, margin, notional, entryPriceEst, tickSize decimal.Decimal,
+	qty, margin, notional, entryPriceEst, tickSize, stepSize decimal.Decimal,
 	leverage int32,
 ) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -281,7 +281,7 @@ func (e *Executor) PlaceEntry(
 
 	// Steps 11-12 (v0.2 Round 2 Module A): arm TP1 (+10%, 20% qty) + TP2 (+25%, 20% qty).
 	// Failure of either is non-fatal — trail + disaster cover the position.
-	e.placeTakeProfits(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
+	e.placeTakeProfits(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, stepSize, log)
 
 	// Step 13 (v0.2 Round 3 Module C SIGFAIL): snapshot symbol OI for the
 	// signal_fail_detector to compare against later. Non-fatal: NULL initial_oi
@@ -448,6 +448,22 @@ func (e *Executor) placeTrailingStop(
 		Str("activation", activation.String()).
 		Float64("callback_pct", cb).
 		Msg("order.trail.placed: S1 armed at entry")
+
+	// Round 2.z+ verify: re-query Binance and confirm activatePrice matches
+	// what we sent. Catches param-name regression (cf. 2026-05-13 activatePrice
+	// bug where wrong key was silently ignored for months). Best-effort —
+	// failure just emits a metric, doesn't unwind the placement.
+	if q, qErr := e.bc.QueryAlgoOrder(ctx, res.AlgoID); qErr == nil {
+		diff := q.ActivatePrice.Sub(activation).Abs()
+		if !activation.IsZero() && diff.Div(activation).GreaterThan(decimal.NewFromFloat(0.005)) {
+			log.Error().
+				Str("sent_activate", activation.String()).
+				Str("binance_activate", q.ActivatePrice.String()).
+				Float64("drift_pct", mustFloat(diff.Div(activation).Mul(decimal.NewFromInt(100)))).
+				Msg("order.trail.MISMATCH: Binance stored activatePrice differs from sent value (>0.5%) — possible API param regression")
+			metrics.TrailActivationMismatchTotal.WithLabelValues(symbol).Inc()
+		}
+	}
 }
 
 // snapshotInitialOI fetches current OI from Binance and persists to trades.initial_oi.
@@ -484,15 +500,15 @@ func (e *Executor) placeTakeProfits(
 	ctx context.Context,
 	tradeID int64,
 	symbol string,
-	fillQty, fillPrice, tickSize decimal.Decimal,
+	fillQty, fillPrice, tickSize, stepSize decimal.Decimal,
 	log zerolog.Logger,
 ) {
 	if e.cfg.TP1Pct.IsZero() && e.cfg.TP2Pct.IsZero() {
 		log.Warn().Msg("order.tp.skip: TP1/TP2 PCT zero (config issue)")
 		return
 	}
-	tp1AlgoID := e.placeOneTP(ctx, "tp1", symbol, fillQty, fillPrice, tickSize, e.cfg.TP1Pct, e.cfg.TP1Ratio, log)
-	tp2AlgoID := e.placeOneTP(ctx, "tp2", symbol, fillQty, fillPrice, tickSize, e.cfg.TP2Pct, e.cfg.TP2Ratio, log)
+	tp1AlgoID := e.placeOneTP(ctx, "tp1", symbol, fillQty, fillPrice, tickSize, stepSize, e.cfg.TP1Pct, e.cfg.TP1Ratio, log)
+	tp2AlgoID := e.placeOneTP(ctx, "tp2", symbol, fillQty, fillPrice, tickSize, stepSize, e.cfg.TP2Pct, e.cfg.TP2Ratio, log)
 	if tp1AlgoID == "" && tp2AlgoID == "" {
 		return
 	}
@@ -515,10 +531,16 @@ func (e *Executor) placeTakeProfits(
 }
 
 // placeOneTP rounds and places one TAKE_PROFIT_MARKET. Returns "" on failure (non-fatal).
+//
+// 2026-05-13 bugfix (ARPA #68 catch): partial qty MUST be rounded DOWN to symbol's
+// LOT_SIZE.stepSize before sending to Binance. Pre-fix used Truncate(8) which is
+// way too fine — alts like ARPA (stepSize=1) would receive fractional qty (e.g.
+// 10738 × 0.2 = 2147.6) and Binance rejected with -1111 LOT_SIZE precision.
+// Result: TP1/TP2 silently failed for any symbol with stepSize ≥ 1.
 func (e *Executor) placeOneTP(
 	ctx context.Context,
 	kind, symbol string,
-	fillQty, fillPrice, tickSize, pct, ratio decimal.Decimal,
+	fillQty, fillPrice, tickSize, stepSize, pct, ratio decimal.Decimal,
 	log zerolog.Logger,
 ) string {
 	if pct.IsZero() || ratio.IsZero() {
@@ -528,9 +550,20 @@ func (e *Executor) placeOneTP(
 	if !tickSize.IsZero() {
 		stopPrice = stopPrice.Div(tickSize).Truncate(0).Mul(tickSize)
 	}
-	tpQty := fillQty.Mul(ratio).Truncate(8) // qty precision floor; per-symbol stepSize handled elsewhere
+	rawQty := fillQty.Mul(ratio)
+	tpQty := rawQty
+	if !stepSize.IsZero() {
+		// stepRoundDown: floor to multiple of stepSize.
+		tpQty = rawQty.Div(stepSize).Truncate(0).Mul(stepSize)
+	} else {
+		tpQty = rawQty.Truncate(8) // fallback: legacy 8-decimal precision
+	}
 	if tpQty.IsZero() {
-		log.Warn().Str("kind", kind).Msg("order.tp: partial qty rounds to zero, skipping (sub-stepSize position)")
+		log.Warn().
+			Str("kind", kind).
+			Str("raw_qty", rawQty.String()).
+			Str("step_size", stepSize.String()).
+			Msg("order.tp: partial qty rounds to zero, skipping (sub-stepSize position)")
 		return ""
 	}
 	start := e.nowFn()

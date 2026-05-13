@@ -130,7 +130,7 @@ func (c *DecisionEngineCollector) Run(ctx context.Context) error {
 				c.executor.PlaceEntry(context.Background(),
 					r.TradeID, r.SignalID, r.Symbol, r.Decision,
 					r.Sizing.Quantity, r.Sizing.Margin, r.Sizing.Notional,
-					r.Sizing.EntryPrice, r.Sizing.TickSize, r.Sizing.Leverage)
+					r.Sizing.EntryPrice, r.Sizing.TickSize, r.Sizing.StepSize, r.Sizing.Leverage)
 				return nil // PlaceEntry handles errors internally
 			})
 		}

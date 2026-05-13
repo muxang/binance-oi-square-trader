@@ -137,3 +137,26 @@ func TestSize_NegativeMargin_ReturnsErr(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "margins")
 }
+
+// Round 2.z+ bugfix verify: SizingResult exposes StepSize so executor.placeOneTP
+// can round partial TP qty to symbol's LOT_SIZE. Pre-fix the field didn't exist
+// and TP qty stayed fractional → Binance -1111 for ARPA-class symbols (stepSize=1).
+func TestSize_ResultExposesStepSize(t *testing.T) {
+	// btcFilters has StepSize 0.001
+	r, err := SizeTrade("entered_full", decimal.NewFromInt(80000), btcFilters, SizingConfig{
+		FullMarginUSDT: decimal.NewFromInt(50), HalfMarginUSDT: decimal.NewFromInt(25), Leverage: 10,
+	})
+	require.NoError(t, err)
+	assert.True(t, r.StepSize.Equal(btcFilters.StepSize), "StepSize plumbed through to SizingResult")
+
+	// ARPA-class: stepSize=1
+	arpaFilters := binance.TradingFilters{
+		StepSize: decimal.NewFromInt(1), MinQty: decimal.NewFromInt(1),
+		MinNotional: decimal.NewFromInt(5), TickSize: decimal.NewFromFloat(0.00001),
+	}
+	r2, err := SizeTrade("entered_full", decimal.NewFromFloat(0.011640), arpaFilters, SizingConfig{
+		FullMarginUSDT: decimal.NewFromInt(25), HalfMarginUSDT: decimal.NewFromInt(12), Leverage: 5,
+	})
+	require.NoError(t, err)
+	assert.True(t, r2.StepSize.Equal(decimal.NewFromInt(1)), "ARPA stepSize=1 exposed for TP qty rounding")
+}

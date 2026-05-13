@@ -50,15 +50,22 @@ type AlgoOrderResult struct {
 // docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Algo-Order
 // fetched: 2026-05-12
 type AlgoOrderQuery struct {
-	AlgoID         int64
-	Symbol         string
-	AlgoStatus     string          // WORKING / FINISHED / CANCELED / EXPIRED
-	ActualOrderID  string          // underlying market order id (FINISHED only)
-	ActualPrice    decimal.Decimal // fill price (FINISHED only; 0 otherwise)
-	Quantity       decimal.Decimal // original Algo qty
-	TriggerPrice   decimal.Decimal
-	UpdateTime     time.Time
-	TriggerTime    time.Time // when Algo fired (FINISHED only)
+	AlgoID        int64
+	Symbol        string
+	AlgoStatus    string          // WORKING / FINISHED / CANCELED / EXPIRED
+	ActualOrderID string          // underlying market order id (FINISHED only)
+	ActualPrice   decimal.Decimal // fill price (FINISHED only; 0 otherwise)
+	Quantity      decimal.Decimal // original Algo qty
+	TriggerPrice  decimal.Decimal
+	// Round 2.z+ observability fields (2026-05-13 activatePrice bug catch):
+	// Binance Algo Service stores activatePrice + callbackRate for
+	// TRAILING_STOP_MARKET orders. Pre-fix these fields existed in the JSON
+	// response but were dropped during unmarshal — masking the param-name
+	// mismatch bug. Now parsed so algo_polling can detect & log drift.
+	ActivatePrice decimal.Decimal // trail activation price (TRAILING_STOP_MARKET only)
+	CallbackRate  decimal.Decimal // trail callback % (TRAILING_STOP_MARKET only; e.g. 3.00 = 3%)
+	UpdateTime    time.Time
+	TriggerTime   time.Time // when Algo fired (FINISHED only)
 }
 
 // orderRESULTResp maps the RESULT-mode order response JSON.
@@ -230,6 +237,11 @@ func (c *Client) QueryAlgoOrder(ctx context.Context, algoID int64) (AlgoOrderQue
 		ActualPrice   string `json:"actualPrice"`
 		Quantity      string `json:"quantity"`
 		TriggerPrice  string `json:"triggerPrice"`
+		// Round 2.z+ observability: surface these so any future param-name
+		// mismatch (cf. 2026-05-13 activatePrice bug) is visible to the
+		// algo_polling cron immediately, not 4 trades later.
+		ActivatePrice string `json:"activatePrice"`
+		CallbackRate  string `json:"callbackRate"`
 		UpdateTime    int64  `json:"updateTime"`
 		TriggerTime   int64  `json:"triggerTime"`
 	}
@@ -244,6 +256,8 @@ func (c *Client) QueryAlgoOrder(ctx context.Context, algoID int64) (AlgoOrderQue
 		ActualPrice:   parseDecimalOrZero(resp.ActualPrice),
 		Quantity:      parseDecimalOrZero(resp.Quantity),
 		TriggerPrice:  parseDecimalOrZero(resp.TriggerPrice),
+		ActivatePrice: parseDecimalOrZero(resp.ActivatePrice),
+		CallbackRate:  parseDecimalOrZero(resp.CallbackRate),
 	}
 	if resp.UpdateTime > 0 {
 		q.UpdateTime = time.UnixMilli(resp.UpdateTime).UTC()

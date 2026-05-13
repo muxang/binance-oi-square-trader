@@ -393,6 +393,18 @@ var (
 		[]string{"symbol", "stage"},
 	)
 
+	// TrailActivationMismatchTotal counts cases where Binance's stored
+	// activatePrice differs from what we sent (Round 2.z+ regression guard
+	// after the 2026-05-13 activatePrice bug). >0 in production = investigate
+	// param-name compatibility immediately.
+	TrailActivationMismatchTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_trail_activation_mismatch_total",
+			Help: "Trail S1 placements where Binance stored activatePrice differs from sent value by >0.5%.",
+		},
+		[]string{"symbol"},
+	)
+
 	// SigfailDetectionRunsTotal counts SIGFAIL detector ticks by outcome.
 	// Labels: result — "ok" | "empty" | "err".
 	SigfailDetectionRunsTotal = prometheus.NewCounterVec(
@@ -481,7 +493,7 @@ func init() {
 		ConsecutiveLossesGauge, BTC30MinDropPct, UnrealizedPnlTotalUSDT,
 		RestartRecoveryRunsTotal,
 		AlgoPollingRunsTotal, AlgoTriggeredTotal,
-		TrailingStageUpgradeTotal, TPFilledTotal,
+		TrailingStageUpgradeTotal, TPFilledTotal, TrailActivationMismatchTotal,
 		SigfailDetectionRunsTotal, SigfailDetectionsTotal,
 		UserStreamConnectedTotal, UserStreamReconnectTotal,
 		UserStreamKeepaliveErrors, UserStreamEventsTotal,

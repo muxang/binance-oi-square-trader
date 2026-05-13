@@ -41,6 +41,7 @@ type SizingResult struct {
 	EntryPrice     decimal.Decimal // = input price (caller picks klines close v0.1 / ticker live v0.2+)
 	Leverage       int32
 	TickSize       decimal.Decimal // = filters.TickSize; downstream rounds STOP price to multiple of this
+	StepSize       decimal.Decimal // = filters.StepSize; downstream rounds partial QTY (TP) to multiple of this (Round 2.z+ bugfix)
 }
 
 // Rejection reason labels (also used as metric outcome= label values).
@@ -127,6 +128,7 @@ func SizeTrade(
 		Notional: notional, TargetNotional: targetNotional,
 		EntryPrice: price, Leverage: cfg.Leverage,
 		TickSize: filters.TickSize,
+		StepSize: filters.StepSize,
 	}
 	if quantity.LessThan(filters.MinQty) {
 		result.Reason = SizingReasonBelowMinQty
