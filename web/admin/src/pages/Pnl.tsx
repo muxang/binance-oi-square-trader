@@ -58,7 +58,13 @@ export default function Pnl() {
   const exits = exitQ.data  ?? []
   const stats = statsQ.data
 
-  const ttStyle = { background: '#252525', border: '1px solid #3d3d3d', fontSize: 12 }
+  // Recharts Tooltip default text is black on white. Override for dark theme:
+  //   contentStyle.color   = body text fallback
+  //   labelStyle.color     = the category label line (e.g. symbol name on Symbol排名 tab)
+  //   itemStyle.color      = the value line (formatter result)
+  const ttStyle = { background: '#252525', border: '1px solid #3d3d3d', fontSize: 12, color: '#e5e7eb' }
+  const ttLabelStyle = { color: '#e5e7eb' }
+  const ttItemStyle  = { color: '#e5e7eb' }
 
   return (
     <div className="p-6 space-y-4">
@@ -96,7 +102,7 @@ export default function Pnl() {
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#8c8c8c' }}
                   tickFormatter={d => d.slice(5)} />
                 <YAxis tick={{ fontSize: 10, fill: '#8c8c8c' }} />
-                <Tooltip contentStyle={ttStyle}
+                <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
                   formatter={(v: number, n: string) => [v.toFixed(2), n === 'daily_pnl' ? '日度' : '累计']} />
                 <Bar dataKey="daily_pnl" name="daily_pnl">
                   {cum.map((p, i) => (
@@ -123,7 +129,7 @@ export default function Pnl() {
                 <YAxis type="category" dataKey="symbol" tick={{ fontSize: 11, fill: '#8c8c8c' }} width={100} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: '#8c8c8c' }}
                   tickFormatter={v => v.toFixed(1)} />
-                <Tooltip contentStyle={ttStyle}
+                <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
                   formatter={(v: number) => [v.toFixed(2) + ' USDT', 'PnL']} />
                 <Bar dataKey="realized_pnl">
                   {sym.map((s, i) => (
@@ -153,7 +159,7 @@ export default function Pnl() {
                       <Cell key={i} fill={EXIT_PALETTE[e.exit_reason] ?? PIE_FALLBACK} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={ttStyle} />
+                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="flex-1 space-y-2 self-center">

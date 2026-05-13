@@ -46,7 +46,10 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
     queryKey: ['symbol-detail', symbol, dataSource],
     queryFn: () => fetchSymbolDetail(symbol, 24, dataSource),
   })
-  const ttStyle = { background: '#252525', border: '1px solid #3d3d3d', fontSize: 11 }
+  // Dark-theme tooltip: override recharts default black text.
+  const ttStyle = { background: '#252525', border: '1px solid #3d3d3d', fontSize: 11, color: '#e5e7eb' }
+  const ttLabelStyle = { color: '#e5e7eb' }
+  const ttItemStyle  = { color: '#e5e7eb' }
 
   return (
     <div className="w-80 bg-[#1a1a1a] border-l border-[#2d2d2d] flex flex-col shrink-0">
@@ -76,7 +79,7 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
                 <LineChart data={data.oi_series}>
                   <XAxis dataKey="ts_ms" hide />
                   <YAxis hide domain={['auto','auto']} />
-                  <Tooltip contentStyle={ttStyle}
+                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
                     labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
                     formatter={(v: number) => [v.toFixed(2) + 'M', 'OI']} />
                   <Line type="monotone" dataKey="oi_usd_m" stroke="#4096ff" dot={false} strokeWidth={1.5} />
@@ -92,7 +95,7 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
                 <LineChart data={data.price_series}>
                   <XAxis dataKey="ts_ms" hide />
                   <YAxis hide domain={['auto','auto']} />
-                  <Tooltip contentStyle={ttStyle}
+                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
                     labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
                     formatter={(v: number) => [fmtPrice(v), '价格']} />
                   <Line type="monotone" dataKey="close" stroke="#52c41a" dot={false} strokeWidth={1.5} />
@@ -108,7 +111,7 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
                 <LineChart data={data.square_series}>
                   <XAxis dataKey="ts_ms" hide />
                   <YAxis hide domain={[0, 'auto']} />
-                  <Tooltip contentStyle={ttStyle}
+                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
                     labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
                     formatter={(v: number) => [v.toLocaleString(), '累计新帖']} />
                   <Line type="monotone" dataKey="mentions" stroke="#fa8c16" dot={false} strokeWidth={1.5} />
