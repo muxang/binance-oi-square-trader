@@ -87,6 +87,10 @@ func (c *ConfigReloader) Run(ctx context.Context) error {
 		Strs("changed_keys", changed).
 		Str("daily_loss_halt_pct", newRt.DailyLossHaltPct.String()).
 		Int("consecutive_losses_halt", newRt.ConsecutiveLossesHalt).
+		Str("total_float_loss_halt_pct", newRt.TotalFloatLossHaltPct.String()).
+		Str("btc_panic_drop_pct", newRt.BTCCrashHaltPct.String()).
+		Str("max_stop_pct", newRt.MaxStopPct.String()).
+		Int("leverage", newRt.Leverage).
 		Msg("config_reloader.tick: runtime swapped")
 	metrics.ConfigReloadTotal.WithLabelValues("ok").Inc()
 	return nil
@@ -134,9 +138,28 @@ func (c *ConfigReloader) applyOverride(newRt *cfgpkg.Runtime, key string, val an
 			newRt.ConsecutiveLossesHalt = n
 			return true
 		}
+	// Round 2.y additions:
+	case "TOTAL_FLOAT_LOSS_HALT_PCT":
+		if d, ok := toDecimal(val); ok && !d.IsZero() {
+			newRt.TotalFloatLossHaltPct = d
+			return true
+		}
+	case "BTC_PANIC_DROP_PCT":
+		if d, ok := toDecimal(val); ok && !d.IsZero() {
+			newRt.BTCCrashHaltPct = d
+			return true
+		}
+	case "MAX_STOP_PCT":
+		if d, ok := toDecimal(val); ok && !d.IsZero() {
+			newRt.MaxStopPct = d
+			return true
+		}
+	case "LEVERAGE":
+		if n, ok := toInt(val); ok && n > 0 && n <= 125 {
+			newRt.Leverage = n
+			return true
+		}
 	default:
-		// Unknown keys are stored (admin Web UI accepts them) but not yet
-		// wired into a runtime field. Round 2.y / 2.z adds more cases.
 		c.log.Debug().Str("key", key).Msg("config_reloader: key not yet wired into Runtime")
 	}
 	return false
@@ -181,5 +204,9 @@ func toInt(v any) (int, bool) {
 
 func runtimesEqual(a, b *cfgpkg.Runtime) bool {
 	return a.DailyLossHaltPct.Equal(b.DailyLossHaltPct) &&
-		a.ConsecutiveLossesHalt == b.ConsecutiveLossesHalt
+		a.ConsecutiveLossesHalt == b.ConsecutiveLossesHalt &&
+		a.TotalFloatLossHaltPct.Equal(b.TotalFloatLossHaltPct) &&
+		a.BTCCrashHaltPct.Equal(b.BTCCrashHaltPct) &&
+		a.MaxStopPct.Equal(b.MaxStopPct) &&
+		a.Leverage == b.Leverage
 }

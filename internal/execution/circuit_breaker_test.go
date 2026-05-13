@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	cfgpkg "trader/internal/config"
 	"trader/internal/pkg/metrics"
 	"trader/internal/storage/postgres/gen"
 )
@@ -205,4 +206,38 @@ func TestEvaluateAll_EarlyTripStillUpdatesGauges(t *testing.T) {
 		"UnrealizedPnlTotalUSDT updated before api_error trip preempted")
 	assert.InDelta(t, 0.005, testutil.ToFloat64(metrics.BTC30MinDropPct), 1e-6,
 		"BTC30MinDropPct updated before api_error trip preempted")
+}
+
+// Round 2.y getter-fallback tests: runtime overrides take precedence; cfg fallback otherwise.
+
+func TestCircuitBreaker_TotalFloatLossHaltPct_RuntimeOverride(t *testing.T) {
+	cb := newTestCB(&fakeCBDeps{}, &fakeCBBinance{})
+	cfgpkg.Set(nil) // clean slate — cfg baseline = 0.12.
+	assert.True(t, cb.totalFloatLossHaltPct().Equal(decimal.NewFromFloat(0.12)))
+
+	cfgpkg.Set(&cfgpkg.Runtime{TotalFloatLossHaltPct: decimal.NewFromFloat(0.10)})
+	defer cfgpkg.Set(nil)
+	assert.True(t, cb.totalFloatLossHaltPct().Equal(decimal.NewFromFloat(0.10)),
+		"runtime override wins over cfg")
+}
+
+func TestCircuitBreaker_BTCCrashHaltPct_RuntimeOverride(t *testing.T) {
+	cb := newTestCB(&fakeCBDeps{}, &fakeCBBinance{})
+	cfgpkg.Set(nil)
+	assert.True(t, cb.btcCrashHaltPct().Equal(decimal.NewFromFloat(0.03)))
+
+	cfgpkg.Set(&cfgpkg.Runtime{BTCCrashHaltPct: decimal.NewFromFloat(0.05)})
+	defer cfgpkg.Set(nil)
+	assert.True(t, cb.btcCrashHaltPct().Equal(decimal.NewFromFloat(0.05)))
+}
+
+func TestCircuitBreaker_HaltPctZero_FallsBackToCfg(t *testing.T) {
+	cb := newTestCB(&fakeCBDeps{}, &fakeCBBinance{})
+	// Runtime present but the two new fields are zero → must fall back to cfg.
+	cfgpkg.Set(&cfgpkg.Runtime{})
+	defer cfgpkg.Set(nil)
+	assert.True(t, cb.totalFloatLossHaltPct().Equal(decimal.NewFromFloat(0.12)),
+		"zero runtime value → cfg fallback")
+	assert.True(t, cb.btcCrashHaltPct().Equal(decimal.NewFromFloat(0.03)),
+		"zero runtime value → cfg fallback")
 }

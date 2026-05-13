@@ -13,6 +13,8 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	cfgpkg "trader/internal/config"
 )
 
 func newTestExecutor(t *testing.T, mr *miniredis.Miniredis) *Executor {
@@ -127,4 +129,37 @@ func TestComputeStopPct_ExactlyMax_NoExtraClip(t *testing.T) {
 	setATR(t, mr, "EXACTMAX", "6")
 	pct := e.computeStopPct(context.Background(), "EXACTMAX", decimal.NewFromFloat(100), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.12)), "exactly MAX: got %s", pct)
+}
+
+// Round 2.y: runtime override on MAX_STOP_PCT must clip to the runtime value,
+// not the startup cfg value. Lets mu tighten/loosen MAX_STOP via admin Web UI
+// without a restart.
+func TestComputeStopPct_RuntimeOverride_ClipsToRuntimeMax(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	e := newTestExecutor(t, mr) // cfg MaxStopPct = 0.12
+	// ATR=6, price=100 → 6% → ×2=12% would normally clip to 12%.
+	setATR(t, mr, "RUNTIMEMAX", "6")
+
+	// Override runtime to a tighter 0.08 — should clip earlier.
+	cfgpkg.Set(&cfgpkg.Runtime{MaxStopPct: decimal.NewFromFloat(0.08)})
+	defer cfgpkg.Set(nil)
+
+	pct := e.computeStopPct(context.Background(), "RUNTIMEMAX", decimal.NewFromFloat(100), zerolog.Nop())
+	assert.True(t, pct.Equal(decimal.NewFromFloat(0.08)),
+		"runtime MAX_STOP_PCT=0.08 should override cfg 0.12; got %s", pct)
+}
+
+// Round 2.y: leverage helper falls back to cfg when runtime is unset/zero.
+func TestExecutor_Leverage_RuntimeOverride(t *testing.T) {
+	e := &Executor{cfg: Config{Leverage: 10}}
+	cfgpkg.Set(nil) // clean slate
+	assert.Equal(t, 10, e.leverage(), "no runtime → cfg fallback")
+
+	cfgpkg.Set(&cfgpkg.Runtime{Leverage: 5})
+	defer cfgpkg.Set(nil)
+	assert.Equal(t, 5, e.leverage(), "runtime override wins")
+
+	cfgpkg.Set(&cfgpkg.Runtime{Leverage: 0})
+	assert.Equal(t, 10, e.leverage(), "zero runtime → cfg fallback")
 }

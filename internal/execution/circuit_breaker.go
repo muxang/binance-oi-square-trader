@@ -112,6 +112,21 @@ func (cb *CircuitBreakerTripper) consecutiveLossCount() int {
 	return cb.cfg.ConsecutiveLossCount
 }
 
+// Round 2.y: hot-reloadable threshold getters (TOTAL_FLOAT_LOSS_HALT_PCT + BTC_PANIC_DROP_PCT).
+func (cb *CircuitBreakerTripper) totalFloatLossHaltPct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && !rt.TotalFloatLossHaltPct.IsZero() {
+		return rt.TotalFloatLossHaltPct
+	}
+	return cb.cfg.TotalFloatLossHaltPct
+}
+
+func (cb *CircuitBreakerTripper) btcCrashHaltPct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && !rt.BTCCrashHaltPct.IsZero() {
+		return rt.BTCCrashHaltPct
+	}
+	return cb.cfg.BTCCrashHaltPct
+}
+
 func NewCircuitBreakerTripper(db CircuitBreakerDeps, bc CircuitBreakerBinance, rdb *redis.Client, cfg CircuitBreakerConfig, log zerolog.Logger) *CircuitBreakerTripper {
 	return &CircuitBreakerTripper{db: db, bc: bc, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
 }
@@ -308,7 +323,7 @@ func (cb *CircuitBreakerTripper) tripTotalFloatLoss(ctx context.Context, totalUn
 		return false
 	}
 	ratio := totalUnrealized.Div(balance)
-	threshold := cb.cfg.TotalFloatLossHaltPct.Neg()
+	threshold := cb.totalFloatLossHaltPct().Neg()
 	if ratio.GreaterThan(threshold) {
 		return false
 	}
@@ -330,15 +345,16 @@ func (cb *CircuitBreakerTripper) tripTotalFloatLoss(ctx context.Context, totalUn
 // audit: consumes pre-computed drop_pct + start/current prices from
 // updateBTCDropGauge.
 func (cb *CircuitBreakerTripper) tripBTCCrash(ctx context.Context, dropPct, startPrice, currentPrice decimal.Decimal) bool {
-	if dropPct.LessThan(cb.cfg.BTCCrashHaltPct) {
+	threshold := cb.btcCrashHaltPct()
+	if dropPct.LessThan(threshold) {
 		return false
 	}
-	cb.log.Warn().Str("drop_pct", dropPct.String()).Str("threshold", cb.cfg.BTCCrashHaltPct.String()).
+	cb.log.Warn().Str("drop_pct", dropPct.String()).Str("threshold", threshold.String()).
 		Str("start_price", startPrice.String()).Str("current_price", currentPrice.String()).
 		Msg("circuit_breaker.trip.btc_crash")
 	cb.fireTrip(ctx, tripTypeBTCCrash, map[string]any{
 		"drop_pct":      dropPct.String(),
-		"threshold":     cb.cfg.BTCCrashHaltPct.String(),
+		"threshold":     threshold.String(),
 		"start_price":   startPrice.String(),
 		"current_price": currentPrice.String(),
 		"window_min":    30,

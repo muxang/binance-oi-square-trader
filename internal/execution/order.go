@@ -22,6 +22,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"trader/internal/binance"
+	cfgpkg "trader/internal/config"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 	"trader/internal/storage/postgres/gen"
@@ -70,6 +71,22 @@ func New(bc *binance.Client, db *gen.Queries, rdb *redis.Client, cfg Config, log
 	return &Executor{bc: bc, db: db, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
 }
 
+// Round 2.y: hot-reloadable threshold getters. Existing position 杠杆 binance-locked;
+// only NEW entries pick up changed Leverage on next SetLeverage call.
+func (e *Executor) maxStopPct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && !rt.MaxStopPct.IsZero() {
+		return rt.MaxStopPct
+	}
+	return e.cfg.MaxStopPct
+}
+
+func (e *Executor) leverage() int {
+	if rt := cfgpkg.Get(); rt != nil && rt.Leverage > 0 {
+		return rt.Leverage
+	}
+	return e.cfg.Leverage
+}
+
 // atrPayload matches the JSON written by klines_writers.go under atr:{symbol}.
 type atrPayload struct {
 	Value string `json:"value"`
@@ -104,8 +121,8 @@ func (e *Executor) computeStopPct(ctx context.Context, symbol string, entryPrice
 	if stopPct.LessThan(e.cfg.MinStopPct) {
 		stopPct = e.cfg.MinStopPct
 	}
-	if stopPct.GreaterThan(e.cfg.MaxStopPct) {
-		stopPct = e.cfg.MaxStopPct
+	if maxStop := e.maxStopPct(); stopPct.GreaterThan(maxStop) {
+		stopPct = maxStop
 	}
 	log.Info().
 		Str("atr", atr.String()).
@@ -171,7 +188,7 @@ func (e *Executor) PlaceEntry(
 
 	// Step 2: setLeverage (idempotent; -4059 is silently accepted).
 	start = e.nowFn()
-	if _, err := e.bc.SetLeverage(ctx, symbol, e.cfg.Leverage); err != nil {
+	if _, err := e.bc.SetLeverage(ctx, symbol, e.leverage()); err != nil {
 		metrics.OrderLatencySeconds.WithLabelValues("leverage").Observe(e.nowFn().Sub(start).Seconds())
 		log.Error().Err(err).Msg("order.failed: set_leverage")
 		e.markFailed(ctx, tradeID, "set_leverage_failed")

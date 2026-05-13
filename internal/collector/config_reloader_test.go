@@ -77,6 +77,62 @@ func TestRuntimesEqual(t *testing.T) {
 	c := &cfgpkg.Runtime{DailyLossHaltPct: decimal.NewFromFloat(0.05), ConsecutiveLossesHalt: 8}
 	assert.True(t, runtimesEqual(a, b))
 	assert.False(t, runtimesEqual(a, c))
+
+	// Round 2.y: equality must also key off the 4 new fields, otherwise
+	// no-change detection misfires and the reloader logs a swap every tick.
+	d := &cfgpkg.Runtime{TotalFloatLossHaltPct: decimal.NewFromFloat(0.12)}
+	e := &cfgpkg.Runtime{TotalFloatLossHaltPct: decimal.NewFromFloat(0.10)}
+	assert.False(t, runtimesEqual(d, e))
+	f := &cfgpkg.Runtime{BTCCrashHaltPct: decimal.NewFromFloat(0.03)}
+	g := &cfgpkg.Runtime{BTCCrashHaltPct: decimal.NewFromFloat(0.05)}
+	assert.False(t, runtimesEqual(f, g))
+	h := &cfgpkg.Runtime{MaxStopPct: decimal.NewFromFloat(0.12)}
+	i := &cfgpkg.Runtime{MaxStopPct: decimal.NewFromFloat(0.10)}
+	assert.False(t, runtimesEqual(h, i))
+	j := &cfgpkg.Runtime{Leverage: 5}
+	k := &cfgpkg.Runtime{Leverage: 10}
+	assert.False(t, runtimesEqual(j, k))
+}
+
+// Round 2.y: 4 new wire-up keys (TOTAL_FLOAT / BTC_PANIC / MAX_STOP / LEVERAGE).
+func TestApplyOverride_TotalFloatLossHaltPct(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{TotalFloatLossHaltPct: decimal.NewFromFloat(0.12)}
+	ok := c.applyOverride(rt, "TOTAL_FLOAT_LOSS_HALT_PCT", "0.10")
+	assert.True(t, ok)
+	assert.True(t, rt.TotalFloatLossHaltPct.Equal(decimal.NewFromFloat(0.10)))
+}
+
+func TestApplyOverride_BTCPanicDropPct(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{BTCCrashHaltPct: decimal.NewFromFloat(0.03)}
+	ok := c.applyOverride(rt, "BTC_PANIC_DROP_PCT", "0.05")
+	assert.True(t, ok)
+	assert.True(t, rt.BTCCrashHaltPct.Equal(decimal.NewFromFloat(0.05)))
+}
+
+func TestApplyOverride_MaxStopPct(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{MaxStopPct: decimal.NewFromFloat(0.12)}
+	ok := c.applyOverride(rt, "MAX_STOP_PCT", "0.10")
+	assert.True(t, ok)
+	assert.True(t, rt.MaxStopPct.Equal(decimal.NewFromFloat(0.10)))
+}
+
+func TestApplyOverride_Leverage(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{Leverage: 10}
+	ok := c.applyOverride(rt, "LEVERAGE", float64(5))
+	assert.True(t, ok)
+	assert.Equal(t, 5, rt.Leverage)
+}
+
+func TestApplyOverride_Leverage_OutOfRange(t *testing.T) {
+	c := &ConfigReloader{}
+	rt := &cfgpkg.Runtime{Leverage: 10}
+	ok := c.applyOverride(rt, "LEVERAGE", float64(200)) // > 125 (Binance max)
+	assert.False(t, ok)
+	assert.Equal(t, 10, rt.Leverage, "out-of-range value skipped, baseline preserved")
 }
 
 func TestRuntime_GetSet_Atomic(t *testing.T) {
