@@ -376,10 +376,12 @@ export interface MarketData {
 
 export type MarketScope = 'all' | 'watchlist' | 'positions'
 export type MarketSort  = 'oi_1h_pct' | 'oi_24h_pct' | 'oi_usd' | 'price_24h_pct' | 'square' | 'square_24h_pct'
+export type SortOrder   = 'asc' | 'desc'
 
 export interface MarketParams {
   scope?: MarketScope
   sort?: MarketSort
+  order?: SortOrder
   search?: string
   page?: number
   size?: number
@@ -389,6 +391,7 @@ export const fetchMarket = (p: MarketParams = {}): Promise<MarketData> => {
   const params: Record<string, string> = {}
   if (p.scope)  params.scope  = p.scope
   if (p.sort)   params.sort   = p.sort
+  if (p.order)  params.order  = p.order
   if (p.search) params.search = p.search
   if (p.page)   params.page   = String(p.page)
   if (p.size)   params.size   = String(p.size)

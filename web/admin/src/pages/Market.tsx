@@ -1,7 +1,7 @@
 import { useState, useContext } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import dayjs from 'dayjs'
-import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type MarketSort } from '../api/client'
+import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type MarketSort, type SortOrder } from '../api/client'
 import { DataSourceContext } from '../context/DataSource'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 import {
@@ -18,15 +18,18 @@ function fmtPrice(p: number) {
 }
 
 function SortTH({
-  children, right, sortKey, current, onSort,
+  children, right, sortKey, current, order, onSort,
 }: {
   children: React.ReactNode
   right?: boolean
   sortKey?: MarketSort
   current: MarketSort
+  order: SortOrder
   onSort: (k: MarketSort) => void
 }) {
   const active = sortKey && current === sortKey
+  // ▼ = desc (大→小, 当前默认), ▲ = asc (小→大). 点同一列翻转,点新列重置为 desc.
+  const arrow = active ? (order === 'asc' ? ' ▲' : ' ▼') : ''
   return (
     <th
       onClick={sortKey ? () => onSort(sortKey) : undefined}
@@ -35,7 +38,7 @@ function SortTH({
         ${sortKey ? 'cursor-pointer hover:text-gray-300' : ''}
         ${active ? 'text-blue-400' : 'text-gray-500'}`}
     >
-      {children}{active ? ' ▲' : ''}
+      {children}{arrow}
     </th>
   )
 }
@@ -161,22 +164,29 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
 export default function Market() {
   const [scope,    setScope]   = useState<MarketScope>('all')
   const [sortBy,   setSortBy]  = useState<MarketSort>('oi_1h_pct')
+  const [order,    setOrder]   = useState<SortOrder>('desc')
   const [search,   setSearch]  = useState('')
   const [page,     setPage]    = useState(1)
   const [size,     setSize]    = useState(50)
   const [selected, setSelected] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['market', scope, sortBy, search, page, size],
-    queryFn: () => fetchMarket({ scope, sort: sortBy, search: search || undefined, page, size }),
+    queryKey: ['market', scope, sortBy, order, search, page, size],
+    queryFn: () => fetchMarket({ scope, sort: sortBy, order, search: search || undefined, page, size }),
     refetchInterval: 30_000,
     placeholderData: (prev) => prev,
   })
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / size)) : 1
 
+  // 点同一列 → toggle asc/desc;点新列 → 重置为 desc。
   function handleSort(k: MarketSort) {
-    setSortBy(k)
+    if (k === sortBy) {
+      setOrder(prev => prev === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortBy(k)
+      setOrder('desc')
+    }
     setPage(1)
   }
 
@@ -216,15 +226,15 @@ export default function Market() {
               <table className="w-full">
                 <thead className="border-b border-[#2d2d2d]">
                   <tr>
-                    <SortTH current={sortBy} onSort={handleSort}>Symbol</SortTH>
-                    <SortTH right sortKey="oi_usd"        current={sortBy} onSort={handleSort}>OI (USD)</SortTH>
-                    <SortTH right sortKey="oi_1h_pct"     current={sortBy} onSort={handleSort}>OI 1h%</SortTH>
-                    <SortTH right sortKey="oi_24h_pct"    current={sortBy} onSort={handleSort}>OI 24h%</SortTH>
-                    <SortTH right current={sortBy} onSort={handleSort}>当前价</SortTH>
-                    <SortTH right sortKey="price_24h_pct" current={sortBy} onSort={handleSort}>24h涨跌</SortTH>
-                    <SortTH right sortKey="square"        current={sortBy} onSort={handleSort}>Square提及</SortTH>
-                    <SortTH right sortKey="square_24h_pct" current={sortBy} onSort={handleSort}>Square 24h%</SortTH>
-                    <SortTH current={sortBy} onSort={handleSort}>标记</SortTH>
+                    <SortTH current={sortBy} order={order} onSort={handleSort}>Symbol</SortTH>
+                    <SortTH right sortKey="oi_usd"        current={sortBy} order={order} onSort={handleSort}>OI (USD)</SortTH>
+                    <SortTH right sortKey="oi_1h_pct"     current={sortBy} order={order} onSort={handleSort}>OI 1h%</SortTH>
+                    <SortTH right sortKey="oi_24h_pct"    current={sortBy} order={order} onSort={handleSort}>OI 24h%</SortTH>
+                    <SortTH right current={sortBy} order={order} onSort={handleSort}>当前价</SortTH>
+                    <SortTH right sortKey="price_24h_pct" current={sortBy} order={order} onSort={handleSort}>24h涨跌</SortTH>
+                    <SortTH right sortKey="square"        current={sortBy} order={order} onSort={handleSort}>Square提及</SortTH>
+                    <SortTH right sortKey="square_24h_pct" current={sortBy} order={order} onSort={handleSort}>Square 24h%</SortTH>
+                    <SortTH current={sortBy} order={order} onSort={handleSort}>标记</SortTH>
                   </tr>
                 </thead>
                 <tbody>

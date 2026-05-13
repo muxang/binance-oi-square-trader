@@ -35,15 +35,17 @@ const (
 )
 
 func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
-	q      := r.URL.Query()
-	scope  := q.Get("scope")  // all | watchlist | positions
-	sortBy := q.Get("sort")   // oi_1h_pct | oi_24h_pct | oi_usd | price_24h_pct | square
+	q       := r.URL.Query()
+	scope   := q.Get("scope")  // all | watchlist | positions
+	sortBy  := q.Get("sort")   // oi_1h_pct | oi_24h_pct | oi_usd | price_24h_pct | square
+	order   := q.Get("order")  // asc | desc (default desc; mu 2026-05-14 catch — UI 之前只能降序)
 	search := strings.ToUpper(strings.TrimSpace(q.Get("search")))
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
 
 	if scope == "" { scope = "all" }
 	if sortBy == "" { sortBy = "oi_1h_pct" }
+	if order != "asc" { order = "desc" }
 	if page < 1 { page = 1 }
 	if size != 100 { size = 50 }
 
@@ -85,16 +87,22 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 		items = append(items, *it)
 	}
 
-	// Sort (descending)
+	// Sort. Comparator returns "i should come before j" — desc uses >, asc uses <.
+	asc := order == "asc"
 	sort.Slice(items, func(i, j int) bool {
+		var iv, jv float64
 		switch sortBy {
-		case "oi_24h_pct":    return items[i].Oi24hPct > items[j].Oi24hPct
-		case "oi_usd":        return items[i].OiUsdM > items[j].OiUsdM
-		case "price_24h_pct": return items[i].Price24hPct > items[j].Price24hPct
-		case "square":        return items[i].SquareMentions > items[j].SquareMentions
-		case "square_24h_pct": return items[i].Square24hPct > items[j].Square24hPct
-		default:              return items[i].Oi1hPct > items[j].Oi1hPct
+		case "oi_24h_pct":     iv, jv = items[i].Oi24hPct, items[j].Oi24hPct
+		case "oi_usd":         iv, jv = items[i].OiUsdM, items[j].OiUsdM
+		case "price_24h_pct":  iv, jv = items[i].Price24hPct, items[j].Price24hPct
+		case "square":         iv, jv = float64(items[i].SquareMentions), float64(items[j].SquareMentions)
+		case "square_24h_pct": iv, jv = items[i].Square24hPct, items[j].Square24hPct
+		default:               iv, jv = items[i].Oi1hPct, items[j].Oi1hPct
 		}
+		if asc {
+			return iv < jv
+		}
+		return iv > jv
 	})
 
 	// Paginate
