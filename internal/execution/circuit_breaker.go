@@ -25,6 +25,7 @@ import (
 	"fmt"
 
 	cfgpkg "trader/internal/config"
+	"trader/internal/notify"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -87,13 +88,19 @@ type CircuitBreakerBinance interface {
 
 // CircuitBreakerTripper evaluates SPEC §风控熔断 5 项 trips.
 type CircuitBreakerTripper struct {
-	db    CircuitBreakerDeps
-	bc    CircuitBreakerBinance
-	rdb   *redis.Client
-	cfg   CircuitBreakerConfig
-	log   zerolog.Logger
-	nowFn func() time.Time
+	db       CircuitBreakerDeps
+	bc       CircuitBreakerBinance
+	rdb      *redis.Client
+	cfg      CircuitBreakerConfig
+	log      zerolog.Logger
+	nowFn    func() time.Time
+	notifier *notify.Feishu // optional; nil-safe send-and-forget alerting
 }
+
+// SetNotifier wires Round 4 Feishu alerts. Called from main.go after both
+// CircuitBreakerTripper and Feishu are constructed. nil-safe — pre-wire or
+// dry-run config leaves notify path silent.
+func (cb *CircuitBreakerTripper) SetNotifier(n *notify.Feishu) { cb.notifier = n }
 
 // dailyLossHaltPct returns the active threshold — prefers runtime override
 // (Phase 5.2 Round 2.x config_reloader) over startup cfg. Falls back to cfg
@@ -364,7 +371,7 @@ func (cb *CircuitBreakerTripper) tripBTCCrash(ctx context.Context, dropPct, star
 }
 
 // fireTrip writes the halt + RCA atomically (best-effort).
-func (cb *CircuitBreakerTripper) fireTrip(ctx context.Context, tripType string, context map[string]any) {
+func (cb *CircuitBreakerTripper) fireTrip(ctx context.Context, tripType string, payload map[string]any) {
 	now := cb.nowFn()
 	haltUntil := pgtype.Timestamptz{Time: now.Add(cbHaltDuration), Valid: true}
 	if err := cb.db.TripGenericHalt(ctx, gen.TripGenericHaltParams{
@@ -377,8 +384,8 @@ func (cb *CircuitBreakerTripper) fireTrip(ctx context.Context, tripType string, 
 	metrics.CircuitBreakerTripsTotal.WithLabelValues(tripType).Inc()
 	metrics.CircuitBreakerState.Set(1)
 
-	context["halt_until"] = haltUntil.Time.Format(time.RFC3339)
-	ctxJSON, err := json.Marshal(context)
+	payload["halt_until"] = haltUntil.Time.Format(time.RFC3339)
+	ctxJSON, err := json.Marshal(payload)
 	if err != nil {
 		ctxJSON = []byte(`{}`)
 	}
@@ -396,6 +403,18 @@ func (cb *CircuitBreakerTripper) fireTrip(ctx context.Context, tripType string, 
 		Str("trip_type", tripType).
 		Time("halt_until", haltUntil.Time).
 		Msg("CIRCUIT_BREAKER_HALT")
+
+	// Round 4: 🔴 critical Feishu alert. Best-effort — failures don't block the
+	// halt flow. Use ctx.Background so a cancelled trip-tick context doesn't
+	// abort the send mid-flight.
+	if cb.notifier != nil {
+		level, dedupe, title, body := notify.Halt(tripType, tripType, rca.ID, string(ctxJSON))
+		go func() {
+			sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = cb.notifier.Send(sendCtx, level, dedupe, title, body)
+		}()
+	}
 }
 
 // Suppress unused-import warning for fmt (kept for future debug).

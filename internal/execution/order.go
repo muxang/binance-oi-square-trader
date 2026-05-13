@@ -23,6 +23,7 @@ import (
 
 	"trader/internal/binance"
 	cfgpkg "trader/internal/config"
+	"trader/internal/notify"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 	"trader/internal/storage/postgres/gen"
@@ -58,18 +59,22 @@ type Config struct {
 // Executor executes the complete trade entry lifecycle (Step 1-9).
 // All public methods are safe for concurrent use.
 type Executor struct {
-	bc    *binance.Client
-	db    *gen.Queries
-	rdb   *redis.Client
-	cfg   Config
-	log   zerolog.Logger
-	nowFn func() time.Time
+	bc       *binance.Client
+	db       *gen.Queries
+	rdb      *redis.Client
+	cfg      Config
+	log      zerolog.Logger
+	nowFn    func() time.Time
+	notifier *notify.Feishu // Round 4 — optional 🟢 info on entry success
 }
 
 // New creates an Executor. bc, db, and rdb must not be nil.
 func New(bc *binance.Client, db *gen.Queries, rdb *redis.Client, cfg Config, log zerolog.Logger) *Executor {
 	return &Executor{bc: bc, db: db, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
 }
+
+// SetNotifier wires Round 4 Feishu alerter (entry success / fail).
+func (e *Executor) SetNotifier(n *notify.Feishu) { e.notifier = n }
 
 // Round 2.y: hot-reloadable threshold getters. Existing position 杠杆 binance-locked;
 // only NEW entries pick up changed Leverage on next SetLeverage call.
@@ -255,6 +260,16 @@ func (e *Executor) PlaceEntry(
 	}
 
 	metrics.OrdersTotal.WithLabelValues(symbol, "BUY", decision, "success").Inc()
+
+	// Round 4: 🟢 info Feishu alert on successful entry (no cooldown — each entry sends).
+	if e.notifier != nil {
+		level, dedupe, title, body := notify.Entry(symbol, filled.ExecutedQty, filled.AvgPrice, notional, tradeID)
+		go func() {
+			sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = e.notifier.Send(sendCtx, level, dedupe, title, body)
+		}()
+	}
 
 	// Steps 6-9: place Algo Service disaster stop.
 	e.placeDisasterStop(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)

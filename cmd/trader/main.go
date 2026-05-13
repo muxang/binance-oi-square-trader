@@ -26,6 +26,7 @@ import (
 	"trader/internal/api/handlers"
 	"trader/internal/binance"
 	"trader/internal/collector"
+	"trader/internal/notify"
 	"trader/internal/config"
 	"trader/internal/decision"
 	"trader/internal/execution"
@@ -445,6 +446,29 @@ func run() error {
 		Int("api_err_limit", cbCfg.APIErrorRateLimit).
 		Msg("circuit_breaker config")
 	circuitBreaker := execution.NewCircuitBreakerTripper(gen.New(pgPool), client, rdb, cbCfg, log)
+
+	// Phase 5.2 Round 4: Feishu alerter. Dry-run when FEISHU_WEBHOOK_URL is unset
+	// or FEISHU_ENABLED=false; consumers nil-check so the wire is fully optional.
+	feishu := notify.New(notify.Config{
+		URL:     cfg.Feishu.WebhookURL,
+		Secret:  cfg.Feishu.WebhookSecret,
+		Enabled: cfg.Feishu.Enabled,
+	}, log)
+	circuitBreaker.SetNotifier(feishu)
+	positionManager.SetNotifier(feishu)
+	executor.SetNotifier(feishu)
+	log.Info().
+		Bool("enabled", cfg.Feishu.Enabled).
+		Bool("has_url", cfg.Feishu.WebhookURL != "").
+		Bool("has_secret", cfg.Feishu.WebhookSecret != "").
+		Msg("notify.feishu ready (dry-run when enabled=false or url empty)")
+
+	// Daily report cron — BJT 00:00. cron.WithLocation(timez.BJT) so this fires
+	// at midnight Beijing regardless of host TZ.
+	dailyReport := collector.NewDailyReportCollector(pgPool, client, feishu, log, collector.DailyReportConfig{})
+	if err := runner.Register(dailyReport, "0 0 * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register daily_report collector")
+	}
 
 	// Phase 4 Round 7: orchestrated startup recovery. Order:
 	//  1. RecoverEnteringTrades (Round 2): clean stuck 'entering' via Binance lookup.

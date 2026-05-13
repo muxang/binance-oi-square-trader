@@ -30,6 +30,7 @@ type Config struct {
 	Square    SquareConfig    `mapstructure:",squash"`
 	DB        DBConfig        `mapstructure:",squash"`
 	TG        TGConfig        `mapstructure:",squash"`
+	Feishu    FeishuConfig    `mapstructure:",squash"`
 	Sentry    SentryConfig    `mapstructure:",squash"`
 	HTTP      HTTPConfig      `mapstructure:",squash"`
 	Watchlist WatchlistConfig `mapstructure:",squash"`
@@ -74,6 +75,11 @@ type DBConfig struct {
 type TGConfig struct {
 	BotToken string `mapstructure:"TG_BOT_TOKEN"`
 	ChatID   int64  `mapstructure:"TG_CHAT_ID"`
+}
+type FeishuConfig struct {
+	WebhookURL    string `mapstructure:"FEISHU_WEBHOOK_URL"`
+	WebhookSecret string `mapstructure:"FEISHU_WEBHOOK_SECRET"`
+	Enabled       bool   `mapstructure:"FEISHU_ENABLED"`
 }
 type SentryConfig struct {
 	DSN string `mapstructure:"SENTRY_DSN"`

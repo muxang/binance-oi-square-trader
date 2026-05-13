@@ -25,6 +25,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"trader/internal/binance"
+	"trader/internal/notify"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 	"trader/internal/storage/postgres/gen"
@@ -77,7 +78,13 @@ type PositionManager struct {
 	// the local_only_orphan branch consults it before tripping halt — if Algo
 	// is FINISHED, auto-close instead. nil = legacy behavior (always halt).
 	algoReconciler *AlgoReconciler
+	// Round 4: optional Feishu alerter — nil-safe. Fires 🔴 critical on
+	// tripReconcileHalt (local_only_orphan / binance_only_unknown / drift).
+	notifier *notify.Feishu
 }
+
+// SetNotifier wires the Round 4 Feishu alerter. Called from main.go.
+func (pm *PositionManager) SetNotifier(n *notify.Feishu) { pm.notifier = n }
 
 // NewPositionManager constructs a PositionManager.
 func NewPositionManager(db PositionSyncDeps, bc PositionRiskFetcher, rdb *redis.Client, log zerolog.Logger) *PositionManager {
@@ -331,7 +338,7 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 // All failures are logged but non-fatal: sync tick continues so other halts
 // + position updates aren't lost. halt_until = NOW + 1h (auto-reset by
 // existing filters.maintainHaltState path).
-func (pm *PositionManager) tripReconcileHalt(ctx context.Context, haltType string, context map[string]any, log zerolog.Logger) {
+func (pm *PositionManager) tripReconcileHalt(ctx context.Context, haltType string, payload map[string]any, log zerolog.Logger) {
 	now := pm.nowFn()
 	haltReason := "position_" + haltType // e.g. position_local_only_orphan
 	haltUntil := pgtype.Timestamptz{Time: now.Add(reconcileHaltDuration), Valid: true}
@@ -344,7 +351,7 @@ func (pm *PositionManager) tripReconcileHalt(ctx context.Context, haltType strin
 		return
 	}
 
-	ctxJSON, err := json.Marshal(context)
+	ctxJSON, err := json.Marshal(payload)
 	if err != nil {
 		log.Error().Err(err).Msg("reconcile.halt: context json marshal failed")
 		ctxJSON = []byte(`{}`)
@@ -363,6 +370,16 @@ func (pm *PositionManager) tripReconcileHalt(ctx context.Context, haltType strin
 		Str("halt_type", haltType).
 		Time("halt_until", haltUntil.Time).
 		Msg("halt.rca.created")
+
+	// Round 4: 🔴 critical Feishu alert for reconcile halts. Best-effort.
+	if pm.notifier != nil {
+		level, dedupe, title, body := notify.Halt(haltType, haltType, rca.ID, string(ctxJSON))
+		go func() {
+			sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = pm.notifier.Send(sendCtx, level, dedupe, title, body)
+		}()
+	}
 }
 
 // rebuildRedisZset replaces positions_active zset to match `trades`. Member=trade_id (str),
