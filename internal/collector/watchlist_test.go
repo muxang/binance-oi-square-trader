@@ -45,6 +45,13 @@ func (q *fakeWLQueries) GetOIChangeTop(_ context.Context, _ int32) ([]gen.GetOIC
 func (q *fakeWLQueries) GetKlinesPriceChangeTop(_ context.Context, _ int32) ([]gen.GetKlinesPriceChangeTopRow, error) {
 	return q.priceRows, q.priceErr
 }
+// Phase 5.2 Round 2.x: WatchlistCollector queries watchlist_overrides on each
+// tick. Tests don't exercise overrides; fake returns empty so auto-selection
+// logic stays under test.
+func (q *fakeWLQueries) ListWatchlistOverrides(_ context.Context) ([]gen.WatchlistOverride, error) {
+	return nil, nil
+}
+
 func (q *fakeWLQueries) InsertWatchlistSnapshot(_ context.Context, arg gen.InsertWatchlistSnapshotParams) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()

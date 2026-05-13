@@ -34,6 +34,8 @@ type WatchlistQueries interface {
 	GetOIChangeTop(ctx context.Context, limit int32) ([]gen.GetOIChangeTopRow, error)
 	GetKlinesPriceChangeTop(ctx context.Context, limit int32) ([]gen.GetKlinesPriceChangeTopRow, error)
 	InsertWatchlistSnapshot(ctx context.Context, arg gen.InsertWatchlistSnapshotParams) error
+	// Phase 5.2 Round 2.x: admin Web UI watchlist include/exclude overrides.
+	ListWatchlistOverrides(ctx context.Context) ([]gen.WatchlistOverride, error)
 }
 
 // WatchlistSymbolMeta exposes only GetOnboardDates from *binance.SymbolService
@@ -152,6 +154,10 @@ func (c *WatchlistCollector) Run(ctx context.Context) error {
 	}
 	pool := c.sortAndTruncate(filtered)
 
+	// Phase 5.2 Round 2.x: apply admin Web UI overrides (mu manual include/exclude).
+	// Non-fatal: query failure → keep auto-selected pool unchanged.
+	pool, overrideStats := c.applyAdminOverrides(ctx, pool)
+
 	if err := c.insertSnapshot(ctx, now, pool); err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
@@ -163,6 +169,8 @@ func (c *WatchlistCollector) Run(ctx context.Context) error {
 		Int("pool_size", len(pool)).
 		Int("candidates", len(candidates)).
 		Int("filtered_out", len(candidates)-len(filtered)).
+		Int("excluded_by_admin", overrideStats.excluded).
+		Int("included_by_admin", overrideStats.included).
 		Msg("watchlist tick complete")
 	if len(pool) < c.cfg.MinSize {
 		c.log.Warn().Int("size", len(pool)).Int("min", c.cfg.MinSize).Msg("watchlist below min size")
@@ -299,6 +307,77 @@ func (c *WatchlistCollector) applyFilters(candidates []symbolEntry, tickerMap ma
 		out = append(out, e)
 	}
 	return out
+}
+
+// overrideStats summarises admin override effects per tick (for logging).
+type overrideStats struct {
+	excluded int
+	included int
+}
+
+// applyAdminOverrides applies watchlist_overrides table rows (Phase 5.2 Round 2.x):
+//   action='exclude' → drop from pool (even if auto-selected)
+//   action='include' → force-add to pool (even if not in OI/Square top)
+//
+// Failure to query the table is non-fatal: pool is returned unchanged.
+// mu use case: SAPIENUSDT -4168 reproducible → exclude → no more trade attempts.
+func (c *WatchlistCollector) applyAdminOverrides(ctx context.Context, pool []symbolEntry) ([]symbolEntry, overrideStats) {
+	stats := overrideStats{}
+	overrides, err := c.queries.ListWatchlistOverrides(ctx)
+	if err != nil {
+		c.log.Warn().Err(err).Msg("watchlist: ListWatchlistOverrides failed, keeping auto-selected pool")
+		return pool, stats
+	}
+	if len(overrides) == 0 {
+		return pool, stats
+	}
+
+	// Partition into exclude set + include set.
+	excludeSet := map[string]string{} // symbol → reason
+	includeSet := map[string]string{}
+	for _, o := range overrides {
+		switch o.Action {
+		case "exclude":
+			excludeSet[o.Symbol] = o.Reason
+		case "include":
+			includeSet[o.Symbol] = o.Reason
+		}
+	}
+
+	// Step 1: remove excluded.
+	if len(excludeSet) > 0 {
+		filtered := pool[:0] // reuse backing array
+		for _, e := range pool {
+			if reason, blocked := excludeSet[e.Symbol]; blocked {
+				stats.excluded++
+				c.log.Info().Str("symbol", e.Symbol).Str("reason", reason).Msg("watchlist: admin exclude applied")
+				continue
+			}
+			filtered = append(filtered, e)
+		}
+		pool = filtered
+	}
+
+	// Step 2: force-add included (if not already in pool). Score sentinel
+	// 10000 keeps them above auto-selected for visibility, but doesn't disturb
+	// natural ordering by accident.
+	present := make(map[string]bool, len(pool))
+	for _, e := range pool {
+		present[e.Symbol] = true
+	}
+	for sym, reason := range includeSet {
+		if present[sym] {
+			continue
+		}
+		pool = append(pool, symbolEntry{
+			Symbol:  sym,
+			Sources: []string{"admin_include"},
+			Score:   10000,
+		})
+		stats.included++
+		c.log.Info().Str("symbol", sym).Str("reason", reason).Msg("watchlist: admin include applied")
+	}
+	return pool, stats
 }
 
 // sortAndTruncate: score DESC, qv DESC, symbol ASC; cap at MaxSize.
