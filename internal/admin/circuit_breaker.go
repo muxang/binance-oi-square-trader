@@ -1,15 +1,23 @@
-// v0.2 Round R.1 Part 2: admin manual halt reset endpoint.
+// v0.2 Round R.1 Part 2 + Round R.2 fix: admin manual halt reset endpoint.
 //
 // POST /api/admin/circuit-breaker/reset
 //
 //	body: {"confirm": true}
 //	auth: Caddy basic-auth at reverse proxy (no in-process auth — trusting infra)
 //
+// Round R.2 bug fix: previous version only cleared halt flag + halt_until,
+// leaving daily_pnl + consecutive_losses untouched. Trader's 1min CB eval
+// (TripDailyLossHalt) re-evaluated and re-tripped within the same minute,
+// pushing halt_until to next day. The "manual reset" became a 60-second window.
+//
+// Fix: full 5-item reset — also zero daily_pnl + consecutive_losses +
+// last_btc_crash_ts + last_loss_at so the eval can't immediately re-trip.
+//
 // Idempotent semantics:
 //   - if trading_halted=false: 409 (nothing to reset)
 //   - if confirm != true:      400
-//   - on success: clears halt_reason/halt_until + sets manual_reset_at/by
-//   - INSERT circuit_breaker_events row (event_type='manual_reset' with snapshots)
+//   - on success: clears ALL trip-causing state + sets manual_reset_at/by
+//   - INSERT circuit_breaker_events row (event_type='manual_full_reset' with snapshots)
 //
 // GET /api/admin/circuit-breaker/events
 //
@@ -100,13 +108,20 @@ func (s *Server) handleCircuitBreakerReset(w http.ResponseWriter, r *http.Reques
 	}
 
 	now := time.Now().UTC()
+	// Round R.2: full 5-item reset. Without zeroing daily_pnl + consecutive_losses,
+	// the trader's TripDailyLossHalt / TripConsecutiveLosses re-evaluate next
+	// tick and immediately re-trip the halt (observed: re-tripped within 60s).
 	if _, err := tx.Exec(ctx, `
 		UPDATE circuit_breaker_state
-		SET trading_halted   = false,
-		    halt_reason      = NULL,
-		    halt_until       = NULL,
-		    manual_reset_at  = $1,
-		    manual_reset_by  = $2
+		SET trading_halted     = false,
+		    halt_reason        = NULL,
+		    halt_until         = NULL,
+		    daily_pnl          = 0,
+		    consecutive_losses = 0,
+		    last_btc_crash_ts  = NULL,
+		    last_loss_at       = NULL,
+		    manual_reset_at    = $1,
+		    manual_reset_by    = $2
 		WHERE id = 1
 	`, now, actor); err != nil {
 		s.log.Error().Err(err).Msg("cb_reset: update state failed")
@@ -117,7 +132,7 @@ func (s *Server) handleCircuitBreakerReset(w http.ResponseWriter, r *http.Reques
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO circuit_breaker_events
 			(ts, event_type, halt_reason, halt_until_before, actor, daily_pnl_snapshot, consec_losses_snapshot, note)
-		VALUES ($1, 'manual_reset', $2, $3, $4, $5::numeric, $6, $7)
+		VALUES ($1, 'manual_full_reset', $2, $3, $4, $5::numeric, $6, $7)
 	`, now, derefOrEmpty(haltReason), haltUntil, actor, dailyPnl, consecLosses, req.Note); err != nil {
 		s.log.Error().Err(err).Msg("cb_reset: insert event failed")
 		s.writeError(w, http.StatusInternalServerError, "audit log error")

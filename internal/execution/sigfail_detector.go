@@ -23,7 +23,6 @@ package execution
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -32,9 +31,16 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/shopspring/decimal"
 
+	"trader/internal/pkg/indicator"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/timez"
 	"trader/internal/storage/postgres/gen"
+)
+
+// Round 3.y constants — EMA20 computed from PG klines, not Redis.
+const (
+	emaPeriod        = 20 // EMA20 — period in the indicator name
+	emaComputeBars   = 30 // period + buffer for stable seed (10 extra bars)
 )
 
 // sigfailKlinesTimeframe is the canonical timeframe SIGFAIL pulls from PG.
@@ -169,31 +175,51 @@ func (sd *SigfailDetector) checkOIDrop(ctx context.Context, r gen.ListOpenTrades
 	return trigger, true
 }
 
-// checkEMA20Break: last N 15m closes (PG klines) all < EMA20 (Redis ema20:{symbol}).
-// Round 3.x: PG replaces the unwritten Redis closes key.
-// Returns (trigger, ok). ok=false on data unavailable.
+// checkEMA20Break (Round 3.y): EMA20 computed from PG klines, not Redis.
+//
+// Redis ema20:{symbol} had transient bugs (observed 2026-05-13 15:55 BJT:
+// ESPORTSUSDT ema20=0.00998 when price=0.61 — calculator returned garbage).
+// Round 3.y removes the Redis dependency entirely. We pull 30 closes from PG,
+// reverse to oldest-first, run indicator.EMA(period=20), and use the result
+// in-process. Eliminates a whole class of stale/garbage failures.
+//
+// Returns (trigger, ok). ok=false when closes insufficient or EMA compute fails.
 func (sd *SigfailDetector) checkEMA20Break(ctx context.Context, r gen.ListOpenTradesForExitRow, log zerolog.Logger) (bool, bool) {
-	ema, err := sd.getEMA20(ctx, r.Symbol)
-	if err != nil || ema.IsZero() {
-		log.Debug().Err(err).Msg("sigfail.ema20: EMA unavailable; skip EMA condition")
-		return false, false
-	}
 	closes, err := sd.db.GetLastNCloses(ctx, gen.GetLastNClosesParams{
 		Symbol:    r.Symbol,
 		Timeframe: sigfailKlinesTimeframe,
-		Limit:     int32(sd.cfg.EMA20KLines),
+		Limit:     emaComputeBars,
 	})
-	if err != nil || len(closes) < sd.cfg.EMA20KLines {
-		log.Debug().Err(err).Int("got", len(closes)).Msg("sigfail.ema20: closes short; skip EMA condition")
+	if err != nil || len(closes) < emaPeriod {
+		log.Debug().Err(err).Int("got", len(closes)).Int("need", emaPeriod).
+			Msg("sigfail.ema20: closes insufficient for EMA seed; skip")
 		return false, false
 	}
-	for _, c := range closes {
-		if !c.LessThan(ema) {
-			log.Debug().Str("close", c.String()).Str("ema", ema.String()).Msg("sigfail.ema20.eval: at least one close ≥ EMA → no trigger")
+	if len(closes) < sd.cfg.EMA20KLines {
+		log.Debug().Int("got", len(closes)).Int("need_check", sd.cfg.EMA20KLines).
+			Msg("sigfail.ema20: closes shorter than check window; skip")
+		return false, false
+	}
+	// PG returns newest-first; indicator.EMA expects oldest-first.
+	ordered := make([]decimal.Decimal, len(closes))
+	for i, c := range closes {
+		ordered[len(closes)-1-i] = c
+	}
+	ema, err := indicator.EMA(ordered, emaPeriod)
+	if err != nil || ema.IsZero() {
+		log.Warn().Err(err).Msg("sigfail.ema20: indicator.EMA compute failed; skip")
+		return false, false
+	}
+	// Check the most recent EMA20KLines closes (still newest-first in `closes`) all < EMA.
+	for i := 0; i < sd.cfg.EMA20KLines; i++ {
+		if !closes[i].LessThan(ema) {
+			log.Debug().Str("close", closes[i].String()).Str("ema", ema.String()).
+				Msg("sigfail.ema20.eval: at least one close ≥ EMA → no trigger")
 			return false, true
 		}
 	}
-	log.Debug().Str("ema", ema.String()).Int("n", sd.cfg.EMA20KLines).Msg("sigfail.ema20.eval: all closes < EMA → trigger")
+	log.Debug().Str("ema", ema.String()).Int("n", sd.cfg.EMA20KLines).
+		Msg("sigfail.ema20.eval: all closes < EMA → trigger")
 	return true, true
 }
 
@@ -247,25 +273,4 @@ func (sd *SigfailDetector) getCurrentPrice(ctx context.Context, symbol string) (
 	return p, nil
 }
 
-// getEMA20 reads ema20:{symbol} (JSON payload from klines collector).
-func (sd *SigfailDetector) getEMA20(ctx context.Context, symbol string) (decimal.Decimal, error) {
-	raw, err := sd.rdb.Get(ctx, "ema20:"+symbol).Result()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return decimal.Zero, fmt.Errorf("ema20 not in redis")
-		}
-		return decimal.Zero, err
-	}
-	var p struct {
-		Value string `json:"value"`
-	}
-	if err := json.Unmarshal([]byte(raw), &p); err != nil || p.Value == "" {
-		return decimal.Zero, fmt.Errorf("parse ema20 payload: %w", err)
-	}
-	v, err := decimal.NewFromString(p.Value)
-	if err != nil {
-		return decimal.Zero, fmt.Errorf("parse ema20 decimal: %w", err)
-	}
-	return v, nil
-}
 
