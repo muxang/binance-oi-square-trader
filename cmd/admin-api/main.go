@@ -47,6 +47,25 @@ func main() {
 	}
 	log.Info().Msg("DB connected (read-only, max_conns=5)")
 
+	// v0.2 Round R.1 Part 2 (Phase 5.2 admin v1.1 first write op): separate
+	// writable pool with tight max_conns=2 for the few write endpoints
+	// (manual halt reset; future: manual close, threshold updates).
+	// Kept distinct from the read pool so any write bug can't starve reads.
+	writeCfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("parse db url (write)")
+	}
+	writeCfg.MaxConns = 2
+	writePool, err := pgxpool.NewWithConfig(ctx, writeCfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("connect db (write)")
+	}
+	defer writePool.Close()
+	if err := writePool.Ping(ctx); err != nil {
+		log.Fatal().Err(err).Msg("ping db (write)")
+	}
+	log.Info().Msg("DB write pool connected (max_conns=2)")
+
 	redisOpts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("parse redis url")
@@ -56,7 +75,7 @@ func main() {
 		log.Warn().Err(err).Msg("redis ping failed (non-fatal)")
 	}
 
-	srv := admin.NewServer(pool, rdb, prometheusURL, log.Logger)
+	srv := admin.NewServer(pool, writePool, rdb, prometheusURL, log.Logger)
 	httpSrv := &http.Server{
 		Addr:         addr,
 		Handler:      srv.Routes(),

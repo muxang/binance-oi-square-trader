@@ -69,7 +69,8 @@ func (s *Server) handleCircuitBreakerReset(w http.ResponseWriter, r *http.Reques
 	}
 
 	ctx := r.Context()
-	tx, err := s.db.Begin(ctx)
+	// Use writable pool (s.db is read-only via default_transaction_read_only=on).
+	tx, err := s.writeDB.Begin(ctx)
 	if err != nil {
 		s.log.Error().Err(err).Msg("cb_reset: begin tx failed")
 		s.writeError(w, http.StatusInternalServerError, "db tx error")
