@@ -42,6 +42,13 @@ type Config struct {
 	// Env: TRAIL_STAGE1_ACTIVATE_PCT / TRAIL_STAGE1_CALLBACK_RATE.
 	TrailStage1ActivatePct  decimal.Decimal
 	TrailStage1CallbackRate decimal.Decimal
+	// v0.2 Round 2 Module A: TP_STAGE 山寨币保守化. Two TAKE_PROFIT_MARKET algos
+	// placed at entry. TP1 +10% sells 20%, TP2 +25% sells 20%. Remaining 60% is
+	// covered by trail (S1-S4) and disaster stop. Env: TP{1,2}_PCT / TP{1,2}_RATIO.
+	TP1Pct   decimal.Decimal
+	TP1Ratio decimal.Decimal
+	TP2Pct   decimal.Decimal
+	TP2Ratio decimal.Decimal
 	// Leverage is the target initial leverage for all new positions.
 	// Env: LEVERAGE (e.g. 10).
 	Leverage int
@@ -230,6 +237,10 @@ func (e *Executor) PlaceEntry(
 	// Binance handles activation when mark price hits entry × (1 + activate_pct).
 	// Failure is non-fatal — disaster stop + trail_upgrader cron S0 fallback cover.
 	e.placeTrailingStop(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
+
+	// Steps 11-12 (v0.2 Round 2 Module A): arm TP1 (+10%, 20% qty) + TP2 (+25%, 20% qty).
+	// Failure of either is non-fatal — trail + disaster cover the position.
+	e.placeTakeProfits(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
 }
 
 // waitFill polls until the order is FILLED or the deadline is exceeded.
@@ -390,6 +401,85 @@ func (e *Executor) placeTrailingStop(
 		Str("activation", activation.String()).
 		Float64("callback_pct", cb).
 		Msg("order.trail.placed: S1 armed at entry")
+}
+
+// placeTakeProfits (v0.2 Round 2 Module A) arms TP1 + TP2 TAKE_PROFIT_MARKET algos
+// at entry × (1 + TP{1,2}Pct) for {TP1Ratio, TP2Ratio} of the filled qty.
+// reduceOnly + per-position bounds (Binance side) keep these coexisting with
+// the entry-time S1 trail and disaster stop without over-selling.
+// Each TP placement is independent — failure of one doesn't abort the other.
+func (e *Executor) placeTakeProfits(
+	ctx context.Context,
+	tradeID int64,
+	symbol string,
+	fillQty, fillPrice, tickSize decimal.Decimal,
+	log zerolog.Logger,
+) {
+	if e.cfg.TP1Pct.IsZero() && e.cfg.TP2Pct.IsZero() {
+		log.Warn().Msg("order.tp.skip: TP1/TP2 PCT zero (config issue)")
+		return
+	}
+	tp1AlgoID := e.placeOneTP(ctx, "tp1", symbol, fillQty, fillPrice, tickSize, e.cfg.TP1Pct, e.cfg.TP1Ratio, log)
+	tp2AlgoID := e.placeOneTP(ctx, "tp2", symbol, fillQty, fillPrice, tickSize, e.cfg.TP2Pct, e.cfg.TP2Ratio, log)
+	if tp1AlgoID == "" && tp2AlgoID == "" {
+		return
+	}
+	tp1 := pgtype.Text{}
+	tp2 := pgtype.Text{}
+	if tp1AlgoID != "" {
+		tp1 = pgtype.Text{String: tp1AlgoID, Valid: true}
+	}
+	if tp2AlgoID != "" {
+		tp2 = pgtype.Text{String: tp2AlgoID, Valid: true}
+	}
+	if err := e.db.UpdateTradeTPAlgos(ctx, gen.UpdateTradeTPAlgosParams{
+		ID:               tradeID,
+		BinanceTP1AlgoID: tp1,
+		BinanceTP2AlgoID: tp2,
+	}); err != nil {
+		log.Error().Err(err).Str("tp1_algo_id", tp1AlgoID).Str("tp2_algo_id", tp2AlgoID).
+			Msg("order.tp.placed: DB update failed (algos armed on Binance but trade columns NULL — algo_polling won't see them)")
+	}
+}
+
+// placeOneTP rounds and places one TAKE_PROFIT_MARKET. Returns "" on failure (non-fatal).
+func (e *Executor) placeOneTP(
+	ctx context.Context,
+	kind, symbol string,
+	fillQty, fillPrice, tickSize, pct, ratio decimal.Decimal,
+	log zerolog.Logger,
+) string {
+	if pct.IsZero() || ratio.IsZero() {
+		return ""
+	}
+	stopPrice := fillPrice.Mul(decimal.NewFromInt(1).Add(pct))
+	if !tickSize.IsZero() {
+		stopPrice = stopPrice.Div(tickSize).Truncate(0).Mul(tickSize)
+	}
+	tpQty := fillQty.Mul(ratio).Truncate(8) // qty precision floor; per-symbol stepSize handled elsewhere
+	if tpQty.IsZero() {
+		log.Warn().Str("kind", kind).Msg("order.tp: partial qty rounds to zero, skipping (sub-stepSize position)")
+		return ""
+	}
+	start := e.nowFn()
+	res, err := e.bc.PlaceAlgoTakeProfit(ctx, symbol, tpQty.String(), stopPrice.String())
+	metrics.OrderLatencySeconds.WithLabelValues("tp").Observe(e.nowFn().Sub(start).Seconds())
+	if err != nil {
+		log.Warn().Err(err).
+			Str("kind", kind).
+			Str("stop_price", stopPrice.String()).
+			Str("qty", tpQty.String()).
+			Msg("order.tp.failed: non-fatal (trail + disaster cover)")
+		return ""
+	}
+	algoIDStr := strconv.FormatInt(res.AlgoID, 10)
+	log.Info().
+		Str("kind", kind).
+		Str("algo_id", algoIDStr).
+		Str("stop_price", stopPrice.String()).
+		Str("qty", tpQty.String()).
+		Msg("order.tp.placed")
+	return algoIDStr
 }
 
 // emergencyClose places an immediate MARKET SELL to close the position when the

@@ -124,6 +124,12 @@ type ExitConfig struct {
 	TPStage1Ratio               decimal.Decimal `mapstructure:"TP_STAGE1_RATIO"`
 	TPStage2Pct                 decimal.Decimal `mapstructure:"TP_STAGE2_PCT"`
 	TPStage2Ratio               decimal.Decimal `mapstructure:"TP_STAGE2_RATIO"`
+	// v0.2 Round 2 Module A: TP_STAGE 山寨币保守化. TP1 +10% sells 20%, TP2 +25% sells 20%.
+	// Decimal at config layer; binance API stopPrice = entry × (1 + TP_PCT), qty = total × RATIO.
+	TP1Pct   decimal.Decimal `mapstructure:"TP1_PCT"`
+	TP1Ratio decimal.Decimal `mapstructure:"TP1_RATIO"`
+	TP2Pct   decimal.Decimal `mapstructure:"TP2_PCT"`
+	TP2Ratio decimal.Decimal `mapstructure:"TP2_RATIO"`
 	TrailingActivatePct         decimal.Decimal `mapstructure:"TRAILING_ACTIVATE_PCT"`
 	TrailingDistanceATRMult     decimal.Decimal `mapstructure:"TRAILING_DISTANCE_ATR_MULT"`
 	// v0.2 Round 1: 4-stage trailing thresholds (all decimal — S1/S2 callbacks
@@ -226,6 +232,8 @@ func setDefaults(v *viper.Viper) {
 		"TRAIL_STAGE2_UPGRADE_PCT":  "0.15", "TRAIL_STAGE2_CALLBACK_RATE": "0.05",
 		"TRAIL_STAGE3_UPGRADE_PCT":  "0.30", "TRAIL_STAGE3_CALLBACK_RATE": "0.10",
 		"TRAIL_STAGE4_UPGRADE_PCT":  "0.60", "TRAIL_STAGE4_CALLBACK_RATE": "0.15",
+		"TP1_PCT": "0.10", "TP1_RATIO": "0.20",
+		"TP2_PCT": "0.25", "TP2_RATIO": "0.20",
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
 		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
 		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,

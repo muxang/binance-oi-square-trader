@@ -90,6 +90,19 @@ SET consecutive_losses = CASE
     END
 WHERE id = 1;
 
+-- name: UpdateDailyPnlPartial :exec
+-- v0.2 Round 2 Module A: accumulate partial-close P&L into today's daily_pnl
+-- WITHOUT touching consecutive_losses or last_loss_at. Partial wins (TP1/TP2)
+-- shouldn't reset consec_losses — only the terminal close decides win/loss for
+-- counter purposes. daily_pnl_date reset semantic same as UpdateAfterTradeClose.
+UPDATE circuit_breaker_state
+SET daily_pnl = CASE
+        WHEN daily_pnl_date = $2 THEN daily_pnl + $1::numeric
+        ELSE $1::numeric
+    END,
+    daily_pnl_date = $2
+WHERE id = 1;
+
 -- name: ResetDisasterStopFailCounter :exec
 -- Phase 4 Round 2: called when PlaceAlgoConditionalStop succeeds.
 -- Clears the consecutive failure counter so the next failure starts at 1h backoff.

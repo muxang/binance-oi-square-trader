@@ -551,6 +551,8 @@ SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.binance_disaster_stop_order_id,
        t.binance_trail_algo_id,
        t.trail_stage,
+       t.binance_tp1_algo_id,
+       t.binance_tp2_algo_id,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -558,6 +560,8 @@ WHERE t.status = 'open'
   AND (
     (t.binance_disaster_stop_order_id IS NOT NULL AND t.binance_disaster_stop_order_id != '')
     OR (t.binance_trail_algo_id IS NOT NULL AND t.binance_trail_algo_id != '')
+    OR (t.binance_tp1_algo_id IS NOT NULL AND t.binance_tp1_algo_id != '')
+    OR (t.binance_tp2_algo_id IS NOT NULL AND t.binance_tp2_algo_id != '')
   )
 ORDER BY t.entry_ts ASC
 `
@@ -572,11 +576,14 @@ type ListOpenTradesWithAlgoRow struct {
 	BinanceDisasterStopOrderID pgtype.Text
 	BinanceTrailAlgoID         pgtype.Text
 	TrailStage                 int16
+	BinanceTP1AlgoID           pgtype.Text
+	BinanceTP2AlgoID           pgtype.Text
 	CurrentQty                 pgtype.Numeric
 }
 
-// v0.2 Gap 1 + Round 1.x: algo_reconciler iterates these rows each 1min tick.
-// Returns both disaster and trail algo IDs so each is polled separately.
+// v0.2 Gap 1 + Round 1.x + Round 2: algo_reconciler iterates these rows each
+// 1min tick. Returns all 4 algo IDs (disaster / trail / tp1 / tp2) so each is
+// polled separately and dispatched to the correct close path.
 func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesWithAlgoRow, error) {
 	rows, err := q.db.Query(ctx, listOpenTradesWithAlgo)
 	if err != nil {
@@ -587,12 +594,68 @@ func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesW
 	for rows.Next() {
 		var i ListOpenTradesWithAlgoRow
 		if err := rows.Scan(&i.ID, &i.Symbol, &i.EntryTs, &i.EntryPrice, &i.Margin, &i.Leverage,
-			&i.BinanceDisasterStopOrderID, &i.BinanceTrailAlgoID, &i.TrailStage, &i.CurrentQty); err != nil {
+			&i.BinanceDisasterStopOrderID, &i.BinanceTrailAlgoID, &i.TrailStage,
+			&i.BinanceTP1AlgoID, &i.BinanceTP2AlgoID, &i.CurrentQty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
 	return items, rows.Err()
+}
+
+// v0.2 Round 2 Module A: 3 hand-edited queries (TP algo IDs + partial qty decrement).
+
+const updateTradeTPAlgos = `-- name: UpdateTradeTPAlgos :exec
+UPDATE trades
+SET binance_tp1_algo_id = $2,
+    binance_tp2_algo_id = $3
+WHERE id = $1
+`
+
+type UpdateTradeTPAlgosParams struct {
+	ID               int64
+	BinanceTP1AlgoID pgtype.Text
+	BinanceTP2AlgoID pgtype.Text
+}
+
+func (q *Queries) UpdateTradeTPAlgos(ctx context.Context, arg UpdateTradeTPAlgosParams) error {
+	_, err := q.db.Exec(ctx, updateTradeTPAlgos, arg.ID, arg.BinanceTP1AlgoID, arg.BinanceTP2AlgoID)
+	return err
+}
+
+const clearTPAlgoID = `-- name: ClearTPAlgoID :exec
+UPDATE trades
+SET binance_tp1_algo_id = CASE WHEN $2 = 'tp1' THEN NULL ELSE binance_tp1_algo_id END,
+    binance_tp2_algo_id = CASE WHEN $2 = 'tp2' THEN NULL ELSE binance_tp2_algo_id END
+WHERE id = $1
+`
+
+type ClearTPAlgoIDParams struct {
+	ID   int64
+	Type string
+}
+
+func (q *Queries) ClearTPAlgoID(ctx context.Context, arg ClearTPAlgoIDParams) error {
+	_, err := q.db.Exec(ctx, clearTPAlgoID, arg.ID, arg.Type)
+	return err
+}
+
+const decrementPositionQty = `-- name: DecrementPositionQty :exec
+UPDATE position_states
+SET current_qty   = GREATEST(current_qty - $2, 0),
+    last_check_ts = $3
+WHERE trade_id = $1
+`
+
+type DecrementPositionQtyParams struct {
+	TradeID     int64
+	Delta       decimal.Decimal
+	LastCheckTs time.Time
+}
+
+func (q *Queries) DecrementPositionQty(ctx context.Context, arg DecrementPositionQtyParams) error {
+	_, err := q.db.Exec(ctx, decrementPositionQty, arg.TradeID, arg.Delta, arg.LastCheckTs)
+	return err
 }
 
 // v0.2 Round 1 Module B: trail_upgrader query + writes (4 new queries below).

@@ -158,6 +158,27 @@ func (q *Queries) UpdateAfterTradeClose(ctx context.Context, arg UpdateAfterTrad
 	return err
 }
 
+// v0.2 Round 2 Module A: partial-close daily_pnl rollup (no consec_losses touch).
+const updateDailyPnlPartial = `-- name: UpdateDailyPnlPartial :exec
+UPDATE circuit_breaker_state
+SET daily_pnl = CASE
+        WHEN daily_pnl_date = $2 THEN daily_pnl + $1::numeric
+        ELSE $1::numeric
+    END,
+    daily_pnl_date = $2
+WHERE id = 1
+`
+
+type UpdateDailyPnlPartialParams struct {
+	RealizedPnl  decimal.Decimal
+	DailyPnlDate pgtype.Date
+}
+
+func (q *Queries) UpdateDailyPnlPartial(ctx context.Context, arg UpdateDailyPnlPartialParams) error {
+	_, err := q.db.Exec(ctx, updateDailyPnlPartial, arg.RealizedPnl, arg.DailyPnlDate)
+	return err
+}
+
 const resetDisasterStopFailCounter = `-- name: ResetDisasterStopFailCounter :exec
 UPDATE circuit_breaker_state
 SET consecutive_disaster_stop_failures = 0

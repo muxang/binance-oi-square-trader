@@ -342,6 +342,40 @@ func (c *Client) PlaceAlgoTrailingStop(ctx context.Context, symbol, quantity, ac
 	return AlgoOrderResult{AlgoID: resp.AlgoID, ClientAlgoID: resp.ClientAlgoID, Status: resp.AlgoStatus}, nil
 }
 
+// PlaceAlgoTakeProfit places a TAKE_PROFIT_MARKET via Algo Service (Round 2 Module A).
+// Fires SELL MARKET when mark price >= stopPrice. quantity is partial (e.g. 20% of
+// position for TP1). reduceOnly=true keeps it position-bounded so multiple TPs +
+// disaster/trail can coexist without over-selling.
+// Caller is responsible for rounding stopPrice to symbol tickSize and quantity to stepSize.
+//
+// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
+// fetched: 2026-05-13
+func (c *Client) PlaceAlgoTakeProfit(ctx context.Context, symbol, quantity, stopPrice string) (AlgoOrderResult, error) {
+	params := url.Values{}
+	params.Set("algoType", "CONDITIONAL")
+	params.Set("symbol", symbol)
+	params.Set("side", "SELL")
+	params.Set("positionSide", "BOTH")
+	params.Set("type", "TAKE_PROFIT_MARKET")
+	params.Set("quantity", quantity)
+	params.Set("triggerPrice", stopPrice)
+	params.Set("workingType", "MARK_PRICE")
+	params.Set("reduceOnly", "true")
+	body, err := c.doWriteRetry(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, 1)
+	if err != nil {
+		return AlgoOrderResult{}, fmt.Errorf("place algo take profit %s: %w", symbol, err)
+	}
+	var resp struct {
+		AlgoID       int64  `json:"algoId"`
+		ClientAlgoID string `json:"clientAlgoId"`
+		AlgoStatus   string `json:"algoStatus"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return AlgoOrderResult{}, fmt.Errorf("parse algo take profit resp: %w", err)
+	}
+	return AlgoOrderResult{AlgoID: resp.AlgoID, ClientAlgoID: resp.ClientAlgoID, Status: resp.AlgoStatus}, nil
+}
+
 // UserTrade holds one fill from GET /fapi/v1/userTrades.
 // Commission is always in commissionAsset (USDT for USDⓈ-M with BNB fee discount off).
 //

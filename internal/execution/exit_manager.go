@@ -51,6 +51,11 @@ const (
 	ExitReasonTrailS2 = "trail_s2"
 	ExitReasonTrailS3 = "trail_s3"
 	ExitReasonTrailS4 = "trail_s4"
+	// v0.2 Round 2 Module A: TP_STAGE partial closes. trades.status stays 'open';
+	// trade_exits.type='tp1' / 'tp2' records the partial fill. Multiple exit rows
+	// per trade are valid for TPs (trade_exits unique constraint is on trade_id+type).
+	ExitReasonTP1 = "tp1"
+	ExitReasonTP2 = "tp2"
 )
 
 // Round 5 v0.1 thresholds (Round 0 §2 4.3 + SPEC §出场).

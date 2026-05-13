@@ -200,14 +200,16 @@ WHERE t.status IN ('open', 'partial')
 ORDER BY t.entry_ts ASC;
 
 -- name: ListOpenTradesWithAlgo :many
--- v0.2 Gap 1 + Round 1.x: rows algo_reconciler iterates to detect Algo FINISHED.
--- Returns BOTH disaster_stop and trail algo IDs so the reconciler can poll each.
--- Filter: status='open' AND has EITHER algo (disaster or trail).
--- 'closing' trades excluded: regular close pipeline already cancelled both.
+-- v0.2 Gap 1 + Round 1.x + Round 2: rows algo_reconciler iterates each 1min tick.
+-- Returns ALL 4 algo IDs so the reconciler can poll each independently:
+--   disaster_stop / trail / tp1 / tp2.
+-- Filter: status='open' AND has at least one algo armed.
 SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.binance_disaster_stop_order_id,
        t.binance_trail_algo_id,
        t.trail_stage,
+       t.binance_tp1_algo_id,
+       t.binance_tp2_algo_id,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -215,8 +217,35 @@ WHERE t.status = 'open'
   AND (
     (t.binance_disaster_stop_order_id IS NOT NULL AND t.binance_disaster_stop_order_id != '')
     OR (t.binance_trail_algo_id IS NOT NULL AND t.binance_trail_algo_id != '')
+    OR (t.binance_tp1_algo_id IS NOT NULL AND t.binance_tp1_algo_id != '')
+    OR (t.binance_tp2_algo_id IS NOT NULL AND t.binance_tp2_algo_id != '')
   )
 ORDER BY t.entry_ts ASC;
+
+-- name: UpdateTradeTPAlgos :exec
+-- v0.2 Round 2 Module A: persist the two TAKE_PROFIT_MARKET algo IDs after entry.
+-- Either may be NULL when placement failed (degraded entry — trail/disaster still cover).
+UPDATE trades
+SET binance_tp1_algo_id = $2,
+    binance_tp2_algo_id = $3
+WHERE id = $1;
+
+-- name: ClearTPAlgoID :exec
+-- v0.2 Round 2 Module A: after TP1 or TP2 fires (FINISHED), null out the matching
+-- algo id so next algo_polling tick stops querying it. $2 = 'tp1' or 'tp2'.
+UPDATE trades
+SET binance_tp1_algo_id = CASE WHEN $2 = 'tp1' THEN NULL ELSE binance_tp1_algo_id END,
+    binance_tp2_algo_id = CASE WHEN $2 = 'tp2' THEN NULL ELSE binance_tp2_algo_id END
+WHERE id = $1;
+
+-- name: DecrementPositionQty :exec
+-- v0.2 Round 2 Module A: TP partial close — reduce position_states.current_qty
+-- by the partial fill amount. Round 1+ trail_upgrader reads ps.current_qty each
+-- tick so it'll naturally use the reduced qty on next upgrade/ratchet.
+UPDATE position_states
+SET current_qty   = GREATEST(current_qty - $2, 0),
+    last_check_ts = $3
+WHERE trade_id = $1;
 
 -- name: CleanupOrphanEnteringTrades :execrows
 -- Phase 4 Round 1 follow-up: orphan cleanup on trader startup.

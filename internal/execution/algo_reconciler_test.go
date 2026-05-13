@@ -28,6 +28,10 @@ type fakeAlgoDeps struct {
 	closed        []gen.UpdateTradeClosedParams
 	stateDeleted  []int64
 	cbUpdated     []gen.UpdateAfterTradeCloseParams
+	// Round 2 Module A partial-close artifacts:
+	qtyDecremented []gen.DecrementPositionQtyParams
+	tpCleared      []gen.ClearTPAlgoIDParams
+	dailyPartial   []gen.UpdateDailyPnlPartialParams
 }
 
 func (f *fakeAlgoDeps) ListOpenTradesWithAlgo(_ context.Context) ([]gen.ListOpenTradesWithAlgoRow, error) {
@@ -47,6 +51,18 @@ func (f *fakeAlgoDeps) DeletePositionState(_ context.Context, tradeID int64) err
 }
 func (f *fakeAlgoDeps) UpdateAfterTradeClose(_ context.Context, arg gen.UpdateAfterTradeCloseParams) error {
 	f.cbUpdated = append(f.cbUpdated, arg)
+	return nil
+}
+func (f *fakeAlgoDeps) DecrementPositionQty(_ context.Context, arg gen.DecrementPositionQtyParams) error {
+	f.qtyDecremented = append(f.qtyDecremented, arg)
+	return nil
+}
+func (f *fakeAlgoDeps) ClearTPAlgoID(_ context.Context, arg gen.ClearTPAlgoIDParams) error {
+	f.tpCleared = append(f.tpCleared, arg)
+	return nil
+}
+func (f *fakeAlgoDeps) UpdateDailyPnlPartial(_ context.Context, arg gen.UpdateDailyPnlPartialParams) error {
+	f.dailyPartial = append(f.dailyPartial, arg)
 	return nil
 }
 
@@ -347,4 +363,174 @@ func TestTrailExitReasonForStage(t *testing.T) {
 	assert.Equal(t, ExitReasonTrailS2, trailExitReasonForStage(2))
 	assert.Equal(t, ExitReasonTrailS3, trailExitReasonForStage(3))
 	assert.Equal(t, ExitReasonTrailS4, trailExitReasonForStage(4))
+}
+
+// --- Round 2 Module A: TP partial close ---
+
+// mkAlgoRowWithTPs adds tp1/tp2 algo IDs on top of mkAlgoRowWithTrail.
+func mkAlgoRowWithTPs(id int64, symbol string, entry, qty float64, tp1ID, tp2ID string) gen.ListOpenTradesWithAlgoRow {
+	r := mkAlgoRow(id, symbol, entry, qty, 10, "")
+	if tp1ID != "" {
+		r.BinanceTP1AlgoID = pgtype.Text{String: tp1ID, Valid: true}
+	}
+	if tp2ID != "" {
+		r.BinanceTP2AlgoID = pgtype.Text{String: tp2ID, Valid: true}
+	}
+	return r
+}
+
+func TestReconcileTick_TP1_Finished_PartialClose(t *testing.T) {
+	// Entry 80000, qty 0.01, TP1 fires at 88000 (entry × 1.10).
+	// Algo placed with qty 0.002 (20% of 0.01). pnl = (88000-80000) × 0.002 = 16.
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTPs(80, "BTCUSDT", 80000, 0.01, "9001", ""),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9001: {AlgoID: 9001, Symbol: "BTCUSDT", AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(88000), Quantity: decimal.NewFromFloat(0.002)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	require.Len(t, deps.exits, 1, "TP1 FINISHED → partial exit row")
+	assert.Equal(t, ExitReasonTP1, deps.exits[0].Type)
+	assert.True(t, deps.exits[0].Pnl.Equal(decimal.NewFromFloat(16)))
+	assert.True(t, deps.exits[0].Qty.Equal(decimal.NewFromFloat(0.002)))
+
+	// Trade NOT fully closed — no UpdateTradeClosed call.
+	assert.Empty(t, deps.closed, "TP partial close MUST NOT mark trade closed")
+	assert.Empty(t, deps.stateDeleted, "position_states preserved (still open)")
+	assert.Empty(t, deps.cbUpdated, "consec_losses untouched (only daily_pnl bumped)")
+
+	require.Len(t, deps.qtyDecremented, 1)
+	assert.True(t, deps.qtyDecremented[0].Delta.Equal(decimal.NewFromFloat(0.002)))
+
+	require.Len(t, deps.tpCleared, 1)
+	assert.Equal(t, "tp1", deps.tpCleared[0].Type)
+
+	require.Len(t, deps.dailyPartial, 1, "daily_pnl partial update")
+}
+
+func TestReconcileTick_TP2_Finished_PartialClose(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTPs(81, "BTCUSDT", 80000, 0.01, "", "9002"),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9002: {AlgoID: 9002, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(100000), Quantity: decimal.NewFromFloat(0.002)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	require.Len(t, deps.exits, 1)
+	assert.Equal(t, ExitReasonTP2, deps.exits[0].Type)
+	require.Len(t, deps.tpCleared, 1)
+	assert.Equal(t, "tp2", deps.tpCleared[0].Type)
+}
+
+func TestReconcileTick_TP1_Then_Trail_SameTick_RunningQty(t *testing.T) {
+	// Both fire same tick. TP1 partial (0.002) then trail full close with remaining 0.008.
+	// Entry 80000, total qty 0.01. TP1 fills @ 88000 (pnl=(88000-80000)*0.002=16).
+	// Trail S1 fills @ 84000 (pnl=(84000-80000)*0.008=32) on remaining qty.
+	r := mkAlgoRowWithTPs(82, "BTCUSDT", 80000, 0.01, "9100", "")
+	r.BinanceTrailAlgoID = pgtype.Text{String: "9101", Valid: true}
+	r.TrailStage = 1
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{r}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9100: {AlgoID: 9100, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(88000), Quantity: decimal.NewFromFloat(0.002)},
+		9101: {AlgoID: 9101, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(84000), Quantity: decimal.NewFromFloat(0.01)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	require.Len(t, deps.exits, 2, "TP1 + trail_s1 = 2 exit rows")
+	// Order: TP1 first, then trail (per ReconcileTick dispatch order).
+	assert.Equal(t, ExitReasonTP1, deps.exits[0].Type)
+	assert.True(t, deps.exits[0].Pnl.Equal(decimal.NewFromFloat(16)), "TP1 pnl on 0.002")
+	assert.Equal(t, ExitReasonTrailS1, deps.exits[1].Type)
+	assert.True(t, deps.exits[1].Pnl.Equal(decimal.NewFromFloat(32)),
+		"trail pnl on running qty 0.008 (= 0.01 - 0.002 TP1)")
+	require.Len(t, deps.closed, 1, "trail fully closes")
+}
+
+func TestReconcileTick_TP1_TP2_Disaster_SameTick(t *testing.T) {
+	// Worst-case same-tick: TP1 + TP2 + disaster all FINISHED.
+	// Entry 80000, qty 0.01. TP1 fills 0.002 @ 88000. TP2 fills 0.002 @ 100000.
+	// Disaster fills remaining 0.006 @ 75200.
+	// Disaster pnl = (75200-80000) × 0.006 = -28.8
+	r := mkAlgoRowWithTPs(83, "BTCUSDT", 80000, 0.01, "9200", "9201")
+	r.BinanceDisasterStopOrderID = pgtype.Text{String: "9202", Valid: true}
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{r}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9200: {AlgoStatus: "FINISHED", ActualPrice: decimal.NewFromFloat(88000), Quantity: decimal.NewFromFloat(0.002)},
+		9201: {AlgoStatus: "FINISHED", ActualPrice: decimal.NewFromFloat(100000), Quantity: decimal.NewFromFloat(0.002)},
+		9202: {AlgoStatus: "FINISHED", ActualPrice: decimal.NewFromFloat(75200), Quantity: decimal.NewFromFloat(0.01)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	require.Len(t, deps.exits, 3, "TP1 + TP2 + disaster = 3 exit rows")
+	assert.Equal(t, ExitReasonTP1, deps.exits[0].Type)
+	assert.Equal(t, ExitReasonTP2, deps.exits[1].Type)
+	assert.Equal(t, ExitReasonDisaster, deps.exits[2].Type)
+	assert.True(t, deps.exits[2].Pnl.Equal(decimal.NewFromFloat(-28.8)),
+		"disaster pnl on running 0.006 (0.01 - 0.002 - 0.002 TPs)")
+	require.Len(t, deps.closed, 1, "disaster fully closes; trail not polled (continue)")
+}
+
+func TestReconcileTick_TP1_Duplicate_NoDoubleDecrement(t *testing.T) {
+	// Simulate idempotency: InsertTradeExitIdempotent returns 0 → don't decrement again.
+	// We force this by pre-populating exits then re-running on the same row.
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTPs(84, "BTCUSDT", 80000, 0.01, "9300", ""),
+	}}
+	// Override InsertTradeExitIdempotent to simulate ON CONFLICT (return 0).
+	deps2 := &dupDeps{fakeAlgoDeps: deps}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9300: {AlgoStatus: "FINISHED", ActualPrice: decimal.NewFromFloat(88000), Quantity: decimal.NewFromFloat(0.002)},
+	}}
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:16379"})
+	ar := NewAlgoReconciler(deps2, bc, rdb, zerolog.Nop())
+	ar.nowFn = func() time.Time { return time.Unix(1778700000, 0).UTC() }
+	ar.ReconcileTick(context.Background())
+	assert.Empty(t, deps.qtyDecremented, "idempotent skip → no double decrement")
+	assert.Empty(t, deps.tpCleared, "idempotent skip → no DB updates")
+}
+
+// dupDeps wraps fakeAlgoDeps but forces InsertTradeExitIdempotent to return 0
+// (simulates ON CONFLICT idempotent skip).
+type dupDeps struct{ *fakeAlgoDeps }
+
+func (d *dupDeps) InsertTradeExitIdempotent(_ context.Context, arg gen.InsertTradeExitParams) (int64, error) {
+	d.exits = append(d.exits, arg)
+	return 0, nil
+}
+
+func TestReconcileTick_TP_NotFinished_NoAction(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTPs(85, "BTCUSDT", 80000, 0.01, "9400", "9401"),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9400: {AlgoStatus: "WORKING"},
+		9401: {AlgoStatus: "WORKING"},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	assert.Empty(t, deps.exits)
+	assert.Empty(t, deps.qtyDecremented)
+}
+
+func TestReconcileTick_TPMetric_Incremented(t *testing.T) {
+	before := testutil.ToFloat64(metrics.TPFilledTotal.WithLabelValues("METRICSYM", "tp1"))
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTPs(86, "METRICSYM", 100, 1, "9500", ""),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		9500: {AlgoStatus: "FINISHED", ActualPrice: decimal.NewFromFloat(110), Quantity: decimal.NewFromFloat(0.2)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	after := testutil.ToFloat64(metrics.TPFilledTotal.WithLabelValues("METRICSYM", "tp1"))
+	assert.Equal(t, 1.0, after-before, "TPFilledTotal incremented on TP1 partial close")
 }

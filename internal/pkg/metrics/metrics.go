@@ -382,6 +382,16 @@ var (
 		},
 		[]string{"from_stage", "to_stage"},
 	)
+
+	// TPFilledTotal counts TAKE_PROFIT_MARKET partial fills per symbol+stage.
+	// Labels: symbol, stage ("tp1" / "tp2"). Cardinality bounded by symbols × 2.
+	TPFilledTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_tp_filled_total",
+			Help: "v0.2 Round 2 TAKE_PROFIT_MARKET partial fills per symbol+stage.",
+		},
+		[]string{"symbol", "stage"},
+	)
 )
 
 func init() {
@@ -398,6 +408,6 @@ func init() {
 		ConsecutiveLossesGauge, BTC30MinDropPct, UnrealizedPnlTotalUSDT,
 		RestartRecoveryRunsTotal,
 		AlgoPollingRunsTotal, AlgoTriggeredTotal,
-		TrailingStageUpgradeTotal,
+		TrailingStageUpgradeTotal, TPFilledTotal,
 	)
 }

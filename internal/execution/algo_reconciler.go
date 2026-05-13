@@ -51,6 +51,11 @@ type AlgoReconcilerDeps interface {
 	UpdateTradeClosed(ctx context.Context, arg gen.UpdateTradeClosedParams) error
 	DeletePositionState(ctx context.Context, tradeID int64) error
 	UpdateAfterTradeClose(ctx context.Context, arg gen.UpdateAfterTradeCloseParams) error
+	// v0.2 Round 2 Module A: partial-close path (TP1/TP2). Does NOT close the trade,
+	// only decrements position_states.current_qty and clears the matching tpN algo id.
+	DecrementPositionQty(ctx context.Context, arg gen.DecrementPositionQtyParams) error
+	ClearTPAlgoID(ctx context.Context, arg gen.ClearTPAlgoIDParams) error
+	UpdateDailyPnlPartial(ctx context.Context, arg gen.UpdateDailyPnlPartialParams) error
 }
 
 // AlgoQuerier is the minimal binance surface.
@@ -106,8 +111,11 @@ func (ar *AlgoReconciler) sumAlgoFees(ctx context.Context, symbol, actualOrderID
 // where Binance reports algoStatus=FINISHED. Per-trade errors are logged but
 // don't block subsequent rows (best-effort, retries next tick).
 //
-// Round 1.x: each row may carry up to 2 algos (disaster_stop + trail). Poll
-// each independently and dispatch with the correct exit_reason on FINISHED.
+// Round 1.x + Round 2: each row may carry up to 4 algos (disaster_stop / trail
+// / tp1 / tp2). TPs are polled FIRST so any partial close decrements the
+// running currentQty before disaster/trail full-close compute realized_pnl.
+//   Same-tick TP1 + Trail FINISHED: TP1 partial close (0.2Q) → running=0.8Q
+//   → Trail full close uses 0.8Q for pnl. Correct.
 func (ar *AlgoReconciler) ReconcileTick(ctx context.Context) {
 	rows, err := ar.db.ListOpenTradesWithAlgo(ctx)
 	if err != nil {
@@ -121,18 +129,41 @@ func (ar *AlgoReconciler) ReconcileTick(ctx context.Context) {
 	}
 
 	triggered := 0
+	partials := 0
 	for _, r := range rows {
-		// Disaster stop poll.
-		if r.BinanceDisasterStopOrderID.Valid && r.BinanceDisasterStopOrderID.String != "" {
-			if ar.pollOne(ctx, r, r.BinanceDisasterStopOrderID.String, ExitReasonDisaster, "disaster") {
-				triggered++
-				continue // trade closed; skip trail poll for same row
+		currentQty := decimalFromPgNumeric(r.CurrentQty)
+
+		// 1. TP1 partial poll (decrements running currentQty on FINISHED).
+		if r.BinanceTP1AlgoID.Valid && r.BinanceTP1AlgoID.String != "" {
+			if soldQty, ok := ar.pollOnePartial(ctx, r, r.BinanceTP1AlgoID.String, ExitReasonTP1); ok {
+				currentQty = currentQty.Sub(soldQty)
+				if currentQty.IsNegative() {
+					currentQty = decimal.Zero
+				}
+				partials++
 			}
 		}
-		// Trail poll (independent algo — may be active alongside disaster).
+		// 2. TP2 partial poll.
+		if r.BinanceTP2AlgoID.Valid && r.BinanceTP2AlgoID.String != "" {
+			if soldQty, ok := ar.pollOnePartial(ctx, r, r.BinanceTP2AlgoID.String, ExitReasonTP2); ok {
+				currentQty = currentQty.Sub(soldQty)
+				if currentQty.IsNegative() {
+					currentQty = decimal.Zero
+				}
+				partials++
+			}
+		}
+		// 3. Disaster stop full close (use running currentQty).
+		if r.BinanceDisasterStopOrderID.Valid && r.BinanceDisasterStopOrderID.String != "" {
+			if ar.pollOneFull(ctx, r, r.BinanceDisasterStopOrderID.String, ExitReasonDisaster, "disaster", currentQty) {
+				triggered++
+				continue // trade closed; skip trail
+			}
+		}
+		// 4. Trail full close (mutually exclusive with disaster in practice — reduceOnly).
 		if r.BinanceTrailAlgoID.Valid && r.BinanceTrailAlgoID.String != "" {
 			reason := trailExitReasonForStage(r.TrailStage)
-			if ar.pollOne(ctx, r, r.BinanceTrailAlgoID.String, reason, "trail") {
+			if ar.pollOneFull(ctx, r, r.BinanceTrailAlgoID.String, reason, "trail", currentQty) {
 				triggered++
 			}
 		}
@@ -141,6 +172,7 @@ func (ar *AlgoReconciler) ReconcileTick(ctx context.Context) {
 	ar.log.Info().
 		Int("open_trades", len(rows)).
 		Int("triggered", triggered).
+		Int("partials", partials).
 		Msg("algo.polling.tick")
 	metrics.AlgoPollingRunsTotal.WithLabelValues("ok").Inc()
 }
@@ -160,44 +192,70 @@ func trailExitReasonForStage(stage int16) string {
 	}
 }
 
-// pollOne queries one algo for a trade and dispatches by status. Returns true
-// if the trade was successfully closed (FINISHED + autoClose succeeded).
-func (ar *AlgoReconciler) pollOne(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, algoIDStr, exitReason, kind string) bool {
-	algoID, err := strconv.ParseInt(algoIDStr, 10, 64)
-	if err != nil {
-		ar.log.Warn().Err(err).Int64("trade_id", r.ID).
-			Str("algo_id_raw", algoIDStr).Str("kind", kind).
-			Msg("algo.polling: invalid algo_id, skipping")
+// pollOneFull queries one algo and on FINISHED runs the full-close pipeline
+// using the running currentQty (which may already be decremented by TPs this tick).
+// Returns true if the trade was closed.
+func (ar *AlgoReconciler) pollOneFull(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, algoIDStr, exitReason, kind string, runningQty decimal.Decimal) bool {
+	q, ok := ar.queryAlgo(ctx, r.ID, r.Symbol, algoIDStr, kind, exitReason)
+	if !ok {
 		return false
 	}
-	l := ar.log.With().Int64("trade_id", r.ID).Str("symbol", r.Symbol).
-		Int64("algo_id", algoID).Str("kind", kind).Str("exit_reason", exitReason).Logger()
+	if q.AlgoStatus != "FINISHED" {
+		return false
+	}
+	l := ar.logFor(r.ID, r.Symbol, q.AlgoID, kind, exitReason)
+	return ar.autoClose(ctx, r, q, exitReason, runningQty, l)
+}
 
+// pollOnePartial queries a TP algo and on FINISHED runs the partial-close pipeline.
+// Returns (sold_qty, true) on successful partial close. Caller decrements its
+// running currentQty by sold_qty for the subsequent full-close polls.
+func (ar *AlgoReconciler) pollOnePartial(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, algoIDStr, exitReason string) (decimal.Decimal, bool) {
+	q, ok := ar.queryAlgo(ctx, r.ID, r.Symbol, algoIDStr, "tp", exitReason)
+	if !ok {
+		return decimal.Zero, false
+	}
+	if q.AlgoStatus != "FINISHED" {
+		return decimal.Zero, false
+	}
+	l := ar.logFor(r.ID, r.Symbol, q.AlgoID, "tp", exitReason)
+	return ar.partialClose(ctx, r, q, exitReason, l)
+}
+
+// queryAlgo wraps QueryAlgoOrder + CANCELED/EXPIRED handling shared by both poll variants.
+// Returns (query, true) when status is actionable (caller should check FINISHED separately).
+// Returns (zero, false) on parse error, query error, CANCELED, EXPIRED, or unknown status.
+func (ar *AlgoReconciler) queryAlgo(ctx context.Context, tradeID int64, symbol, algoIDStr, kind, exitReason string) (binance.AlgoOrderQuery, bool) {
+	algoID, err := strconv.ParseInt(algoIDStr, 10, 64)
+	if err != nil {
+		ar.log.Warn().Err(err).Int64("trade_id", tradeID).
+			Str("algo_id_raw", algoIDStr).Str("kind", kind).
+			Msg("algo.polling: invalid algo_id, skipping")
+		return binance.AlgoOrderQuery{}, false
+	}
+	l := ar.logFor(tradeID, symbol, algoID, kind, exitReason)
 	q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
 	if err != nil {
 		l.Warn().Err(err).Msg("algo.polling: query failed (will retry next tick)")
-		return false
+		return binance.AlgoOrderQuery{}, false
 	}
 	switch q.AlgoStatus {
-	case "WORKING":
-		return false
-	case "FINISHED":
-		return ar.autoClose(ctx, r, q, exitReason, l)
+	case "WORKING", "FINISHED":
+		return q, true
 	case "CANCELED", "EXPIRED":
-		// For trail algos, trader-initiated cancel during S1→S2 upgrade is
-		// normal — trail_upgrader cancels old + rewrites algo_id atomically.
-		// If the DB still references this exact algo_id and we see CANCELED,
-		// it's either mid-upgrade race or external cancel. Either way the
-		// next tick will resolve (DB will show new algo_id or null).
-		// For disaster algos, missing algo means regular close pipeline
-		// cancelled mid-flight OR mu cancelled in UI — position_manager
-		// local_only_orphan path catches genuine cases.
+		// Trader upgrade (trail S1→S2) cancels old algo + rewrites algo_id atomically.
+		// Mid-upgrade race or external cancel: next tick resolves naturally.
 		l.Info().Str("algo_status", q.AlgoStatus).Msg("algo.polling: algo gone (trader upgrade or external cancel)")
-		return false
+		return binance.AlgoOrderQuery{}, false
 	default:
 		l.Warn().Str("algo_status", q.AlgoStatus).Msg("algo.polling: unknown status, treating as WORKING")
-		return false
+		return binance.AlgoOrderQuery{}, false
 	}
+}
+
+func (ar *AlgoReconciler) logFor(tradeID int64, symbol string, algoID int64, kind, exitReason string) zerolog.Logger {
+	return ar.log.With().Int64("trade_id", tradeID).Str("symbol", symbol).
+		Int64("algo_id", algoID).Str("kind", kind).Str("exit_reason", exitReason).Logger()
 }
 
 // TryReconcile is the single-trade public entry point used by
@@ -231,17 +289,105 @@ func (ar *AlgoReconciler) TryReconcile(ctx context.Context, tradeID int64, symbo
 	return ar.autoCloseFromFields(ctx, tradeID, symbol, q, entryPrice, currentQty, entryTs, ExitReasonDisaster, l)
 }
 
-// autoClose adapts the original row-based call site to the new primitive
-// helper. Used by ReconcileTick (proactive sweep).
-func (ar *AlgoReconciler) autoClose(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, q binance.AlgoOrderQuery, exitReason string, log zerolog.Logger) bool {
+// autoClose adapts the row-based call site to the primitive helper, passing
+// the running currentQty (may differ from r.CurrentQty after TP partial closes
+// in the same tick).
+func (ar *AlgoReconciler) autoClose(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, q binance.AlgoOrderQuery, exitReason string, runningQty decimal.Decimal, log zerolog.Logger) bool {
 	entryTs := time.Time{}
 	if r.EntryTs.Valid {
 		entryTs = r.EntryTs.Time
 	}
 	return ar.autoCloseFromFields(ctx, r.ID, r.Symbol, q,
 		decimalFromPgNumeric(r.EntryPrice),
-		decimalFromPgNumeric(r.CurrentQty),
+		runningQty,
 		entryTs, exitReason, log)
+}
+
+// partialClose handles a TP1/TP2 FINISHED: insert exit row, decrement position
+// qty, clear the matching tpN algo_id, accumulate daily_pnl (no consec_losses).
+// Returns (soldQty, true) on success; soldQty drives the caller's running
+// currentQty so subsequent disaster/trail full-close uses correct qty.
+func (ar *AlgoReconciler) partialClose(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, q binance.AlgoOrderQuery, exitReason string, log zerolog.Logger) (decimal.Decimal, bool) {
+	now := ar.nowFn()
+	closePrice := q.ActualPrice
+	if closePrice.IsZero() {
+		closePrice = q.TriggerPrice
+	}
+	if closePrice.IsZero() {
+		log.Error().Msg("tp.triggered: both actualPrice and triggerPrice zero, skipping (next tick may resolve)")
+		return decimal.Zero, false
+	}
+	// Algo qty is the partial size we armed (e.g. 20% of entry qty). Binance fills
+	// exactly this amount when triggered (reduceOnly capped by remaining position).
+	qty := q.Quantity
+	if qty.IsZero() {
+		log.Error().Msg("tp.triggered: Algo.Quantity zero, cannot record partial close")
+		return decimal.Zero, false
+	}
+	entry := decimalFromPgNumeric(r.EntryPrice)
+	realizedPnl := closePrice.Sub(entry).Mul(qty) // LONG only
+
+	n, err := ar.db.InsertTradeExitIdempotent(ctx, gen.InsertTradeExitParams{
+		TradeID: pgtype.Int8{Int64: r.ID, Valid: true},
+		Ts:      now,
+		Type:    exitReason,
+		Qty:     qty,
+		Price:   closePrice,
+		Pnl:     realizedPnl,
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("tp.triggered: InsertTradeExit failed (next tick retries)")
+		return decimal.Zero, false
+	}
+	if n == 0 {
+		// Already recorded last tick (idempotent skip). Don't touch position_states
+		// again — qty was already decremented. Caller should NOT subtract qty either.
+		log.Info().Msg("tp.triggered: duplicate skipped (idempotent)")
+		return decimal.Zero, false
+	}
+
+	// Real commission (Binance SELL order fee).
+	fees := ar.sumAlgoFees(ctx, r.Symbol, q.ActualOrderID, log)
+	// daily_pnl: net of fees (mirror autoCloseFromFields accounting).
+	dailyDelta := realizedPnl.Sub(fees)
+
+	if err := ar.db.DecrementPositionQty(ctx, gen.DecrementPositionQtyParams{
+		TradeID:     r.ID,
+		Delta:       qty,
+		LastCheckTs: now,
+	}); err != nil {
+		log.Error().Err(err).Msg("tp.triggered: DecrementPositionQty failed (trail_upgrader will use stale qty)")
+	}
+	if err := ar.db.ClearTPAlgoID(ctx, gen.ClearTPAlgoIDParams{ID: r.ID, Type: exitReason}); err != nil {
+		log.Warn().Err(err).Msg("tp.triggered: ClearTPAlgoID failed (next tick will re-poll FINISHED, idempotent skip)")
+	}
+	bjt := now.In(timez.BJT)
+	pgDate := pgtype.Date{Valid: true}
+	_ = pgDate.Scan(bjt.Format("2006-01-02"))
+	if err := ar.db.UpdateDailyPnlPartial(ctx, gen.UpdateDailyPnlPartialParams{
+		RealizedPnl:  dailyDelta,
+		DailyPnlDate: pgDate,
+	}); err != nil {
+		log.Warn().Err(err).Msg("tp.triggered: UpdateDailyPnlPartial failed (Round 6 may read stale daily_pnl)")
+	}
+
+	// Realized PnL counter (TP partial typically positive, but use sign accounting for safety).
+	sign := "positive"
+	if realizedPnl.IsNegative() {
+		sign = "negative"
+	} else if realizedPnl.IsZero() {
+		sign = "zero"
+	}
+	metrics.RealizedPnlTotal.WithLabelValues(r.Symbol, sign).Add(mustFloat(realizedPnl.Abs()))
+	metrics.TPFilledTotal.WithLabelValues(r.Symbol, exitReason).Inc()
+
+	log.Info().
+		Str("close_price", closePrice.String()).
+		Str("qty", qty.String()).
+		Str("realized_pnl", realizedPnl.String()).
+		Str("fees", fees.String()).
+		Msg("tp.triggered.partial_close")
+	return qty, true
 }
 
 // autoCloseFromFields is the shared close pipeline taking primitive inputs.

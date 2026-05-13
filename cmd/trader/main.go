@@ -266,6 +266,10 @@ func run() error {
 		MaxStopPct:              cfg.Exit.MaxStopPct,
 		TrailStage1ActivatePct:  cfg.Exit.TrailStage1ActivatePct,
 		TrailStage1CallbackRate: cfg.Exit.TrailStage1CallbackRate,
+		TP1Pct:                  cfg.Exit.TP1Pct,
+		TP1Ratio:                cfg.Exit.TP1Ratio,
+		TP2Pct:                  cfg.Exit.TP2Pct,
+		TP2Ratio:                cfg.Exit.TP2Ratio,
 		Leverage:                cfg.Position.Leverage,
 	}, log)
 	log.Info().
@@ -275,8 +279,10 @@ func run() error {
 		Str("max_stop_pct", cfg.Exit.MaxStopPct.String()).
 		Str("trail_s1_activate", cfg.Exit.TrailStage1ActivatePct.String()).
 		Str("trail_s1_callback", cfg.Exit.TrailStage1CallbackRate.String()).
+		Str("tp1_pct", cfg.Exit.TP1Pct.String()).Str("tp1_ratio", cfg.Exit.TP1Ratio.String()).
+		Str("tp2_pct", cfg.Exit.TP2Pct.String()).Str("tp2_ratio", cfg.Exit.TP2Ratio.String()).
 		Int("leverage", cfg.Position.Leverage).
-		Msg("executor ready (ATR-based disaster stop + S1 trail at entry)")
+		Msg("executor ready (ATR-based disaster stop + S1 trail + TP1/TP2 at entry)")
 
 	// v0.2 Gap 1: algo_polling — 1min poll of disaster-stop Algo orders to
 	// auto-close trades when Binance reports algoStatus=FINISHED. Registered
