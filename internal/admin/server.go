@@ -21,6 +21,7 @@ type Server struct {
 	db            *pgxpool.Pool
 	writeDB       *pgxpool.Pool
 	rdb           *redis.Client
+	csrf          *csrfStore // Phase 5.2 Round 1: write-endpoint CSRF guard
 	prometheusURL string
 	log           zerolog.Logger
 	startTime     time.Time
@@ -31,6 +32,7 @@ func NewServer(db, writeDB *pgxpool.Pool, rdb *redis.Client, prometheusURL strin
 		db:            db,
 		writeDB:       writeDB,
 		rdb:           rdb,
+		csrf:          newCsrfStore(),
 		prometheusURL: prometheusURL,
 		log:           log,
 		startTime:     time.Now(),
@@ -55,8 +57,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/symbol/{symbol}", s.handleSymbolDetail)
 	mux.HandleFunc("GET /api/admin/trade/{trade_id}", s.handleTradeDetail)
 	// v0.2 Round R.1 Part 2: first admin WRITE endpoint (manual halt reset).
-	mux.HandleFunc("POST /api/admin/circuit-breaker/reset", s.handleCircuitBreakerReset)
+	// Phase 5.2 Round 1: wrapped with CSRF guard.
+	mux.HandleFunc("POST /api/admin/circuit-breaker/reset", s.requireCsrf(s.handleCircuitBreakerReset))
 	mux.HandleFunc("GET /api/admin/circuit-breaker/events", s.handleCircuitBreakerEvents)
+	// Phase 5.2 Round 1: CSRF token endpoint. Caddy basic auth at path matcher
+	// guards this in production; browser prompts on first call per session.
+	mux.HandleFunc("GET /api/admin/csrf-token", s.handleCsrfToken)
 	return s.cors(mux)
 }
 

@@ -5,6 +5,49 @@ const api = axios.create({
   timeout: 10_000,
 })
 
+// Phase 5.2 Round 1: CSRF token cache + auto-fetch for write requests.
+// On first write, browser prompts for Caddy basic auth (mu/password); subsequent
+// writes reuse cached credentials. Token cached in sessionStorage (clears on tab close).
+const CSRF_KEY = 'admin_csrf_token'
+const CSRF_EXP_KEY = 'admin_csrf_expires_at'
+
+interface CsrfResponse {
+  token: string
+  expires_at: string
+}
+
+export async function ensureCsrfToken(): Promise<string> {
+  const cached = sessionStorage.getItem(CSRF_KEY)
+  const exp = sessionStorage.getItem(CSRF_EXP_KEY)
+  if (cached && exp && new Date(exp).getTime() > Date.now() + 60_000) {
+    return cached  // valid + >60s remaining
+  }
+  // Fetch new (Caddy basic auth prompts browser on first call per session)
+  const { data } = await api.get<CsrfResponse>('/csrf-token')
+  sessionStorage.setItem(CSRF_KEY, data.token)
+  sessionStorage.setItem(CSRF_EXP_KEY, data.expires_at)
+  return data.token
+}
+
+// Interceptor: add X-CSRF-Token header to all non-GET requests.
+api.interceptors.request.use(async (config) => {
+  const method = (config.method ?? 'get').toLowerCase()
+  if (method !== 'get' && method !== 'head' && method !== 'options') {
+    const token = await ensureCsrfToken()
+    config.headers.set('X-CSRF-Token', token)
+  }
+  return config
+})
+
+// Interceptor: on 403 csrf error, clear cache so next call re-fetches.
+api.interceptors.response.use(undefined, (err) => {
+  if (err.response?.status === 403 && err.response?.data?.error?.includes?.('csrf')) {
+    sessionStorage.removeItem(CSRF_KEY)
+    sessionStorage.removeItem(CSRF_EXP_KEY)
+  }
+  return Promise.reject(err)
+})
+
 export interface CollectorStatus {
   name: string
   last_tick_seconds: number  // Unix ts; 0 if never ran

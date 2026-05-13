@@ -26,11 +26,32 @@
         reverse_proxy trader:8080
     }
 
-    # /api/admin/* — basicauth → admin-api (必须在 /api/* 之前)
-    handle /api/admin/* {
+    # ---------------------------------------------------------------
+    # Phase 5.2 Round 1: 权限分级 (公开读 + admin 写)
+    # ---------------------------------------------------------------
+    # /api/admin/csrf-token  → basic auth (浏览器首次写时 prompt)
+    @admin_csrf path /api/admin/csrf-token
+    handle @admin_csrf {
         basicauth {
             {$ADMIN_USER} {$ADMIN_HASHED_PASS}
         }
+        reverse_proxy admin-api:3002
+    }
+
+    # POST/PUT/DELETE/PATCH /api/admin/*  → basic auth (写操作)
+    @admin_write {
+        path /api/admin/*
+        method POST PUT DELETE PATCH
+    }
+    handle @admin_write {
+        basicauth {
+            {$ADMIN_USER} {$ADMIN_HASHED_PASS}
+        }
+        reverse_proxy admin-api:3002
+    }
+
+    # GET /api/admin/*  → 公开 (Phase 5.2 mu A1: read 完全公开)
+    handle /api/admin/* {
         reverse_proxy admin-api:3002
     }
 
@@ -39,11 +60,8 @@
         reverse_proxy trader:8080
     }
 
-    # /admin* — basicauth → admin-web SPA 静态文件
+    # /admin*  → 公开 SPA (任何人 URL 即可看)
     handle /admin* {
-        basicauth {
-            {$ADMIN_USER} {$ADMIN_HASHED_PASS}
-        }
         uri strip_prefix /admin
         root * /srv/admin
         try_files {path} /index.html
