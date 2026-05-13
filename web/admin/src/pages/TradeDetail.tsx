@@ -249,7 +249,7 @@ export default function TradeDetail() {
     : 0
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-4 sm:p-6 space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3 flex-wrap">
         <button onClick={() => navigate(-1)}
@@ -266,7 +266,7 @@ export default function TradeDetail() {
         {isClosable && (
           <button
             onClick={() => setCloseOpen(true)}
-            className="text-xs px-3 py-1 rounded font-medium"
+            className="text-xs px-3 py-2 sm:py-1 rounded font-medium min-h-[44px] sm:min-h-0"
             style={{ background: colors.halt + '22', color: colors.halt, border: `1px solid ${colors.halt}66` }}
             title="手工平仓 — 二次确认 (exit_manager 1min 内执行)"
           >
@@ -276,7 +276,7 @@ export default function TradeDetail() {
       </div>
 
       {/* Two-column grid */}
-      <div className="grid grid-cols-2 gap-4 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
 
         {/* ── 左列: A 信号 ── */}
         <Card title="A. 信号触发 & 决策">

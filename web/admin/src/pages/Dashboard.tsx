@@ -9,6 +9,7 @@ import {
 } from '../api/client'
 import { colors, pnlColor, pnlPrefix, haltColor } from '../theme/colors'
 import { ConfirmModal, errorMessage } from '../components/ConfirmModal'
+import { RcaPanel } from '../components/RcaPanel'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
@@ -127,9 +128,9 @@ export default function Dashboard() {
   const lastUpdate = dataUpdatedAt ? dayjs(dataUpdatedAt).format('HH:mm:ss') : '—'
 
   return (
-    <div className="p-6 space-y-5">
-      {/* 顶栏: 状态 + 余额 + 今日PnL */}
-      <div className="flex items-center gap-4 bg-[#1f1f1f] border border-[#2d2d2d] rounded-lg px-6 py-4">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
+      {/* 顶栏: 状态 + 余额 + 今日PnL — wraps on mobile */}
+      <div className="flex items-center gap-3 sm:gap-4 flex-wrap bg-[#1f1f1f] border border-[#2d2d2d] rounded-lg px-4 sm:px-6 py-4">
         <span className="text-xl font-bold" style={{ color: haltColor(data.halt_status) }}>
           {data.halt_status === 'NORMAL' ? '🟢' : '🔴'}&nbsp;{data.halt_status}
         </span>
@@ -181,8 +182,8 @@ export default function Dashboard() {
         <span className="text-xs text-gray-700 ml-2">{lastUpdate}</span>
       </div>
 
-      {/* 5 指标卡片 */}
-      <div className="grid grid-cols-5 gap-4">
+      {/* 5 指标卡片 — 2 cols on mobile, 5 cols on desktop */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         <MetricCard
           label="账户余额 USDT"
           value={data.balance_usdt.toFixed(2)}
@@ -214,18 +215,21 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* 快捷操作 (Round 3) */}
+      {/* 待 ack 的 halt RCA (Round 4) — auto-hides when empty */}
+      <RcaPanel />
+
+      {/* 快捷操作 (Round 3) — 48dp 触屏 minimum on mobile */}
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setModal('daily_pnl_reset')}
-          className="text-xs px-3 py-1.5 rounded bg-[#1f1f1f] border border-[#3d3d3d] text-gray-300 hover:bg-[#2d2d2d]"
+          className="text-xs px-3 py-2.5 sm:py-1.5 rounded bg-[#1f1f1f] border border-[#3d3d3d] text-gray-300 hover:bg-[#2d2d2d] min-h-[44px] sm:min-h-0"
           title="重置今日累计 PnL 到 0 (审计 + 备注)"
         >
           ↺ 重置今日 PnL
         </button>
         <button
           onClick={() => setModal('consec_reset')}
-          className="text-xs px-3 py-1.5 rounded bg-[#1f1f1f] border border-[#3d3d3d] text-gray-300 hover:bg-[#2d2d2d]"
+          className="text-xs px-3 py-2.5 sm:py-1.5 rounded bg-[#1f1f1f] border border-[#3d3d3d] text-gray-300 hover:bg-[#2d2d2d] min-h-[44px] sm:min-h-0"
           title="重置连续亏损计数到 0 (审计 + 备注)"
         >
           ↺ 重置连亏计数

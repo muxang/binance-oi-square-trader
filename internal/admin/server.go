@@ -62,6 +62,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/circuit-breaker/events", s.handleCircuitBreakerEvents)
 	// Phase 5.2 Round 3: public audit log viewer (mu A1 — read tier no auth).
 	mux.HandleFunc("GET /api/admin/audit-log", s.handleAuditLog)
+	// Phase 5.2 Round 4: halt RCA workflow. Unacked list is public read;
+	// ack endpoint is CSRF + audit + transactional (mu mobile flow).
+	mux.HandleFunc("GET /api/admin/halt-rca/unacknowledged", s.handleHaltRCAUnacknowledged)
+	mux.HandleFunc("POST /api/admin/halt-rca/{id}/ack", s.requireCsrf(s.handleHaltRCAAck))
 	// Phase 5.2 Round 1: CSRF token endpoint. Caddy basic auth at path matcher
 	// guards this in production; browser prompts on first call per session.
 	mux.HandleFunc("GET /api/admin/csrf-token", s.handleCsrfToken)

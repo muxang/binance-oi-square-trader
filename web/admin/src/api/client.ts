@@ -164,6 +164,32 @@ export const fetchAuditLog = (page = 1, pageSize = 20, action?: string): Promise
   return api.get<AuditLogData>('/audit-log', { params }).then(r => r.data)
 }
 
+// ---- Halt RCA (Round 4 Part 2) ----
+
+export type RcaAction = 'resolved' | 'investigating' | 'ignored'
+
+export interface HaltRCAEntry {
+  id: number
+  halt_type: string
+  triggered_at: string
+  context_json: Record<string, unknown>
+  mu_acknowledged: boolean
+  mu_action?: string
+  mu_acknowledged_at?: string
+  resolved_at?: string
+}
+
+export interface HaltRCAUnackData {
+  total: number
+  items: HaltRCAEntry[]
+}
+
+export const fetchHaltRCAUnack = (): Promise<HaltRCAUnackData> =>
+  api.get<HaltRCAUnackData>('/halt-rca/unacknowledged').then(r => r.data)
+
+export const ackHaltRCA = (id: number, action: RcaAction, note?: string): Promise<{ ok: boolean }> =>
+  api.post<{ ok: boolean }>(`/halt-rca/${id}/ack`, { confirm: true, action, note: note ?? '' }).then(r => r.data)
+
 export interface CBEvent {
   id: number
   ts: string

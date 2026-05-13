@@ -22,7 +22,7 @@ import { colors } from '../theme/colors'
 
 function FieldRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[180px_1fr] gap-3 items-center py-1.5">
+    <div className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-1 sm:gap-3 sm:items-center py-2 sm:py-1.5">
       <label className="text-xs text-gray-400">
         {label}
         {hint && <div className="text-[10px] text-gray-600 mt-0.5">{hint}</div>}
@@ -39,7 +39,7 @@ function TextInput({ value, onChange, placeholder, disabled }: {
     <input
       type="text" value={value} onChange={e => onChange(e.target.value)}
       placeholder={placeholder} disabled={disabled}
-      className="px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200 font-mono disabled:opacity-50"
+      className="w-full px-3 py-2 sm:py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200 font-mono disabled:opacity-50 min-h-[40px] sm:min-h-0"
     />
   )
 }
@@ -313,7 +313,7 @@ function WatchlistCard() {
 
 export default function Settings() {
   return (
-    <div className="p-6 space-y-5 max-w-4xl">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 max-w-4xl">
       <div>
         <h1 className="text-lg font-bold text-white">⚙️ 设置 (Phase 5.2 Round 3)</h1>
         <p className="text-xs text-gray-500 mt-1">

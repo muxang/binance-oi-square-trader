@@ -40,26 +40,27 @@ function Row({ e, idx, expanded, onToggle }: {
         className="border-b border-[#2d2d2d] hover:bg-[#252525] cursor-pointer"
         onClick={onToggle}
       >
-        <td className="px-3 py-2 text-xs text-gray-500 tabular-nums">{idx + 1}</td>
-        <td className="px-3 py-2 text-xs text-gray-300 tabular-nums whitespace-nowrap">
-          {dayjs(e.ts).format('MM-DD HH:mm:ss')}
+        <td className="px-2 sm:px-3 py-2 text-xs text-gray-500 tabular-nums hidden sm:table-cell">{idx + 1}</td>
+        <td className="px-2 sm:px-3 py-2 text-xs text-gray-300 tabular-nums whitespace-nowrap">
+          {dayjs(e.ts).format('MM-DD HH:mm')}
         </td>
-        <td className="px-3 py-2 text-xs"><span className="font-mono">{e.operator}</span></td>
-        <td className="px-3 py-2 text-xs text-gray-200">
+        <td className="px-2 sm:px-3 py-2 text-xs hidden sm:table-cell"><span className="font-mono">{e.operator}</span></td>
+        <td className="px-2 sm:px-3 py-2 text-xs text-gray-200">
           <span className="font-semibold">{zh}</span>
-          <span className="text-gray-600 ml-1.5 font-mono text-[10px]">{e.action_type}</span>
+          <span className="text-gray-600 ml-1.5 font-mono text-[10px] hidden md:inline">{e.action_type}</span>
+          <div className="text-gray-600 text-[10px] mt-0.5 sm:hidden">{e.operator} · {e.action_type}</div>
         </td>
-        <td className="px-3 py-2 text-xs text-gray-400">
+        <td className="px-2 sm:px-3 py-2 text-xs text-gray-400 hidden md:table-cell">
           {e.resource_type && <span className="font-mono">{e.resource_type}</span>}
           {e.resource_id && <span className="text-gray-600 ml-1">#{e.resource_id}</span>}
         </td>
-        <td className="px-3 py-2 text-xs text-gray-400 truncate max-w-[280px]" title={e.note}>{e.note || '—'}</td>
-        <td className="px-3 py-2 text-xs text-gray-600 text-right">{expanded ? '▼' : '▶'}</td>
+        <td className="px-2 sm:px-3 py-2 text-xs text-gray-400 truncate max-w-[120px] sm:max-w-[280px]" title={e.note}>{e.note || '—'}</td>
+        <td className="px-2 sm:px-3 py-2 text-xs text-gray-600 text-right">{expanded ? '▼' : '▶'}</td>
       </tr>
       {expanded && (
         <tr className="border-b border-[#2d2d2d] bg-[#181818]">
-          <td colSpan={7} className="px-3 py-3">
-            <div className="grid grid-cols-2 gap-4 text-xs">
+          <td colSpan={7} className="px-2 sm:px-3 py-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div>
                 <div className="text-gray-500 mb-1">previous_state</div>
                 <pre className="bg-[#0f0f0f] border border-[#2d2d2d] rounded p-2 text-[11px] text-gray-300 overflow-x-auto font-mono">
@@ -73,9 +74,10 @@ function Row({ e, idx, expanded, onToggle }: {
                 </pre>
               </div>
             </div>
-            <div className="mt-2 flex gap-4 text-[11px] text-gray-600">
+            <div className="mt-2 flex flex-wrap gap-2 sm:gap-4 text-[11px] text-gray-600">
+              <span>resource: <span className="font-mono">{e.resource_type}/{e.resource_id || '—'}</span></span>
               {e.ip_address && <span>IP: <span className="font-mono">{e.ip_address}</span></span>}
-              {e.user_agent && <span className="truncate max-w-[600px]">UA: <span className="font-mono">{e.user_agent}</span></span>}
+              {e.user_agent && <span className="truncate max-w-[400px]">UA: <span className="font-mono">{e.user_agent}</span></span>}
             </div>
           </td>
         </tr>
@@ -99,7 +101,7 @@ export default function AuditLog() {
   const totalPages = data ? Math.max(1, Math.ceil(data.total / pageSize)) : 1
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-4 sm:p-6 space-y-4">
       <div>
         <h1 className="text-lg font-bold text-white">📋 操作历史</h1>
         <p className="text-xs text-gray-500 mt-1">
@@ -134,13 +136,13 @@ export default function AuditLog() {
           <table className="w-full text-left">
             <thead className="bg-[#181818] border-b border-[#2d2d2d]">
               <tr className="text-xs text-gray-500">
-                <th className="px-3 py-2 font-normal">#</th>
-                <th className="px-3 py-2 font-normal">时间 (BJT)</th>
-                <th className="px-3 py-2 font-normal">操作者</th>
-                <th className="px-3 py-2 font-normal">操作</th>
-                <th className="px-3 py-2 font-normal">资源</th>
-                <th className="px-3 py-2 font-normal">备注</th>
-                <th className="px-3 py-2 font-normal text-right"></th>
+                <th className="px-2 sm:px-3 py-2 font-normal hidden sm:table-cell">#</th>
+                <th className="px-2 sm:px-3 py-2 font-normal">时间</th>
+                <th className="px-2 sm:px-3 py-2 font-normal hidden sm:table-cell">操作者</th>
+                <th className="px-2 sm:px-3 py-2 font-normal">操作</th>
+                <th className="px-2 sm:px-3 py-2 font-normal hidden md:table-cell">资源</th>
+                <th className="px-2 sm:px-3 py-2 font-normal">备注</th>
+                <th className="px-2 sm:px-3 py-2 font-normal text-right"></th>
               </tr>
             </thead>
             <tbody>

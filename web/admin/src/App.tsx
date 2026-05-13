@@ -37,43 +37,62 @@ function DataSourceToggle() {
   )
 }
 
+const NAV_LINKS = [
+  { to: '/',          label: '📊 Dashboard',    short: '📊' },
+  { to: '/positions', label: '📈 当前持仓',     short: '📈' },
+  { to: '/history',   label: '📋 历史仓位',     short: '📋' },
+  { to: '/pnl',       label: '💰 PnL 分析',     short: '💰' },
+  { to: '/square',    label: '🔥 Square 热点',  short: '🔥' },
+  { to: '/market',    label: '🌐 市场扫描',     short: '🌐' },
+  { to: '/settings',  label: '⚙️ 设置',         short: '⚙️' },
+  { to: '/audit',     label: '📋 操作历史',     short: '🧾' },
+]
+
 function AppLayout() {
   return (
     <BrowserRouter basename="/admin">
       <div className="min-h-screen bg-[#141414] text-gray-100 flex flex-col">
         {/* Top bar: data_source toggle */}
-        <div className="h-8 bg-[#111] border-b border-[#2d2d2d] flex items-center px-4">
+        <div className="h-8 bg-[#111] border-b border-[#2d2d2d] flex items-center px-3 sm:px-4">
           <DataSourceToggle />
         </div>
 
-        <div className="flex flex-1 overflow-hidden">
-          <nav className="w-48 bg-[#1a1a1a] border-r border-[#2d2d2d] flex flex-col p-4 gap-1 shrink-0">
+        <div className="flex flex-1 overflow-hidden flex-col md:flex-row">
+          {/* Desktop sidebar — md+ only */}
+          <nav className="hidden md:flex w-48 bg-[#1a1a1a] border-r border-[#2d2d2d] flex-col p-4 gap-1 shrink-0">
             <div className="text-base font-bold text-white mb-4 px-2">⚡ Trader Admin</div>
-            {[
-              { to: '/',          label: '📊 Dashboard' },
-              { to: '/positions', label: '📈 当前持仓' },
-              { to: '/history',   label: '📋 历史仓位' },
-              { to: '/pnl',       label: '💰 PnL 分析' },
-              { to: '/square',    label: '🔥 Square 热点' },
-              { to: '/market',    label: '🌐 市场扫描' },
-              { to: '/settings',  label: '⚙️ 设置' },
-              { to: '/audit',     label: '📋 操作历史' },
-            ].map(({ to, label }) => (
+            {NAV_LINKS.map(({ to, label }) => (
               <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
+                key={to} to={to} end={to === '/'}
                 className={({ isActive }) =>
                   `px-3 py-2 rounded text-sm transition-colors ${
-                    isActive
-                      ? 'bg-blue-700 text-white'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                    isActive ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
                   }`
                 }
               >
                 {label}
               </NavLink>
             ))}
+          </nav>
+
+          {/* Mobile top nav strip — md hidden. Scrollable so 8 items fit on phones. */}
+          <nav className="md:hidden border-b border-[#2d2d2d] bg-[#1a1a1a] overflow-x-auto whitespace-nowrap">
+            <div className="flex gap-1 px-2 py-2">
+              {NAV_LINKS.map(({ to, label, short }) => (
+                <NavLink
+                  key={to} to={to} end={to === '/'}
+                  className={({ isActive }) =>
+                    `inline-flex px-3 py-2 rounded text-xs min-h-[40px] items-center ${
+                      isActive ? 'bg-blue-700 text-white' : 'text-gray-400 bg-[#252525]'
+                    }`
+                  }
+                  title={label}
+                >
+                  <span className="mr-1">{short}</span>
+                  <span>{label.replace(/^[^\s]+\s/, '')}</span>
+                </NavLink>
+              ))}
+            </div>
           </nav>
 
           <main className="flex-1 overflow-auto">
