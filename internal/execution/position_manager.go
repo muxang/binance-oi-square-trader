@@ -145,16 +145,13 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 
 		pos, ok := positionsBySymbol[t.Symbol]
 		if !ok {
-			// v0.2 Step 5 + Round R.4 (F1): race-window defense. The Algo polling
-			// collector (1min cron) is supposed to catch FINISHED algos and
-			// auto-close the trade BEFORE we get here. But robfig/cron v3 doesn't
-			// guarantee execution order within the same minute, so we may observe
-			// the trade still 'open' while the Algo has actually FINISHED.
-			//
-			// Round R.4: try EVERY non-nil algo (trail first — fires far more
-			// often than disaster on profitable trades). Pre-fix the check only
-			// looked at disaster_stop_id, so trail-fired closes (mu's INJ #66 /
-			// TURBOUSDT #67 / ESPORTSUSDT #59) tripped false halts.
+			// v0.2 Step 5 + Round R.4 (F1) + R.5 (Bug C): race-window defense.
+			// The Algo polling collector (1min cron) is supposed to catch
+			// FINISHED algos and auto-close the trade BEFORE we get here. But
+			// robfig/cron v3 doesn't guarantee execution order within the same
+			// minute. Round R.4 made the defense try trail first (it fires more
+			// often than disaster). Round R.5 fixes the exit_reason hardcoded
+			// as 'disaster' bug — now trail closes record as trail_sN.
 			if pm.algoReconciler != nil {
 				entryTs := time.Time{}
 				if t.EntryTs.Valid {
@@ -163,19 +160,21 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 				entry := decimalFromPgNumeric(t.EntryPrice)
 				qty := decimalFromPgNumeric(t.CurrentQty)
 				algoCandidates := []struct {
-					id   string
-					kind string
+					id     string
+					kind   string
+					reason string // Round R.5 Bug C: explicit exit_reason
 				}{
-					{t.BinanceTrailAlgoID.String, "trail"},
-					{t.BinanceDisasterStopOrderID.String, "disaster"},
+					{t.BinanceTrailAlgoID.String, "trail", trailExitReasonForStage(t.TrailStage)},
+					{t.BinanceDisasterStopOrderID.String, "disaster", ExitReasonDisaster},
 				}
 				resolved := false
 				for _, c := range algoCandidates {
 					if c.id == "" {
 						continue
 					}
-					if pm.algoReconciler.TryReconcile(ctx, t.ID, t.Symbol, c.id, entry, qty, entryTs) {
-						l.Info().Str("via_algo", c.kind).Msg("position.local_only_orphan: algo_reconciler resolved (FINISHED auto-close), skipping halt")
+					if pm.algoReconciler.TryReconcile(ctx, t.ID, t.Symbol, c.id, c.reason, entry, qty, entryTs) {
+						l.Info().Str("via_algo", c.kind).Str("exit_reason", c.reason).
+							Msg("position.local_only_orphan: algo_reconciler resolved (FINISHED auto-close), skipping halt")
 						metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
 						resolved = true
 						break
@@ -231,12 +230,31 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 
 		// Qty drift: compare abs(positionAmt) to DB current_qty (or notional/entry if state empty).
 		absAmt := pos.PositionAmt.Abs()
+		driftAboveHaltThreshold := false
 		if t.CurrentQty.Valid {
 			dbQty := decimalFromPgNumeric(t.CurrentQty)
 			if !dbQty.IsZero() {
 				deviation := dbQty.Sub(absAmt).Abs().Div(dbQty)
 				if deviation.GreaterThan(decimal.NewFromFloat(driftHaltThresholdPct)) {
-					// > 5% qty drift → halt + RCA (Round 4 escalation).
+					// > 5% qty drift. Round R.5 (Bug B) defense: TP fills cause
+					// Binance qty to drop before algo_reconciler decrements DB
+					// on the SAME 1min tick. position_manager sees that race
+					// window and used to trip a false halt (mu 真盘 COSUSDT #70
+					// 22:36 + 22:37 connected RCAs). Now we consult Binance for
+					// TP FINISHED status — if any TP just fired, this is the
+					// race, skip the halt and the sync overwrite below.
+					if pm.algoReconciler != nil &&
+						pm.algoReconciler.HasFinishedTPForTrade(ctx,
+							t.BinanceTP1AlgoID.String, t.BinanceTP2AlgoID.String) {
+						l.Info().
+							Str("db_qty", dbQty.String()).
+							Str("binance_qty", absAmt.String()).
+							Str("deviation_pct", deviation.String()).
+							Msg("position.drift: race with TP fill detected, skipping halt + sync")
+						metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "qty_tp_race").Inc()
+						continue // skip UpdatePositionStateSync — Bug A
+					}
+
 					l.Error().Str("db_qty", dbQty.String()).Str("binance_qty", absAmt.String()).
 						Str("deviation_pct", deviation.String()).
 						Msg("position.drift_halt: qty mismatch > 5%")
@@ -252,6 +270,12 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 						"threshold_pct": driftHaltThresholdPct,
 					}, l)
 					drift++
+					driftAboveHaltThreshold = true
+					// Round R.5 (Bug A): when drift > threshold and halt is tripped,
+					// do NOT overwrite DB current_qty to Binance value. The DB +
+					// algo_reconciler are the source of truth for the partial-close
+					// ledger; overwriting masks the real divergence and amplifies
+					// the bug on the next tick when algo_reconciler decrements.
 				} else if deviation.GreaterThan(decimal.NewFromFloat(0.01)) {
 					// 1-5% drift: log only (noise tolerance from Round 3).
 					l.Warn().Str("db_qty", dbQty.String()).Str("binance_qty", absAmt.String()).
@@ -260,6 +284,14 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 					metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "qty").Inc()
 				}
 			}
+		}
+
+		// Round R.5 (Bug A): skip the sync overwrite when we just tripped a
+		// drift halt — see comment above. The sync was the path that fed the
+		// next tick's amplified drift (DB → Binance value → algo_reconciler
+		// decrements → DB now < Binance → halt again).
+		if driftAboveHaltThreshold {
+			continue
 		}
 
 		// Update position_states with fresh data.

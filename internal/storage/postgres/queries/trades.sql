@@ -221,10 +221,16 @@ WHERE trade_id = $1;
 -- without this column position_manager only consults disaster_stop status,
 -- misses FINISHED trail closes, and trips false local_only_orphan halts
 -- (mu 真盘 INJ #66 / TURBOUSDT #67 / ESPORTSUSDT #59 all hit this).
+-- Round R.5 (Bug B + C): trail_stage + tp1/tp2 algo IDs so position_manager
+-- can (B) check TP FINISHED before tripping drift halt and (C) pass correct
+-- trail_sN exit_reason instead of hardcoded "disaster" to TryReconcile.
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
        t.binance_disaster_stop_order_id,
        t.binance_trail_algo_id,
+       t.trail_stage,
+       t.binance_tp1_algo_id,
+       t.binance_tp2_algo_id,
        ps.current_qty, ps.highest_price
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id

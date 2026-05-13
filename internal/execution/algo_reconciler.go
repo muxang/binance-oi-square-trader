@@ -263,15 +263,25 @@ func (ar *AlgoReconciler) logFor(tradeID int64, symbol string, algoID int64, kin
 // TryReconcile is the single-trade public entry point used by
 // position_manager.SyncTick local_only_orphan defensive check (v0.2 Step 5).
 // Queries the Algo status; if FINISHED, performs the same auto-close as
-// ReconcileTick with exit_reason='disaster'. Returns true on successful
-// reconcile (caller skips the orphan halt).
+// ReconcileTick with the caller-provided exit_reason. Returns true on
+// successful reconcile (caller skips the orphan halt).
+//
+// Round R.5 (Bug C): exit_reason is now an explicit parameter so the trail
+// path doesn't silently log as 'disaster'. Pre-fix every trail-fired close
+// that flowed through position_manager's race-window defense got recorded
+// as type='disaster' in trade_exits, which double-counted PnL in the rare
+// case algo_reconciler ALSO recorded the real trail_sN row (mu 真盘
+// COSUSDT #70: +$8.91 spurious entry).
 //
 // Caller passes the trade fields rather than a row type so this works from
 // BOTH ListOpenTradesWithAlgoRow (proactive sweep) and ListOpenTradesForSyncRow
 // (position_manager race-window defense).
-func (ar *AlgoReconciler) TryReconcile(ctx context.Context, tradeID int64, symbol, algoIDStr string, entryPrice, currentQty decimal.Decimal, entryTs time.Time) bool {
+func (ar *AlgoReconciler) TryReconcile(ctx context.Context, tradeID int64, symbol, algoIDStr, exitReason string, entryPrice, currentQty decimal.Decimal, entryTs time.Time) bool {
 	if algoIDStr == "" {
 		return false
+	}
+	if exitReason == "" {
+		exitReason = ExitReasonDisaster // safety default for legacy callers
 	}
 	algoID, err := strconv.ParseInt(algoIDStr, 10, 64)
 	if err != nil {
@@ -279,7 +289,7 @@ func (ar *AlgoReconciler) TryReconcile(ctx context.Context, tradeID int64, symbo
 			Msg("algo.try_reconcile: invalid algo_id, skipping")
 		return false
 	}
-	l := ar.log.With().Int64("trade_id", tradeID).Str("symbol", symbol).Int64("algo_id", algoID).Logger()
+	l := ar.log.With().Int64("trade_id", tradeID).Str("symbol", symbol).Int64("algo_id", algoID).Str("exit_reason", exitReason).Logger()
 	q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
 	if err != nil {
 		l.Warn().Err(err).Msg("algo.try_reconcile: query failed")
@@ -288,7 +298,36 @@ func (ar *AlgoReconciler) TryReconcile(ctx context.Context, tradeID int64, symbo
 	if q.AlgoStatus != "FINISHED" {
 		return false
 	}
-	return ar.autoCloseFromFields(ctx, tradeID, symbol, q, entryPrice, currentQty, entryTs, ExitReasonDisaster, l)
+	return ar.autoCloseFromFields(ctx, tradeID, symbol, q, entryPrice, currentQty, entryTs, exitReason, l)
+}
+
+// HasFinishedTPForTrade is the Round R.5 Bug B defense: checks whether any
+// TP algo for the trade is FINISHED on Binance. Used by position_manager
+// before tripping drift_exceeded halt — if a TP just fired, the Binance qty
+// dropped while DB.current_qty is still pre-TP (algo_reconciler will
+// reconcile this same tick or next). Returns true when at least one TP is
+// FINISHED; caller should skip the halt and let algo_reconciler decrement.
+//
+// Two API calls worst case (TP1 + TP2). Errors return false (don't gate
+// the halt on transient errors).
+func (ar *AlgoReconciler) HasFinishedTPForTrade(ctx context.Context, tp1AlgoIDStr, tp2AlgoIDStr string) bool {
+	for _, idStr := range []string{tp1AlgoIDStr, tp2AlgoIDStr} {
+		if idStr == "" {
+			continue
+		}
+		algoID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
+		if err != nil {
+			continue
+		}
+		if q.AlgoStatus == "FINISHED" {
+			return true
+		}
+	}
+	return false
 }
 
 // autoClose adapts the row-based call site to the primitive helper, passing

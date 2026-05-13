@@ -415,4 +415,96 @@ func TestSyncTick_LocalOnlyOrphan_TrailFinished_SkipsHalt(t *testing.T) {
 	assert.Empty(t, fdeps.rcaInserted, "trail-FINISHED orphan must NOT trip halt (Round R.4 fix)")
 	assert.Empty(t, fdeps.haltsTripped, "no halt when defense via trail algo succeeds")
 	require.Len(t, algoDeps.exits, 1, "trail-FINISHED triggers auto-close via TryReconcile")
+	// Round R.5 (Bug C): exit must be recorded as trail_sN, not 'disaster'.
+	// Test row has TrailStage=0 (default) → trailExitReasonForStage → trail_s1.
+	assert.Equal(t, ExitReasonTrailS1, algoDeps.exits[0].Type,
+		"trail-fired close must record as trail_sN (Bug C fix), not hardcoded 'disaster'")
+}
+
+// Round R.5 (Bug B): drift halt must NOT fire when a TP just FINISHED on Binance.
+// The Binance qty drop (TP partial fill) precedes algo_reconciler's DB decrement
+// on the same 1min tick — position_manager must consult TP algo state and skip
+// the halt + skip the sync overwrite. mu 真盘 COSUSDT #70 hit this twice in a row.
+func TestSyncTick_QtyDrift_TPFiredRace_SkipsHalt(t *testing.T) {
+	const sym = "TPRACE"
+	entryPx := pgtype.Numeric{}
+	_ = entryPx.Scan("100")
+	dbQty := pgtype.Numeric{}
+	_ = dbQty.Scan("100") // DB pre-decrement
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{
+			ID: 400, Symbol: sym, Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs:                    pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true},
+			EntryPrice:                 entryPx,
+			BinanceDisasterStopOrderID: pgtype.Text{String: "5001", Valid: true},
+			BinanceTP1AlgoID:           pgtype.Text{String: "5002", Valid: true},
+			BinanceTP2AlgoID:           pgtype.Text{String: "5003", Valid: true},
+			CurrentQty:                 dbQty,
+		},
+	}}
+	// Binance shows 80 (post-TP1 fill 20%) — drift = 20% > 5% threshold.
+	fbc := &fakeBinance{positions: []binance.PositionRisk{
+		{Symbol: sym, PositionAmt: decimal.NewFromFloat(80), MarkPrice: decimal.NewFromInt(110), UnrealizedProfit: decimal.NewFromInt(1)},
+	}}
+	pm := newTestPM(t, fdeps, fbc)
+
+	algoDeps := &fakeAlgoDeps{}
+	algoQuerier := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		// TP1 FINISHED (the cause of the Binance qty drop).
+		5002: {AlgoID: 5002, AlgoStatus: "FINISHED"},
+		// TP2 still WORKING.
+		5003: {AlgoID: 5003, AlgoStatus: "WORKING"},
+	}}
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:16379"})
+	ar := NewAlgoReconciler(algoDeps, algoQuerier, rdb, zerolog.Nop())
+	pm.SetAlgoReconciler(ar)
+
+	pm.SyncTick(context.Background())
+
+	assert.Empty(t, fdeps.rcaInserted, "TP-fill race must NOT trip drift halt (Bug B fix)")
+	assert.Empty(t, fdeps.haltsTripped, "no halt when TP is FINISHED — algo_reconciler will decrement")
+	// Bug A: sync must also be skipped (otherwise it overwrites DB to Binance value,
+	// then algo_reconciler decrements again on next tick → amplified drift).
+	assert.Empty(t, fdeps.syncUpdates, "drift+TP race: skip UpdatePositionStateSync (Bug A fix)")
+}
+
+// Round R.5 (Bug B negative case): when drift > 5% AND NO TP is FINISHED,
+// halt SHOULD fire — this is a real divergence, not a TP race.
+func TestSyncTick_QtyDrift_NoTPFinish_StillHalts(t *testing.T) {
+	const sym = "REALDRIFT"
+	entryPx := pgtype.Numeric{}
+	_ = entryPx.Scan("100")
+	dbQty := pgtype.Numeric{}
+	_ = dbQty.Scan("100")
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{
+			ID: 401, Symbol: sym, Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs:                    pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true},
+			EntryPrice:                 entryPx,
+			BinanceDisasterStopOrderID: pgtype.Text{String: "6001", Valid: true},
+			BinanceTP1AlgoID:           pgtype.Text{String: "6002", Valid: true},
+			BinanceTP2AlgoID:           pgtype.Text{String: "6003", Valid: true},
+			CurrentQty:                 dbQty,
+		},
+	}}
+	fbc := &fakeBinance{positions: []binance.PositionRisk{
+		{Symbol: sym, PositionAmt: decimal.NewFromFloat(80), MarkPrice: decimal.NewFromInt(110), UnrealizedProfit: decimal.NewFromInt(1)},
+	}}
+	pm := newTestPM(t, fdeps, fbc)
+
+	algoDeps := &fakeAlgoDeps{}
+	algoQuerier := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		6002: {AlgoID: 6002, AlgoStatus: "WORKING"}, // TP1 not fired
+		6003: {AlgoID: 6003, AlgoStatus: "WORKING"}, // TP2 not fired
+	}}
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:16379"})
+	ar := NewAlgoReconciler(algoDeps, algoQuerier, rdb, zerolog.Nop())
+	pm.SetAlgoReconciler(ar)
+
+	pm.SyncTick(context.Background())
+
+	require.Len(t, fdeps.rcaInserted, 1, "real drift (no TP race) → halt fires")
+	assert.Equal(t, "drift_exceeded", fdeps.rcaInserted[0].HaltType)
+	// Bug A: even for real drift, don't overwrite current_qty (let mu / algo_reconciler decide).
+	assert.Empty(t, fdeps.syncUpdates, "drift halt: skip UpdatePositionStateSync (Bug A fix)")
 }

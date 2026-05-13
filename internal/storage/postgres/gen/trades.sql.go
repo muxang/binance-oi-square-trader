@@ -557,6 +557,9 @@ SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
        t.binance_disaster_stop_order_id,
        t.binance_trail_algo_id,
+       t.trail_stage,
+       t.binance_tp1_algo_id,
+       t.binance_tp2_algo_id,
        ps.current_qty, ps.highest_price
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -576,6 +579,9 @@ type ListOpenTradesForSyncRow struct {
 	Leverage                   int16
 	BinanceDisasterStopOrderID pgtype.Text
 	BinanceTrailAlgoID         pgtype.Text
+	TrailStage                 int16
+	BinanceTP1AlgoID           pgtype.Text
+	BinanceTP2AlgoID           pgtype.Text
 	CurrentQty                 pgtype.Numeric
 	HighestPrice               pgtype.Numeric
 }
@@ -591,7 +597,7 @@ func (q *Queries) ListOpenTradesForSync(ctx context.Context) ([]ListOpenTradesFo
 		var i ListOpenTradesForSyncRow
 		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.EntryTs, &i.EntryPrice,
 			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID,
-			&i.BinanceTrailAlgoID,
+			&i.BinanceTrailAlgoID, &i.TrailStage, &i.BinanceTP1AlgoID, &i.BinanceTP2AlgoID,
 			&i.CurrentQty, &i.HighestPrice); err != nil {
 			return nil, err
 		}
