@@ -150,12 +150,20 @@ OI 涨幅 (距最低点): 7.86% ✓ (>5%)
       open + partial 的 trade 数 < MAX_CONCURRENT_POSITIONS = 5
       ↓ 否则 reject (reason=position_limit_full)
 
-关 3: 同 symbol 24h 不二次入场
-      该 symbol 是否有 24h 内的 signal 关联 trade(任何状态: entering/open/partial/closed)?
-      ↓ 是 reject (reason=recent_24h_trade)
+关 3: 同 symbol 当前无持仓 (Round R.6, mu 真实诉求 2026-05-14)
+      该 symbol 是否有 trade.status IN ('entering','open','partial','closing')?
+      ↓ 是 reject (reason=symbol_has_active_position)
+      ↓ status='closed' 或 'failed' → 立即放行 (平仓后即可再 entry)
 ```
 
-**注: 关 3 的 cutoff 是上次 signal 产生时间,不是平仓时间。** 即使刚平仓 5 分钟,只要 signal 距今 < 24h 仍被拒。
+**Round R.6 重要变化** (vs 旧 v0.1 24h 时间窗口):
+- ✅ 同 symbol 平仓后**立即**可再 entry,无需等 24h
+- ✅ failed (e.g. Binance -4168 拒绝) 也立即可再 entry
+- ✅ 顺手修原 SQL 漏掉 `closing` 状态的 bug — 手工平仓中之前能叠仓
+- ⚠️ mu owner 接受 risk: 同 symbol disaster cluster 可能 (forward 评估真实 verify)
+
+旧 v0.1 用 `signals.ts > NOW() - 24h` + `status IN (..., 'closed')` 拦 — 即使刚平仓
+5 分钟,只要原始 signal 距今 < 24h 也被拒。新版用 status 直接判,语义更清晰。
 
 ### 3.2 仓位计算 (sizing)
 
@@ -473,7 +481,7 @@ Algo 状态轮询  每 1 分钟一次
 SIGFAIL 检测  每 5 分钟一次
 熔断评估      每 5 分钟一次
 飞书日报      每天 BJT 00:00
-24h cooldown  同 symbol 24 小时内不二次入场
+同 symbol 过滤  持仓状态判定 (Round R.6, 无时间窗口) — 平仓后立即可再 entry
 ```
 
 ### 9.4 12 个 mu admin Web UI 可调阈值 (Phase 5.2 12 wired keys)
@@ -615,9 +623,13 @@ ack 为 resolved/investigating/ignored (写 audit log)
 
 ## §13 已知边界 (mu 应了解的限制)
 
-1. **callback rates 还没 wire 到 runtime** — TRAIL_STAGE{N}_CALLBACK_RATE 改 .env 不会热生效,需重启。Round 2.w 任务待 mu 决策时机。
+1. **callback rates 已 wire (Round 2.w)** — TRAIL_STAGE{N}_CALLBACK_RATE 可通过 admin Web UI 实时调,1min 内生效。原 .env 改不会自动热生效已不再是限制。
 
-2. **SAME_SYMBOL_COOLDOWN_HOURS 无效** — .env 值不会被读;硬编码 24h。要改需要 wire-up (现已有 task 但未实施)。
+2. **同 symbol 过滤改为持仓状态 (Round R.6, 2026-05-14)** — 已不再用 24h 时间窗口。
+   `SAME_SYMBOL_COOLDOWN_HOURS` env 字段保留但**完全无效**(代码不读取);
+   实际行为: status IN (entering/open/partial/closing) → reject,其余 → allow。
+   mu owner 接受 risk: 同 symbol disaster cluster 可能,forward 评估验证后
+   可考虑加 watchlist auto-exclude on N losses。
 
 3. **TP1/TP2 是固定价位 TAKE_PROFIT_MARKET,不是 trail** — 设计如此 (Round 2 Module A "山寨币保守化")。VELVET 现状 4 个 algo 是正确的。
 
