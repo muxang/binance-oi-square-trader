@@ -63,6 +63,16 @@ func (s *Server) Routes() http.Handler {
 	// Phase 5.2 Round 1: CSRF token endpoint. Caddy basic auth at path matcher
 	// guards this in production; browser prompts on first call per session.
 	mux.HandleFunc("GET /api/admin/csrf-token", s.handleCsrfToken)
+
+	// Phase 5.2 Round 2: 7 write endpoints (manual close `d` deferred to Round 2.x,
+	// RCA ack `h` to Round 4). All wrapped with CSRF; Caddy provides basic auth.
+	mux.HandleFunc("POST /api/admin/circuit-breaker/daily-pnl-reset", s.requireCsrf(s.handleDailyPnlReset))
+	mux.HandleFunc("POST /api/admin/circuit-breaker/consec-reset", s.requireCsrf(s.handleConsecReset))
+	mux.HandleFunc("POST /api/admin/circuit-breaker/halt", s.requireCsrf(s.handleManualHalt))
+	mux.HandleFunc("PUT /api/admin/config/circuit-breaker-thresholds", s.requireCsrf(s.handleCBThresholds))
+	mux.HandleFunc("PUT /api/admin/config/signal-thresholds", s.requireCsrf(s.handleSignalThresholds))
+	mux.HandleFunc("PUT /api/admin/watchlist/include/{symbol}", s.requireCsrf(s.handleWatchlistInclude))
+	mux.HandleFunc("PUT /api/admin/watchlist/exclude/{symbol}", s.requireCsrf(s.handleWatchlistExclude))
 	return s.cors(mux)
 }
 
