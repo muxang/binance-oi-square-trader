@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
-import { fetchTradeDetail } from '../api/client'
-import { pnlColor, pnlPrefix } from '../theme/colors'
+import { fetchTradeDetail, manualCloseTrade } from '../api/client'
+import { colors, pnlColor, pnlPrefix } from '../theme/colors'
+import { ConfirmModal, errorMessage } from '../components/ConfirmModal'
 
 function fmtP(v?: number | null, d = 4): string {
   if (v == null) return '—'
@@ -217,11 +219,22 @@ function SquareAlgoNote({ data }: { data: Record<string, unknown> | null }) {
 export default function TradeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const qc = useQueryClient()
+  const [closeOpen, setCloseOpen] = useState(false)
+  const [reason, setReason] = useState('')
 
   const { data: d, isLoading, error } = useQuery({
     queryKey: ['trade-detail', id],
     queryFn: () => fetchTradeDetail(Number(id)),
     refetchInterval: 10_000,
+  })
+
+  const closeMut = useMutation({
+    mutationFn: (r: string) => manualCloseTrade(Number(id), r),
+    onSuccess: () => {
+      setCloseOpen(false); setReason('')
+      qc.invalidateQueries({ queryKey: ['trade-detail', id] })
+    },
   })
 
   if (isLoading) return <div className="p-8 text-gray-500 text-sm text-center">加载中...</div>
@@ -230,6 +243,10 @@ export default function TradeDetail() {
   const sc = STATUS_COLOR[d.status] ?? '#8c8c8c'
   const statusZh = STATUS_ZH[d.status] ?? d.status
   const decisionZh = d.signal?.decision ? (DECISION_ZH[d.signal.decision] ?? d.signal.decision) : null
+  const isClosable = d.status === 'open' || d.status === 'partial'
+  const unrealized = d.position && d.entry_price && d.position.current_qty
+    ? (Number(d.position.highest_price ?? 0) - d.entry_price) * d.position.current_qty
+    : 0
 
   return (
     <div className="p-6 space-y-4">
@@ -246,6 +263,16 @@ export default function TradeDetail() {
         <span className="text-xs text-gray-500 ml-auto">
           {d.leverage}倍杠杆 · 保证金 {d.margin.toFixed(2)} USDT
         </span>
+        {isClosable && (
+          <button
+            onClick={() => setCloseOpen(true)}
+            className="text-xs px-3 py-1 rounded font-medium"
+            style={{ background: colors.halt + '22', color: colors.halt, border: `1px solid ${colors.halt}66` }}
+            title="手工平仓 — 二次确认 (exit_manager 1min 内执行)"
+          >
+            🚨 手工平仓
+          </button>
+        )}
       </div>
 
       {/* Two-column grid */}
@@ -373,6 +400,40 @@ export default function TradeDetail() {
         </div>
 
       </div>
+
+      <ConfirmModal
+        open={closeOpen}
+        title="🚨 手工平仓"
+        tone="danger"
+        confirmLabel="确认平仓"
+        isPending={closeMut.isPending}
+        error={closeMut.isError ? errorMessage(closeMut.error) : null}
+        onCancel={() => { setCloseOpen(false); setReason('') }}
+        onConfirm={() => closeMut.mutate(reason)}
+      >
+        <div className="space-y-1 mb-3 text-xs">
+          <div><span className="text-gray-500">Trade:</span> <span className="font-mono">{d.symbol} #{d.trade_id}</span></div>
+          {d.entry_price != null && (
+            <div><span className="text-gray-500">入场价:</span> {fmtP(d.entry_price)}</div>
+          )}
+          {d.position && (
+            <div><span className="text-gray-500">未实现 PnL:</span> <span style={{ color: pnlColor(unrealized) }}>{pnlPrefix(unrealized)}{unrealized.toFixed(2)} USDT</span></div>
+          )}
+        </div>
+        <div
+          className="text-xs px-3 py-2 rounded mb-3"
+          style={{ background: colors.halt + '15', color: colors.halt, border: `1px solid ${colors.halt}44` }}
+        >
+          <b>风险:</b> trade 状态置 closing + exit_reason=manual_close。exit_manager 下次 cron tick (≤1min) cancel 所有 algo + 市价 SELL 平仓。
+        </div>
+        <label className="block text-xs text-gray-500 mb-1">平仓原因 (必填):</label>
+        <input
+          type="text" value={reason} onChange={e => setReason(e.target.value)}
+          placeholder="e.g. RCA: 形态破位 / 出差 / 风险事件"
+          className="w-full px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+          disabled={closeMut.isPending}
+        />
+      </ConfirmModal>
     </div>
   )
 }

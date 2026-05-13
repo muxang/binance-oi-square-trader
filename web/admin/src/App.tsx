@@ -6,6 +6,8 @@ import Pnl from './pages/Pnl'
 import Market from './pages/Market'
 import Square from './pages/Square'
 import TradeDetail from './pages/TradeDetail'
+import Settings from './pages/Settings'
+import AuditLog from './pages/AuditLog'
 import { DataSourceProvider, useDataSource } from './context/DataSource'
 import type { DataSource } from './api/client'
 
@@ -54,6 +56,8 @@ function AppLayout() {
               { to: '/pnl',       label: '💰 PnL 分析' },
               { to: '/square',    label: '🔥 Square 热点' },
               { to: '/market',    label: '🌐 市场扫描' },
+              { to: '/settings',  label: '⚙️ 设置' },
+              { to: '/audit',     label: '📋 操作历史' },
             ].map(({ to, label }) => (
               <NavLink
                 key={to}
@@ -80,6 +84,8 @@ function AppLayout() {
               <Route path="/pnl"       element={<Pnl />} />
               <Route path="/square"    element={<Square />} />
               <Route path="/market"    element={<Market />} />
+              <Route path="/settings"  element={<Settings />} />
+              <Route path="/audit"     element={<AuditLog />} />
               <Route path="/trade/:id" element={<TradeDetail />} />
               <Route path="*"          element={<Navigate to="/" replace />} />
             </Routes>

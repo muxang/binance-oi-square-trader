@@ -3,8 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
-import { fetchDashboard, resetCircuitBreaker, type CollectorStatus } from '../api/client'
+import {
+  fetchDashboard, resetCircuitBreaker, resetDailyPnl, resetConsecutiveLosses, manualHalt,
+  type CollectorStatus,
+} from '../api/client'
 import { colors, pnlColor, pnlPrefix, haltColor } from '../theme/colors'
+import { ConfirmModal, errorMessage } from '../components/ConfirmModal'
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
@@ -75,23 +79,38 @@ function CollectorRow({ c }: { c: CollectorStatus }) {
   )
 }
 
+type ModalKind = null | 'halt_reset' | 'daily_pnl_reset' | 'consec_reset' | 'manual_halt'
+
 export default function Dashboard() {
   const qc = useQueryClient()
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [resetNote, setResetNote] = useState('')
+  const [modal, setModal] = useState<ModalKind>(null)
+  const [note, setNote] = useState('')
+  const [haltHours, setHaltHours] = useState(24)
   const { data, isLoading, error, dataUpdatedAt } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboard,
     refetchInterval: 5_000,
   })
 
-  const resetMut = useMutation({
-    mutationFn: (note: string) => resetCircuitBreaker(note),
-    onSuccess: () => {
-      setConfirmOpen(false)
-      setResetNote('')
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
-    },
+  const closeModal = () => { setModal(null); setNote(''); setHaltHours(24) }
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
+
+  const haltResetMut = useMutation({
+    mutationFn: (n: string) => resetCircuitBreaker(n),
+    onSuccess: () => { closeModal(); invalidate() },
+  })
+  const dailyPnlMut = useMutation({
+    mutationFn: (n: string) => resetDailyPnl(n),
+    onSuccess: () => { closeModal(); invalidate() },
+  })
+  const consecMut = useMutation({
+    mutationFn: (n: string) => resetConsecutiveLosses(n),
+    onSuccess: () => { closeModal(); invalidate() },
+  })
+  const haltMut = useMutation({
+    mutationFn: ({ hours, note }: { hours: number; note: string }) =>
+      manualHalt({ duration_hours: hours, note }),
+    onSuccess: () => { closeModal(); invalidate() },
   })
 
   if (isLoading) {
@@ -122,9 +141,9 @@ export default function Dashboard() {
             {data.halt_reason}
           </span>
         )}
-        {data.halt_status === 'HALTED' && (
+        {data.halt_status === 'HALTED' ? (
           <button
-            onClick={() => setConfirmOpen(true)}
+            onClick={() => setModal('halt_reset')}
             className="text-xs px-3 py-1 rounded font-medium transition-colors"
             style={{
               background: colors.warning + '22',
@@ -134,6 +153,19 @@ export default function Dashboard() {
             title="手动解除 halt — 二次确认"
           >
             🔓 手动解除 halt
+          </button>
+        ) : (
+          <button
+            onClick={() => setModal('manual_halt')}
+            className="text-xs px-3 py-1 rounded font-medium transition-colors"
+            style={{
+              background: colors.halt + '15',
+              color: colors.halt,
+              border: `1px solid ${colors.halt}44`,
+            }}
+            title="主动 halt — 暂停 trader 入场"
+          >
+            ⏸️ 主动 halt
           </button>
         )}
         <div className="ml-auto flex items-baseline gap-1">
@@ -182,6 +214,24 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* 快捷操作 (Round 3) */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setModal('daily_pnl_reset')}
+          className="text-xs px-3 py-1.5 rounded bg-[#1f1f1f] border border-[#3d3d3d] text-gray-300 hover:bg-[#2d2d2d]"
+          title="重置今日累计 PnL 到 0 (审计 + 备注)"
+        >
+          ↺ 重置今日 PnL
+        </button>
+        <button
+          onClick={() => setModal('consec_reset')}
+          className="text-xs px-3 py-1.5 rounded bg-[#1f1f1f] border border-[#3d3d3d] text-gray-300 hover:bg-[#2d2d2d]"
+          title="重置连续亏损计数到 0 (审计 + 备注)"
+        >
+          ↺ 重置连亏计数
+        </button>
+      </div>
+
       {/* Collector 状态 */}
       <div className="bg-[#1f1f1f] border border-[#2d2d2d] rounded-lg p-5">
         <div className="flex items-center justify-between mb-3">
@@ -206,65 +256,112 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* 手动解除 halt 二次确认对话框 */}
-      {confirmOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.6)' }}
-          onClick={() => !resetMut.isPending && setConfirmOpen(false)}
-        >
-          <div
-            className="bg-[#1f1f1f] border border-[#3d3d3d] rounded-lg p-6 max-w-md w-full mx-4"
-            onClick={e => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-bold mb-3" style={{ color: colors.warning }}>
-              ⚠️ 手动解除 trader halt
-            </h3>
-            <div className="text-sm text-gray-300 space-y-2 mb-4">
-              <div><span className="text-gray-500">当前 halt 原因:</span> <span style={{ color: colors.halt }}>{data.halt_reason ?? '(unknown)'}</span></div>
-              <div><span className="text-gray-500">今日 PnL:</span> <span style={{ color: pnlColor(data.daily_pnl) }}>{pnlPrefix(data.daily_pnl)}{data.daily_pnl.toFixed(2)} USDT</span></div>
-              <div><span className="text-gray-500">连续亏损:</span> <span>{data.consecutive_losses} 次</span></div>
-            </div>
-            <div
-              className="text-xs px-3 py-2 rounded mb-4"
-              style={{ background: colors.warning + '15', color: colors.warning, border: `1px solid ${colors.warning}44` }}
-            >
-              <b>风险提示:</b> 解除后 trader 立即恢复入场, 真实资金继续暴露。仅在你 informed 决策的前提下确认。
-            </div>
-            <label className="block text-xs text-gray-500 mb-1">备注 (可选, audit log):</label>
-            <input
-              type="text"
-              value={resetNote}
-              onChange={e => setResetNote(e.target.value)}
-              placeholder="e.g. RCA 完成 + Round R.1 5x 部署"
-              className="w-full mb-4 px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
-              disabled={resetMut.isPending}
-            />
-            {resetMut.isError && (
-              <div className="text-xs mb-3 px-3 py-2 rounded" style={{ background: colors.halt + '15', color: colors.halt }}>
-                解除失败: {resetMut.error instanceof Error ? resetMut.error.message : String(resetMut.error)}
-              </div>
-            )}
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setConfirmOpen(false)}
-                disabled={resetMut.isPending}
-                className="px-4 py-1.5 text-sm rounded bg-[#2d2d2d] text-gray-300 hover:bg-[#3d3d3d] disabled:opacity-50"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => resetMut.mutate(resetNote)}
-                disabled={resetMut.isPending}
-                className="px-4 py-1.5 text-sm rounded font-medium disabled:opacity-50"
-                style={{ background: colors.halt, color: '#fff' }}
-              >
-                {resetMut.isPending ? '解除中...' : '确认解除 halt'}
-              </button>
-            </div>
-          </div>
+      {/* Modals (Round 3 — refactored to reusable ConfirmModal) */}
+
+      <ConfirmModal
+        open={modal === 'halt_reset'}
+        title="⚠️ 手动解除 trader halt"
+        tone="danger"
+        confirmLabel="确认解除 halt"
+        isPending={haltResetMut.isPending}
+        error={haltResetMut.isError ? errorMessage(haltResetMut.error) : null}
+        onCancel={closeModal}
+        onConfirm={() => haltResetMut.mutate(note)}
+      >
+        <div className="space-y-2 mb-4">
+          <div><span className="text-gray-500">当前 halt 原因:</span> <span style={{ color: colors.halt }}>{data.halt_reason ?? '(unknown)'}</span></div>
+          <div><span className="text-gray-500">今日 PnL:</span> <span style={{ color: pnlColor(data.daily_pnl) }}>{pnlPrefix(data.daily_pnl)}{data.daily_pnl.toFixed(2)} USDT</span></div>
+          <div><span className="text-gray-500">连续亏损:</span> <span>{data.consecutive_losses} 次</span></div>
         </div>
-      )}
+        <div
+          className="text-xs px-3 py-2 rounded mb-3"
+          style={{ background: colors.warning + '15', color: colors.warning, border: `1px solid ${colors.warning}44` }}
+        >
+          <b>风险提示:</b> 解除后 trader 立即恢复入场, 真实资金继续暴露。
+        </div>
+        <label className="block text-xs text-gray-500 mb-1">备注 (可选):</label>
+        <input
+          type="text" value={note} onChange={e => setNote(e.target.value)}
+          placeholder="e.g. RCA 完成 + 阈值校准"
+          className="w-full px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+          disabled={haltResetMut.isPending}
+        />
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={modal === 'daily_pnl_reset'}
+        title="↺ 重置今日 PnL"
+        tone="warning"
+        confirmLabel="确认重置"
+        isPending={dailyPnlMut.isPending}
+        error={dailyPnlMut.isError ? errorMessage(dailyPnlMut.error) : null}
+        onCancel={closeModal}
+        onConfirm={() => dailyPnlMut.mutate(note)}
+      >
+        <div className="space-y-2 mb-3">
+          <div><span className="text-gray-500">当前今日 PnL:</span> <span style={{ color: pnlColor(data.daily_pnl) }}>{pnlPrefix(data.daily_pnl)}{data.daily_pnl.toFixed(2)} USDT</span></div>
+          <div className="text-xs text-gray-500">归零 daily_pnl + daily_pnl_date 当前日,trade_exits 实际盈亏历史 保留。</div>
+        </div>
+        <label className="block text-xs text-gray-500 mb-1">备注:</label>
+        <input
+          type="text" value={note} onChange={e => setNote(e.target.value)}
+          placeholder="e.g. 新日清零"
+          className="w-full px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+          disabled={dailyPnlMut.isPending}
+        />
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={modal === 'consec_reset'}
+        title="↺ 重置连续亏损计数"
+        tone="warning"
+        confirmLabel="确认重置"
+        isPending={consecMut.isPending}
+        error={consecMut.isError ? errorMessage(consecMut.error) : null}
+        onCancel={closeModal}
+        onConfirm={() => consecMut.mutate(note)}
+      >
+        <div className="space-y-2 mb-3">
+          <div><span className="text-gray-500">当前连亏次数:</span> <span>{data.consecutive_losses}</span></div>
+          <div className="text-xs text-gray-500">归零 consecutive_losses + last_loss_at, 不影响历史 trade_exits。</div>
+        </div>
+        <label className="block text-xs text-gray-500 mb-1">备注:</label>
+        <input
+          type="text" value={note} onChange={e => setNote(e.target.value)}
+          placeholder="e.g. RCA: 单事件场景化亏损,非系统性"
+          className="w-full px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+          disabled={consecMut.isPending}
+        />
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={modal === 'manual_halt'}
+        title="⏸️ 主动 halt — 暂停 trader 入场"
+        tone="danger"
+        confirmLabel="确认 halt"
+        isPending={haltMut.isPending}
+        error={haltMut.isError ? errorMessage(haltMut.error) : null}
+        onCancel={closeModal}
+        onConfirm={() => haltMut.mutate({ hours: haltHours, note })}
+      >
+        <div className="space-y-2 mb-3">
+          <div className="text-xs text-gray-500">decision_engine 在 halt 期间拒绝新入场;已有持仓继续被 trail/disaster 守护。</div>
+        </div>
+        <label className="block text-xs text-gray-500 mb-1">halt 持续小时数 (1-168):</label>
+        <input
+          type="number" min={1} max={168} value={haltHours}
+          onChange={e => setHaltHours(Math.max(1, Math.min(168, Number(e.target.value) || 1)))}
+          className="w-full mb-3 px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+          disabled={haltMut.isPending}
+        />
+        <label className="block text-xs text-gray-500 mb-1">备注 (必填,记入 audit):</label>
+        <input
+          type="text" value={note} onChange={e => setNote(e.target.value)}
+          placeholder="e.g. 出差 24h / 重大新闻观察期"
+          className="w-full px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+          disabled={haltMut.isPending}
+        />
+      </ConfirmModal>
     </div>
   )
 }

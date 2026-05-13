@@ -82,6 +82,88 @@ export interface CBResetResponse {
 export const resetCircuitBreaker = (note?: string): Promise<CBResetResponse> =>
   api.post<CBResetResponse>('/circuit-breaker/reset', { confirm: true, actor: 'mu', note: note ?? '' }).then(r => r.data)
 
+// ---- Round 2 write endpoints (Phase 5.2) ----
+
+export interface SimpleAck { ok: boolean }
+
+export const resetDailyPnl = (note?: string): Promise<SimpleAck> =>
+  api.post<SimpleAck>('/circuit-breaker/daily-pnl-reset', { confirm: true, note: note ?? '' }).then(r => r.data)
+
+export const resetConsecutiveLosses = (note?: string): Promise<SimpleAck> =>
+  api.post<SimpleAck>('/circuit-breaker/consec-reset', { confirm: true, note: note ?? '' }).then(r => r.data)
+
+export interface ManualHaltRequest {
+  duration_hours: number
+  note?: string
+}
+export const manualHalt = (req: ManualHaltRequest): Promise<SimpleAck> =>
+  api.post<SimpleAck>('/circuit-breaker/halt', { confirm: true, ...req }).then(r => r.data)
+
+// Threshold update payloads — all decimal-pct fields sent as string to preserve precision.
+export interface CBThresholdsRequest {
+  daily_loss_halt_pct?: string
+  consecutive_losses_halt?: number
+  total_float_loss_halt_pct?: string
+  btc_panic_drop_pct?: string
+  max_stop_pct?: string
+  trail_stage1_activate_pct?: string
+  trail_stage2_upgrade_pct?: string
+  trail_stage3_upgrade_pct?: string
+  trail_stage4_upgrade_pct?: string
+  note?: string
+}
+export interface ThresholdsAck { ok: boolean; updated_keys: number }
+
+export const updateCBThresholds = (req: CBThresholdsRequest): Promise<ThresholdsAck> =>
+  api.put<ThresholdsAck>('/config/circuit-breaker-thresholds', { confirm: true, ...req }).then(r => r.data)
+
+export interface SignalThresholdsRequest {
+  oi_growth_from_min_pct?: string
+  oi_surge_recent_periods?: number
+  square_ratio_threshold?: string
+  square_hot_acceleration_threshold?: string
+  note?: string
+}
+export const updateSignalThresholds = (req: SignalThresholdsRequest): Promise<ThresholdsAck> =>
+  api.put<ThresholdsAck>('/config/signal-thresholds', { confirm: true, ...req }).then(r => r.data)
+
+export const watchlistInclude = (symbol: string, reason: string): Promise<SimpleAck> =>
+  api.put<SimpleAck>(`/watchlist/include/${encodeURIComponent(symbol)}`, { confirm: true, reason }).then(r => r.data)
+
+export const watchlistExclude = (symbol: string, reason: string): Promise<SimpleAck> =>
+  api.put<SimpleAck>(`/watchlist/exclude/${encodeURIComponent(symbol)}`, { confirm: true, reason }).then(r => r.data)
+
+export interface ManualCloseAck { ok: boolean; trade_id: number; symbol: string; note: string }
+export const manualCloseTrade = (id: number, reason: string): Promise<ManualCloseAck> =>
+  api.post<ManualCloseAck>(`/trades/${id}/close`, { confirm: true, reason }).then(r => r.data)
+
+// ---- Audit Log (Round 3, public read) ----
+
+export interface AuditLogEntry {
+  id: number
+  ts: string
+  operator: string
+  action_type: string
+  resource_type: string
+  resource_id: string
+  previous_state: Record<string, unknown> | null
+  new_state: Record<string, unknown> | null
+  note: string
+  ip_address: string
+  user_agent: string
+}
+export interface AuditLogData {
+  total: number
+  page: number
+  items: AuditLogEntry[]
+}
+
+export const fetchAuditLog = (page = 1, pageSize = 20, action?: string): Promise<AuditLogData> => {
+  const params: Record<string, string> = { page: String(page), page_size: String(pageSize) }
+  if (action) params.action = action
+  return api.get<AuditLogData>('/audit-log', { params }).then(r => r.data)
+}
+
 export interface CBEvent {
   id: number
   ts: string
