@@ -373,3 +373,46 @@ func TestSyncTick_BinanceOnlyUnknown_TripsHalt(t *testing.T) {
 	assert.Len(t, fdeps.rcaInserted, 1, "ARBUSDT binance-only → 1 RCA")
 	assert.Equal(t, "binance_only_unknown", fdeps.rcaInserted[0].HaltType)
 }
+
+// Round R.4 (F1): trail-fired orphan must also skip halt. Pre-fix, position_manager
+// only consulted disaster_stop algo status — trail-fired closes (mu 真盘 #66/#67/#59)
+// fell through to halt because disaster algo was still NEW/WORKING.
+func TestSyncTick_LocalOnlyOrphan_TrailFinished_SkipsHalt(t *testing.T) {
+	const sym = "TRAILORPHAN"
+	entryPx := pgtype.Numeric{}
+	_ = entryPx.Scan("0.5")
+	qty := pgtype.Numeric{}
+	_ = qty.Scan("100")
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{
+			ID: 300, Symbol: sym, Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs:                    pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true},
+			EntryPrice:                 entryPx,
+			BinanceDisasterStopOrderID: pgtype.Text{String: "9001", Valid: true},
+			BinanceTrailAlgoID:         pgtype.Text{String: "9002", Valid: true},
+			CurrentQty:                 qty,
+		},
+	}}
+	fbc := &fakeBinance{positions: nil} // orphan
+
+	pm := newTestPM(t, fdeps, fbc)
+	algoDeps := &fakeAlgoDeps{}
+	algoQuerier := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		// disaster still WORKING (never fired) — pre-fix this is the only one
+		// position_manager would check, and it would trip a false halt.
+		9001: {AlgoID: 9001, AlgoStatus: "WORKING"},
+		// Round R.4: trail FINISHED — position_manager must consult this too.
+		9002: {AlgoID: 9002, Symbol: sym, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(0.55), Quantity: decimal.NewFromFloat(100)},
+	}}
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:16379"})
+	ar := NewAlgoReconciler(algoDeps, algoQuerier, rdb, zerolog.Nop())
+	ar.nowFn = func() time.Time { return time.Unix(1778500000, 0).UTC() }
+	pm.SetAlgoReconciler(ar)
+
+	pm.SyncTick(context.Background())
+
+	assert.Empty(t, fdeps.rcaInserted, "trail-FINISHED orphan must NOT trip halt (Round R.4 fix)")
+	assert.Empty(t, fdeps.haltsTripped, "no halt when defense via trail algo succeeds")
+	require.Len(t, algoDeps.exits, 1, "trail-FINISHED triggers auto-close via TryReconcile")
+}

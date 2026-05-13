@@ -138,25 +138,43 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 
 		pos, ok := positionsBySymbol[t.Symbol]
 		if !ok {
-			// v0.2 Step 5: race-window defense. The Algo polling collector
-			// (1min cron) is supposed to catch FINISHED algos and auto-close
-			// the trade BEFORE we get here. But robfig/cron v3 doesn't
-			// guarantee execution order within the same minute, so we may
-			// observe the trade still 'open' while the Algo has actually
-			// FINISHED. Consult algo_reconciler before tripping orphan halt.
-			if pm.algoReconciler != nil && t.BinanceDisasterStopOrderID.Valid && t.BinanceDisasterStopOrderID.String != "" {
+			// v0.2 Step 5 + Round R.4 (F1): race-window defense. The Algo polling
+			// collector (1min cron) is supposed to catch FINISHED algos and
+			// auto-close the trade BEFORE we get here. But robfig/cron v3 doesn't
+			// guarantee execution order within the same minute, so we may observe
+			// the trade still 'open' while the Algo has actually FINISHED.
+			//
+			// Round R.4: try EVERY non-nil algo (trail first — fires far more
+			// often than disaster on profitable trades). Pre-fix the check only
+			// looked at disaster_stop_id, so trail-fired closes (mu's INJ #66 /
+			// TURBOUSDT #67 / ESPORTSUSDT #59) tripped false halts.
+			if pm.algoReconciler != nil {
 				entryTs := time.Time{}
 				if t.EntryTs.Valid {
 					entryTs = t.EntryTs.Time
 				}
-				if pm.algoReconciler.TryReconcile(ctx, t.ID, t.Symbol, t.BinanceDisasterStopOrderID.String,
-					decimalFromPgNumeric(t.EntryPrice),
-					decimalFromPgNumeric(t.CurrentQty),
-					entryTs) {
-					l.Info().Msg("position.local_only_orphan: algo_reconciler resolved (FINISHED auto-close), skipping halt")
-					// Mirror healthy-tick gauge cleanup (autoClose did the DELETE
-					// internally too, idempotent re-delete is safe).
-					metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
+				entry := decimalFromPgNumeric(t.EntryPrice)
+				qty := decimalFromPgNumeric(t.CurrentQty)
+				algoCandidates := []struct {
+					id   string
+					kind string
+				}{
+					{t.BinanceTrailAlgoID.String, "trail"},
+					{t.BinanceDisasterStopOrderID.String, "disaster"},
+				}
+				resolved := false
+				for _, c := range algoCandidates {
+					if c.id == "" {
+						continue
+					}
+					if pm.algoReconciler.TryReconcile(ctx, t.ID, t.Symbol, c.id, entry, qty, entryTs) {
+						l.Info().Str("via_algo", c.kind).Msg("position.local_only_orphan: algo_reconciler resolved (FINISHED auto-close), skipping halt")
+						metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
+						resolved = true
+						break
+					}
+				}
+				if resolved {
 					continue
 				}
 			}

@@ -148,19 +148,21 @@ func (cb *CircuitBreakerTripper) EvaluateAll(ctx context.Context) bool {
 	// is misleading).
 	metrics.DailyPnlUSDT.Set(mustFloat(state.DailyPnl))
 	metrics.ConsecutiveLossesGauge.Set(float64(state.ConsecutiveLosses))
-	if state.TradingHalted {
-		metrics.CircuitBreakerState.Set(1)
-		return false // already halted, skip evaluation
-	}
-	metrics.CircuitBreakerState.Set(0)
 
-	// v0.2 gauge audit (Catch 6/7): compute + .Set() unrealized-pnl-total and
-	// BTC drop_pct unconditionally. Previously they only updated inside their
-	// own trip helper, so when an earlier trip fired (or balance fetch failed)
-	// these gauges went stale for hours. Trip helpers below now consume the
-	// pre-computed values instead of recomputing.
+	// Round R.4 (F3): refresh balance + unrealized + BTC gauges unconditionally,
+	// BEFORE the halt-return. Pre-fix, when halted, fetchBalance never ran and
+	// trader_account_balance_usdt stuck at the last-known value (or 0 after a
+	// post-halt restart) for the full halt window. Same Catch 6/7 pattern —
+	// dashboards must keep showing live numbers during halts.
+	balance, balanceOK := cb.fetchBalance(ctx)
 	totalUnrealized, positionCount := cb.updateUnrealizedGauge(ctx)
 	btcDropPct, btcStartPrice, btcCurrentPrice, btcOK := cb.updateBTCDropGauge(ctx)
+
+	if state.TradingHalted {
+		metrics.CircuitBreakerState.Set(1)
+		return false // already halted, skip trip evaluation
+	}
+	metrics.CircuitBreakerState.Set(0)
 
 	// 1. API error rate (cheapest — DB count only).
 	if cb.tripAPIErrorRate(ctx) {
@@ -170,8 +172,7 @@ func (cb *CircuitBreakerTripper) EvaluateAll(ctx context.Context) bool {
 	if cb.tripConsecutiveLosses(ctx, state) {
 		return true
 	}
-	// 3. Daily loss (needs balance API).
-	balance, balanceOK := cb.fetchBalance(ctx)
+	// 3. Daily loss (uses pre-fetched balance).
 	if balanceOK && cb.tripDailyLoss(ctx, state.DailyPnl, balance) {
 		return true
 	}
