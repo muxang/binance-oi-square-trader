@@ -37,6 +37,11 @@ type Config struct {
 	ATRStopMult decimal.Decimal
 	MinStopPct  decimal.Decimal
 	MaxStopPct  decimal.Decimal
+	// v0.2 Round 1: entry-time TRAILING_STOP_MARKET activation. Binance native
+	// trail handles activation when mark price hits activationPrice = entry × (1 + Stage1ActivatePct).
+	// Env: TRAIL_STAGE1_ACTIVATE_PCT / TRAIL_STAGE1_CALLBACK_RATE.
+	TrailStage1ActivatePct  decimal.Decimal
+	TrailStage1CallbackRate decimal.Decimal
 	// Leverage is the target initial leverage for all new positions.
 	// Env: LEVERAGE (e.g. 10).
 	Leverage int
@@ -220,6 +225,11 @@ func (e *Executor) PlaceEntry(
 
 	// Steps 6-9: place Algo Service disaster stop.
 	e.placeDisasterStop(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
+
+	// Step 10 (v0.2 Round 1 Module B): arm S1 TRAILING_STOP_MARKET.
+	// Binance handles activation when mark price hits entry × (1 + activate_pct).
+	// Failure is non-fatal — disaster stop + trail_upgrader cron S0 fallback cover.
+	e.placeTrailingStop(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
 }
 
 // waitFill polls until the order is FILLED or the deadline is exceeded.
@@ -326,6 +336,60 @@ func (e *Executor) placeDisasterStop(
 	}); err != nil {
 		log.Error().Err(err).Msg("order.disaster_stop.placed: insert position_state failed (non-fatal)")
 	}
+}
+
+// placeTrailingStop (v0.2 Round 1 Module B) arms the S1 TRAILING_STOP_MARKET at
+// entry × (1 + Stage1ActivatePct). Binance auto-activates when mark price
+// crosses that threshold; from there it tracks the high and fires SELL when
+// the high drops by callbackRate%. Persists trail_stage=1 + algo_id on success.
+// Non-fatal: failure leaves trail_stage=0; trail_upgrader S0 path retries
+// at the next 5min tick (provided pct_gain ≥ activate_pct by then).
+func (e *Executor) placeTrailingStop(
+	ctx context.Context,
+	tradeID int64,
+	symbol string,
+	fillQty, fillPrice, tickSize decimal.Decimal,
+	log zerolog.Logger,
+) {
+	if e.cfg.TrailStage1ActivatePct.IsZero() || e.cfg.TrailStage1CallbackRate.IsZero() {
+		// Misconfigured — skip; cron path may still activate later.
+		log.Warn().Msg("order.trail.skip: TrailStage1ActivatePct/CallbackRate zero (config issue)")
+		return
+	}
+	activation := fillPrice.Mul(decimal.NewFromInt(1).Add(e.cfg.TrailStage1ActivatePct))
+	if !tickSize.IsZero() {
+		activation = activation.Div(tickSize).Truncate(0).Mul(tickSize)
+	}
+	// Binance callbackRate unit is % (e.g. 3.0 = 3%). Project config stores decimal.
+	cb := mustFloat(e.cfg.TrailStage1CallbackRate.Mul(decimal.NewFromInt(100)))
+
+	start := e.nowFn()
+	res, err := e.bc.PlaceAlgoTrailingStop(ctx, symbol, fillQty.String(), activation.String(), cb)
+	metrics.OrderLatencySeconds.WithLabelValues("trail").Observe(e.nowFn().Sub(start).Seconds())
+	if err != nil {
+		log.Warn().Err(err).
+			Str("activation", activation.String()).
+			Float64("callback_pct", cb).
+			Msg("order.trail.failed: non-fatal (disaster stop covers; cron S0 retries)")
+		return
+	}
+
+	algoIDStr := strconv.FormatInt(res.AlgoID, 10)
+	if err := e.db.UpdateTradeTrailActivate(ctx, gen.UpdateTradeTrailActivateParams{
+		ID:                 tradeID,
+		BinanceTrailAlgoID: pgtype.Text{String: algoIDStr, Valid: true},
+		Price:              activation,
+	}); err != nil {
+		log.Error().Err(err).Str("algo_id", algoIDStr).
+			Msg("order.trail.placed: DB update failed (algo armed on Binance but trade trail_stage stays 0)")
+		return
+	}
+	metrics.TrailingStageUpgradeTotal.WithLabelValues("0", "1").Inc()
+	log.Info().
+		Str("algo_id", algoIDStr).
+		Str("activation", activation.String()).
+		Float64("callback_pct", cb).
+		Msg("order.trail.placed: S1 armed at entry")
 }
 
 // emergencyClose places an immediate MARKET SELL to close the position when the

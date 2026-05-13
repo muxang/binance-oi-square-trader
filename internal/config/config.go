@@ -126,6 +126,16 @@ type ExitConfig struct {
 	TPStage2Ratio               decimal.Decimal `mapstructure:"TP_STAGE2_RATIO"`
 	TrailingActivatePct         decimal.Decimal `mapstructure:"TRAILING_ACTIVATE_PCT"`
 	TrailingDistanceATRMult     decimal.Decimal `mapstructure:"TRAILING_DISTANCE_ATR_MULT"`
+	// v0.2 Round 1: 4-stage trailing thresholds (all decimal — S1/S2 callbacks
+	// are multiplied by 100 when handed to Binance %).
+	TrailStage1ActivatePct  decimal.Decimal `mapstructure:"TRAIL_STAGE1_ACTIVATE_PCT"`
+	TrailStage1CallbackRate decimal.Decimal `mapstructure:"TRAIL_STAGE1_CALLBACK_RATE"`
+	TrailStage2UpgradePct   decimal.Decimal `mapstructure:"TRAIL_STAGE2_UPGRADE_PCT"`
+	TrailStage2CallbackRate decimal.Decimal `mapstructure:"TRAIL_STAGE2_CALLBACK_RATE"`
+	TrailStage3UpgradePct   decimal.Decimal `mapstructure:"TRAIL_STAGE3_UPGRADE_PCT"`
+	TrailStage3CallbackRate decimal.Decimal `mapstructure:"TRAIL_STAGE3_CALLBACK_RATE"`
+	TrailStage4UpgradePct   decimal.Decimal `mapstructure:"TRAIL_STAGE4_UPGRADE_PCT"`
+	TrailStage4CallbackRate decimal.Decimal `mapstructure:"TRAIL_STAGE4_CALLBACK_RATE"`
 	SoftTimeoutHours            int             `mapstructure:"SOFT_TIMEOUT_HOURS"`
 	HardTimeoutHours            int             `mapstructure:"HARD_TIMEOUT_HOURS"`
 }
@@ -212,6 +222,10 @@ func setDefaults(v *viper.Viper) {
 		"BINANCE_PROXY_FAILURE_THRESHOLD": 5, "BINANCE_PROXY_RECOVERY_MINUTES": 5,
 		"HTTP_PORT": 8080, "DASHBOARD_PORT": 3000,
 		"MIN_STOP_PCT": "0.06", "MAX_STOP_PCT": "0.075",
+		"TRAIL_STAGE1_ACTIVATE_PCT": "0.03", "TRAIL_STAGE1_CALLBACK_RATE": "0.03",
+		"TRAIL_STAGE2_UPGRADE_PCT":  "0.15", "TRAIL_STAGE2_CALLBACK_RATE": "0.05",
+		"TRAIL_STAGE3_UPGRADE_PCT":  "0.30", "TRAIL_STAGE3_CALLBACK_RATE": "0.10",
+		"TRAIL_STAGE4_UPGRADE_PCT":  "0.60", "TRAIL_STAGE4_CALLBACK_RATE": "0.15",
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
 		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
 		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,

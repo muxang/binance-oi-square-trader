@@ -43,6 +43,14 @@ const (
 	ExitReasonDisaster       = "disaster"
 	ExitReasonManual         = "manual"
 	ExitReasonClosingFailed  = "closing_failed"
+	// v0.2 Round 1 Module B: trail_sN exit reason — set when a trailing-stop
+	// algo (S1/S2 native or S3/S4 trader-managed STOP_MARKET) fires.
+	// trade_exits.type carries the same string. algo_reconciler picks the
+	// reason by matching the FINISHED algoId to disaster_stop vs trail_algo.
+	ExitReasonTrailS1 = "trail_s1"
+	ExitReasonTrailS2 = "trail_s2"
+	ExitReasonTrailS3 = "trail_s3"
+	ExitReasonTrailS4 = "trail_s4"
 )
 
 // Round 5 v0.1 thresholds (Round 0 §2 4.3 + SPEC §出场).

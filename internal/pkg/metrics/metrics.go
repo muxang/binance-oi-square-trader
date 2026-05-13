@@ -371,6 +371,17 @@ var (
 		},
 		[]string{"symbol", "exit_reason"},
 	)
+
+	// TrailingStageUpgradeTotal counts trail stage transitions per direction.
+	// Labels: from_stage / to_stage (e.g. "0"→"1" = S0 activation; "2"→"3" = trader-managed switch).
+	// Cardinality: ≤ 4 series ("0"→"1", "1"→"2", "2"→"3", "3"→"4").
+	TrailingStageUpgradeTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_trailing_stage_upgrade_total",
+			Help: "v0.2 Round 1 trail stage transitions (S0→S1 activation through S3→S4).",
+		},
+		[]string{"from_stage", "to_stage"},
+	)
 )
 
 func init() {
@@ -387,5 +398,6 @@ func init() {
 		ConsecutiveLossesGauge, BTC30MinDropPct, UnrealizedPnlTotalUSDT,
 		RestartRecoveryRunsTotal,
 		AlgoPollingRunsTotal, AlgoTriggeredTotal,
+		TrailingStageUpgradeTotal,
 	)
 }

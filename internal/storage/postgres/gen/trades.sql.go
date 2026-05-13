@@ -591,6 +591,105 @@ func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesW
 	return items, rows.Err()
 }
 
+// v0.2 Round 1 Module B: trail_upgrader query + writes (4 new queries below).
+// Mirrors ListOpenTradesWithAlgo shape — same hand-edit pattern.
+
+const listOpenTradesForTrail = `-- name: ListOpenTradesForTrail :many
+SELECT t.id, t.symbol, t.entry_price, t.leverage,
+       t.trail_stage, t.binance_trail_algo_id, t.trail_high_price, t.trail_activation_price,
+       ps.current_qty, ps.highest_price
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status = 'open'
+ORDER BY t.entry_ts ASC
+`
+
+type ListOpenTradesForTrailRow struct {
+	ID                   int64
+	Symbol               string
+	EntryPrice           pgtype.Numeric
+	Leverage             int16
+	TrailStage           int16
+	BinanceTrailAlgoID   pgtype.Text
+	TrailHighPrice       pgtype.Numeric
+	TrailActivationPrice pgtype.Numeric
+	CurrentQty           pgtype.Numeric
+	HighestPrice         pgtype.Numeric
+}
+
+func (q *Queries) ListOpenTradesForTrail(ctx context.Context) ([]ListOpenTradesForTrailRow, error) {
+	rows, err := q.db.Query(ctx, listOpenTradesForTrail)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOpenTradesForTrailRow
+	for rows.Next() {
+		var i ListOpenTradesForTrailRow
+		if err := rows.Scan(&i.ID, &i.Symbol, &i.EntryPrice, &i.Leverage,
+			&i.TrailStage, &i.BinanceTrailAlgoID, &i.TrailHighPrice, &i.TrailActivationPrice,
+			&i.CurrentQty, &i.HighestPrice); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
+
+const updateTradeTrailActivate = `-- name: UpdateTradeTrailActivate :exec
+UPDATE trades
+SET trail_stage = 1,
+    binance_trail_algo_id  = $2,
+    trail_activation_price = $3,
+    trail_high_price       = $3
+WHERE id = $1
+`
+
+type UpdateTradeTrailActivateParams struct {
+	ID                 int64
+	BinanceTrailAlgoID pgtype.Text
+	Price              decimal.Decimal
+}
+
+func (q *Queries) UpdateTradeTrailActivate(ctx context.Context, arg UpdateTradeTrailActivateParams) error {
+	_, err := q.db.Exec(ctx, updateTradeTrailActivate, arg.ID, arg.BinanceTrailAlgoID, arg.Price)
+	return err
+}
+
+const updateTradeTrailStage = `-- name: UpdateTradeTrailStage :exec
+UPDATE trades
+SET trail_stage           = $2,
+    binance_trail_algo_id = $3
+WHERE id = $1
+`
+
+type UpdateTradeTrailStageParams struct {
+	ID                 int64
+	TrailStage         int16
+	BinanceTrailAlgoID pgtype.Text
+}
+
+func (q *Queries) UpdateTradeTrailStage(ctx context.Context, arg UpdateTradeTrailStageParams) error {
+	_, err := q.db.Exec(ctx, updateTradeTrailStage, arg.ID, arg.TrailStage, arg.BinanceTrailAlgoID)
+	return err
+}
+
+const updateTradeTrailHigh = `-- name: UpdateTradeTrailHigh :exec
+UPDATE trades
+SET trail_high_price = $2
+WHERE id = $1
+`
+
+type UpdateTradeTrailHighParams struct {
+	ID             int64
+	TrailHighPrice decimal.Decimal
+}
+
+func (q *Queries) UpdateTradeTrailHigh(ctx context.Context, arg UpdateTradeTrailHighParams) error {
+	_, err := q.db.Exec(ctx, updateTradeTrailHigh, arg.ID, arg.TrailHighPrice)
+	return err
+}
+
 const cleanupOrphanEnteringTrades = `-- name: CleanupOrphanEnteringTrades :execrows
 UPDATE trades
 SET status = 'failed',

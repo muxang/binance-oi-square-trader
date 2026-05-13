@@ -260,19 +260,23 @@ func run() error {
 	// ATR-based disaster stop: clip(ATR/price × ATRStopMult, MinStopPct, MaxStopPct).
 	// Falls back to DisasterStopPct when ATR is unavailable in Redis.
 	executor := execution.New(client, gen.New(pgPool), rdb, execution.Config{
-		DisasterStopPct: cfg.Exit.DisasterStopPct,
-		ATRStopMult:     cfg.Exit.TrailingDistanceATRMult,
-		MinStopPct:      cfg.Exit.MinStopPct,
-		MaxStopPct:      cfg.Exit.MaxStopPct,
-		Leverage:        cfg.Position.Leverage,
+		DisasterStopPct:         cfg.Exit.DisasterStopPct,
+		ATRStopMult:             cfg.Exit.TrailingDistanceATRMult,
+		MinStopPct:              cfg.Exit.MinStopPct,
+		MaxStopPct:              cfg.Exit.MaxStopPct,
+		TrailStage1ActivatePct:  cfg.Exit.TrailStage1ActivatePct,
+		TrailStage1CallbackRate: cfg.Exit.TrailStage1CallbackRate,
+		Leverage:                cfg.Position.Leverage,
 	}, log)
 	log.Info().
 		Str("disaster_stop_pct_fallback", cfg.Exit.DisasterStopPct.String()).
 		Str("atr_stop_mult", cfg.Exit.TrailingDistanceATRMult.String()).
 		Str("min_stop_pct", cfg.Exit.MinStopPct.String()).
 		Str("max_stop_pct", cfg.Exit.MaxStopPct.String()).
+		Str("trail_s1_activate", cfg.Exit.TrailStage1ActivatePct.String()).
+		Str("trail_s1_callback", cfg.Exit.TrailStage1CallbackRate.String()).
 		Int("leverage", cfg.Position.Leverage).
-		Msg("executor ready (ATR-based disaster stop)")
+		Msg("executor ready (ATR-based disaster stop + S1 trail at entry)")
 
 	// v0.2 Gap 1: algo_polling — 1min poll of disaster-stop Algo orders to
 	// auto-close trades when Binance reports algoStatus=FINISHED. Registered
@@ -284,6 +288,30 @@ func run() error {
 	if err := runner.Register(algoPollingCol, "*/1 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register algo_polling collector")
 	}
+
+	// v0.2 Round 1 Module B: trail_upgrader — 5min sweep. Activates S1 (fallback
+	// for entry-time arm failure), upgrades S1→S2→S3→S4, and ratchets S3/S4
+	// stop higher as trail_high advances. Disaster stop is the always-on backstop.
+	trailUpgrader := execution.NewTrailUpgrader(gen.New(pgPool), client, symbolService, rdb, execution.TrailConfig{
+		Stage1ActivatePct:  cfg.Exit.TrailStage1ActivatePct,
+		Stage1CallbackRate: cfg.Exit.TrailStage1CallbackRate,
+		Stage2UpgradePct:   cfg.Exit.TrailStage2UpgradePct,
+		Stage2CallbackRate: cfg.Exit.TrailStage2CallbackRate,
+		Stage3UpgradePct:   cfg.Exit.TrailStage3UpgradePct,
+		Stage3CallbackRate: cfg.Exit.TrailStage3CallbackRate,
+		Stage4UpgradePct:   cfg.Exit.TrailStage4UpgradePct,
+		Stage4CallbackRate: cfg.Exit.TrailStage4CallbackRate,
+	}, log)
+	trailUpgraderCol := collector.NewTrailUpgraderCollector(trailUpgrader, log, collector.TrailUpgraderConfig{})
+	if err := runner.Register(trailUpgraderCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register trail_upgrader collector")
+	}
+	log.Info().
+		Str("s1_activate", cfg.Exit.TrailStage1ActivatePct.String()).Str("s1_callback", cfg.Exit.TrailStage1CallbackRate.String()).
+		Str("s2_upgrade", cfg.Exit.TrailStage2UpgradePct.String()).Str("s2_callback", cfg.Exit.TrailStage2CallbackRate.String()).
+		Str("s3_upgrade", cfg.Exit.TrailStage3UpgradePct.String()).Str("s3_callback", cfg.Exit.TrailStage3CallbackRate.String()).
+		Str("s4_upgrade", cfg.Exit.TrailStage4UpgradePct.String()).Str("s4_callback", cfg.Exit.TrailStage4CallbackRate.String()).
+		Msg("trail_upgrader ready (Module B 4-stage)")
 
 	// Phase 4 Round 3: position_manager — 1min sync of open positions against
 	// /fapi/v3/positionRisk + Redis zset positions_active + MARGIN_CALL detect.

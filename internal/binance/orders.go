@@ -307,6 +307,41 @@ func (c *Client) PlaceAlgoConditionalStop(ctx context.Context, symbol, quantity,
 	return AlgoOrderResult{AlgoID: resp.AlgoID, ClientAlgoID: resp.ClientAlgoID, Status: resp.AlgoStatus}, nil
 }
 
+// PlaceAlgoTrailingStop places a TRAILING_STOP_MARKET via Algo Service.
+// callbackRate is the Binance unit (%, range 0.1–5.0). activationPrice is the
+// mark price that arms the trail (Binance starts tracking from there).
+// Caller is responsible for rounding activationPrice to symbol tickSize.
+//
+// ref: references/binance/urls.md §「New Algo Order」POST /fapi/v1/algoOrder
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
+// fetched: 2026-05-13
+func (c *Client) PlaceAlgoTrailingStop(ctx context.Context, symbol, quantity, activationPrice string, callbackRate float64) (AlgoOrderResult, error) {
+	params := url.Values{}
+	params.Set("algoType", "CONDITIONAL")
+	params.Set("symbol", symbol)
+	params.Set("side", "SELL")
+	params.Set("positionSide", "BOTH")
+	params.Set("type", "TRAILING_STOP_MARKET")
+	params.Set("quantity", quantity)
+	params.Set("activationPrice", activationPrice)
+	params.Set("callbackRate", strconv.FormatFloat(callbackRate, 'f', -1, 64))
+	params.Set("workingType", "MARK_PRICE")
+	params.Set("reduceOnly", "true")
+	body, err := c.doWriteRetry(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, 1)
+	if err != nil {
+		return AlgoOrderResult{}, fmt.Errorf("place algo trailing stop %s: %w", symbol, err)
+	}
+	var resp struct {
+		AlgoID       int64  `json:"algoId"`
+		ClientAlgoID string `json:"clientAlgoId"`
+		AlgoStatus   string `json:"algoStatus"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return AlgoOrderResult{}, fmt.Errorf("parse algo trailing resp: %w", err)
+	}
+	return AlgoOrderResult{AlgoID: resp.AlgoID, ClientAlgoID: resp.ClientAlgoID, Status: resp.AlgoStatus}, nil
+}
+
 // UserTrade holds one fill from GET /fapi/v1/userTrades.
 // Commission is always in commissionAsset (USDT for USDⓈ-M with BNB fee discount off).
 //

@@ -227,6 +227,45 @@ WHERE status = 'entering'
   AND entry_ts IS NULL
   AND client_order_id IS NULL;
 
+-- name: ListOpenTradesForTrail :many
+-- v0.2 Round 1 Module B: rows trail_upgrader iterates each 5min tick.
+-- Includes trail_stage=0 trades so the upgrader can activate S1 at +3%.
+-- LEFT JOIN position_states so current_qty (sized order) is in one query.
+SELECT t.id, t.symbol, t.entry_price, t.leverage,
+       t.trail_stage, t.binance_trail_algo_id, t.trail_high_price, t.trail_activation_price,
+       ps.current_qty, ps.highest_price
+FROM trades t
+LEFT JOIN position_states ps ON ps.trade_id = t.id
+WHERE t.status = 'open'
+ORDER BY t.entry_ts ASC;
+
+-- name: UpdateTradeTrailActivate :exec
+-- v0.2 Round 1 Module B: S0 → S1 activation. Sets trail_stage=1, the new
+-- Binance TRAILING_STOP_MARKET algo id, and seeds trail_activation_price +
+-- trail_high_price (both = current_price at activation).
+UPDATE trades
+SET trail_stage = 1,
+    binance_trail_algo_id  = $2,
+    trail_activation_price = $3,
+    trail_high_price       = $3
+WHERE id = $1;
+
+-- name: UpdateTradeTrailStage :exec
+-- v0.2 Round 1 Module B: stage upgrade (S1→S2, S2→S3, S3→S4) OR trader-
+-- managed re-arm (S3/S4 stop ratchet up). Caller passes the new algo id
+-- (or empty when S3→S4 happens without re-place).
+UPDATE trades
+SET trail_stage           = $2,
+    binance_trail_algo_id = $3
+WHERE id = $1;
+
+-- name: UpdateTradeTrailHigh :exec
+-- v0.2 Round 1 Module B: monotonic high watermark used by S3/S4 stop derivation.
+-- Caller passes max(current, existing) so the write is unconditional.
+UPDATE trades
+SET trail_high_price = $2
+WHERE id = $1;
+
 -- name: HasRecent24hAttemptForSymbol :one
 -- Phase 3 v0.1 24h 不二次入场过滤 — 用 signals.ts JOIN (trades.entry_ts
 -- 在 'entering' 状态为 NULL, Phase 4 真下单后才填). signals.ts NOT NULL
