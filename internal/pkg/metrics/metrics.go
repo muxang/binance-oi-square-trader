@@ -456,6 +456,15 @@ var (
 		},
 		[]string{"symbol"},
 	)
+
+	// Phase 5.2 Round 2.x: config_reloader metrics.
+	ConfigReloadTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_config_reload_total",
+			Help: "config_reloader 1min ticks by result (ok = swap performed, nochange = up-to-date, err = DB read failed).",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -477,5 +486,6 @@ func init() {
 		UserStreamConnectedTotal, UserStreamReconnectTotal,
 		UserStreamKeepaliveErrors, UserStreamEventsTotal,
 		OrphanAlgoTickTotal, OrphanAlgoCancelled, OrphanAlgoCancelFailures,
+		ConfigReloadTotal,
 	)
 }

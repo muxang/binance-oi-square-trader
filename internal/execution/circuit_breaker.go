@@ -23,6 +23,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	cfgpkg "trader/internal/config"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -91,6 +93,23 @@ type CircuitBreakerTripper struct {
 	cfg   CircuitBreakerConfig
 	log   zerolog.Logger
 	nowFn func() time.Time
+}
+
+// dailyLossHaltPct returns the active threshold — prefers runtime override
+// (Phase 5.2 Round 2.x config_reloader) over startup cfg. Falls back to cfg
+// when runtime is not initialized (tests, pre-init code paths).
+func (cb *CircuitBreakerTripper) dailyLossHaltPct() decimal.Decimal {
+	if rt := cfgpkg.Get(); rt != nil && !rt.DailyLossHaltPct.IsZero() {
+		return rt.DailyLossHaltPct
+	}
+	return cb.cfg.DailyLossHaltPct
+}
+
+func (cb *CircuitBreakerTripper) consecutiveLossCount() int {
+	if rt := cfgpkg.Get(); rt != nil && rt.ConsecutiveLossesHalt > 0 {
+		return rt.ConsecutiveLossesHalt
+	}
+	return cb.cfg.ConsecutiveLossCount
 }
 
 func NewCircuitBreakerTripper(db CircuitBreakerDeps, bc CircuitBreakerBinance, rdb *redis.Client, cfg CircuitBreakerConfig, log zerolog.Logger) *CircuitBreakerTripper {
@@ -240,7 +259,7 @@ func (cb *CircuitBreakerTripper) tripAPIErrorRate(ctx context.Context) bool {
 
 // tripConsecutiveLosses fires when count ≥ 5 AND last loss was within 24h.
 func (cb *CircuitBreakerTripper) tripConsecutiveLosses(ctx context.Context, state gen.GetCircuitBreakerStateForTripsRow) bool {
-	if int(state.ConsecutiveLosses) < cb.cfg.ConsecutiveLossCount {
+	if int(state.ConsecutiveLosses) < cb.consecutiveLossCount() {
 		return false
 	}
 	if !state.LastLossAt.Valid || cb.nowFn().Sub(state.LastLossAt.Time) > consecutiveLossWindow {
@@ -252,7 +271,7 @@ func (cb *CircuitBreakerTripper) tripConsecutiveLosses(ctx context.Context, stat
 		Msg("circuit_breaker.trip.consec_losses")
 	cb.fireTrip(ctx, tripTypeConsecLosses, map[string]any{
 		"count":        state.ConsecutiveLosses,
-		"threshold":    cb.cfg.ConsecutiveLossCount,
+		"threshold":    cb.consecutiveLossCount(),
 		"last_loss_at": state.LastLossAt.Time.Format(time.RFC3339),
 		"window_hours": consecutiveLossWindow.Hours(),
 	})
@@ -265,7 +284,7 @@ func (cb *CircuitBreakerTripper) tripDailyLoss(ctx context.Context, dailyPnl, ba
 		return false
 	}
 	ratio := dailyPnl.Div(balance) // negative
-	threshold := cb.cfg.DailyLossHaltPct.Neg()
+	threshold := cb.dailyLossHaltPct().Neg()
 	if ratio.GreaterThan(threshold) {
 		return false
 	}

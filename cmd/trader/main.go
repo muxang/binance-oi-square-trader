@@ -77,6 +77,12 @@ func run() error {
 	log := logger.Init(cfg)
 	logger.StartupBanner(log, cfg) // mainnet 5⚠️ + 5s pause inside
 
+	// Phase 5.2 Round 2.x: seed the hot-reloadable runtime config from .env
+	// baseline. config_reloader (registered below) layers admin_overrides on
+	// top per-tick. Consumers (circuit_breaker today; more coming) read via
+	// config.Get() each evaluation.
+	config.InitRuntimeFromConfig(cfg)
+
 	// Lifecycle context: cancelled on SIGINT/SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -306,6 +312,23 @@ func run() error {
 		log.Fatal().Err(err).Msg("register orphan_algo_cleaner collector")
 	}
 	log.Info().Msg("orphan_algo_cleaner ready (Round R.3, 1min cron)")
+
+	// Phase 5.2 Round 2.x: config_reloader — 1min cron that reads admin_overrides
+	// table and atomically swaps the runtime config. Trader consumers
+	// (circuit_breaker today) call config.Get() each evaluation, so admin Web UI
+	// changes take effect within 60s.
+	baselineRuntime := &config.Runtime{
+		DailyLossHaltPct:      cfg.Risk.DailyLossHaltPct,
+		ConsecutiveLossesHalt: cfg.Risk.ConsecutiveLossHaltCount,
+	}
+	configReloader := collector.NewConfigReloader(pgPool, baselineRuntime, log, collector.ConfigReloaderConfig{})
+	if err := runner.Register(configReloader, "*/1 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register config_reloader collector")
+	}
+	log.Info().
+		Str("daily_loss_halt_pct_baseline", baselineRuntime.DailyLossHaltPct.String()).
+		Int("consecutive_losses_halt_baseline", baselineRuntime.ConsecutiveLossesHalt).
+		Msg("config_reloader ready (Phase 5.2 Round 2.x, 1min cron)")
 
 	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
 	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.
