@@ -433,6 +433,29 @@ var (
 		},
 		[]string{"event_type"},
 	)
+
+	// Round R.3: orphan algo cleaner metrics.
+	OrphanAlgoTickTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orphan_algo_tick_total",
+			Help: "orphan_algo_cleaner 1min ticks by result (ok/err).",
+		},
+		[]string{"result"},
+	)
+	OrphanAlgoCancelled = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orphan_algo_cancelled_total",
+			Help: "Orphan algos cancelled per symbol+order_type (Round R.3).",
+		},
+		[]string{"symbol", "order_type"},
+	)
+	OrphanAlgoCancelFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orphan_algo_cancel_failures_total",
+			Help: "CancelAlgoOrder failures during orphan cleanup (will retry next tick).",
+		},
+		[]string{"symbol"},
+	)
 )
 
 func init() {
@@ -453,5 +476,6 @@ func init() {
 		SigfailDetectionRunsTotal, SigfailDetectionsTotal,
 		UserStreamConnectedTotal, UserStreamReconnectTotal,
 		UserStreamKeepaliveErrors, UserStreamEventsTotal,
+		OrphanAlgoTickTotal, OrphanAlgoCancelled, OrphanAlgoCancelFailures,
 	)
 }

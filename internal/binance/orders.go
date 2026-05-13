@@ -254,6 +254,80 @@ func (c *Client) QueryAlgoOrder(ctx context.Context, algoID int64) (AlgoOrderQue
 	return q, nil
 }
 
+// AlgoOpenOrder is the subset of /fapi/v1/openAlgoOrders rows used by Round R.3
+// orphan_algo_cleaner. Includes the fields needed to identify exit-only algos
+// (reduceOnly / closePosition / side / type / status) so the cleaner can skip
+// non-exit algos and cancel only orphans.
+//
+// ref: GET /fapi/v1/openAlgoOrders (Algo Service, no symbol → all)
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Current-All-Algo-Open-Orders
+// fetched: 2026-05-13
+type AlgoOpenOrder struct {
+	AlgoID         int64
+	Symbol         string
+	Side           string          // SELL (exit) / BUY (entry, rare for our flow)
+	OrderType      string          // STOP_MARKET / TAKE_PROFIT_MARKET / TRAILING_STOP_MARKET
+	Status         string          // NEW / WORKING / FINISHED / CANCELED / EXPIRED
+	Quantity       decimal.Decimal
+	ReduceOnly     bool
+	ClosePosition  bool
+}
+
+// ListOpenAlgoOrders returns all currently-open Algo orders for the account.
+// Used by Round R.3 orphan_algo_cleaner to find SELL reduceOnly algos whose
+// position has already been closed (binance qty=0 but algo still NEW/WORKING).
+func (c *Client) ListOpenAlgoOrders(ctx context.Context) ([]AlgoOpenOrder, error) {
+	// Account-scoped read → direct (no proxy) to match API key IP whitelist.
+	body, err := c.DoReadAccount(ctx, "/fapi/v1/openAlgoOrders", url.Values{}, 1)
+	if err != nil {
+		return nil, fmt.Errorf("list open algo orders: %w", err)
+	}
+	// Binance returns { "orders": [...] } envelope.
+	var resp struct {
+		Orders []struct {
+			AlgoID        int64  `json:"algoId"`
+			Symbol        string `json:"symbol"`
+			Side          string `json:"side"`
+			OrderType     string `json:"type"`
+			Status        string `json:"algoStatus"`
+			Quantity      string `json:"quantity"`
+			ReduceOnly    bool   `json:"reduceOnly"`
+			ClosePosition bool   `json:"closePosition"`
+		} `json:"orders"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		// Some Binance variants return bare array; try that as fallback.
+		var bare []struct {
+			AlgoID        int64  `json:"algoId"`
+			Symbol        string `json:"symbol"`
+			Side          string `json:"side"`
+			OrderType     string `json:"type"`
+			Status        string `json:"algoStatus"`
+			Quantity      string `json:"quantity"`
+			ReduceOnly    bool   `json:"reduceOnly"`
+			ClosePosition bool   `json:"closePosition"`
+		}
+		if err2 := json.Unmarshal(body, &bare); err2 != nil {
+			return nil, fmt.Errorf("parse open algo orders (envelope=%v, bare=%v)", err, err2)
+		}
+		resp.Orders = bare
+	}
+	out := make([]AlgoOpenOrder, 0, len(resp.Orders))
+	for _, o := range resp.Orders {
+		out = append(out, AlgoOpenOrder{
+			AlgoID:        o.AlgoID,
+			Symbol:        o.Symbol,
+			Side:          o.Side,
+			OrderType:     o.OrderType,
+			Status:        o.Status,
+			Quantity:      parseDecimalOrZero(o.Quantity),
+			ReduceOnly:    o.ReduceOnly,
+			ClosePosition: o.ClosePosition,
+		})
+	}
+	return out, nil
+}
+
 // CancelAlgoOrder cancels an Algo Service order by algoId.
 // -2011 / -2013 (order not found / already canceled or triggered) → nil.
 // Used by Round 5 close pipeline before MARKET SELL.

@@ -296,6 +296,17 @@ func run() error {
 		log.Fatal().Err(err).Msg("register algo_polling collector")
 	}
 
+	// Round R.3: orphan_algo_cleaner — 1min sweep that cancels SELL reduceOnly
+	// Algos whose Binance position is already closed. Reclaims algo limit slots
+	// + silences algo_polling noise. Coexists with position_manager (different
+	// concerns: PM protects trade state; cleaner reclaims Binance resources).
+	orphanAlgoCleaner := execution.NewOrphanAlgoCleaner(client, pgPool, log)
+	orphanAlgoCleanerCol := collector.NewOrphanAlgoCleanerCollector(orphanAlgoCleaner, log, collector.OrphanAlgoCleanerConfig{})
+	if err := runner.Register(orphanAlgoCleanerCol, "*/1 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register orphan_algo_cleaner collector")
+	}
+	log.Info().Msg("orphan_algo_cleaner ready (Round R.3, 1min cron)")
+
 	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
 	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.
 	// RatchetMinPct deadband prevents API churn at 1min cadence (default 0.5% high move).
