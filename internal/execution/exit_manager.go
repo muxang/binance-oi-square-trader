@@ -43,6 +43,9 @@ const (
 	ExitReasonDisaster       = "disaster"
 	ExitReasonManual         = "manual"
 	ExitReasonClosingFailed  = "closing_failed"
+	// Round 2.x Part 3: admin Web UI manual close (mu 紧急平仓). Distinct
+	// from ExitReasonManual which is the legacy / one-off admin path.
+	ExitReasonManualClose = "manual_close"
 	// v0.2 Round 1 Module B: trail_sN exit reason — set when a trailing-stop
 	// algo (S1/S2 native or S3/S4 trader-managed STOP_MARKET) fires.
 	// trade_exits.type carries the same string. algo_reconciler picks the
@@ -129,9 +132,19 @@ func (em *ExitManager) EvaluateTick(ctx context.Context) {
 		return
 	}
 
-	softCandidates, hardCandidates, retries := 0, 0, 0
+	softCandidates, hardCandidates, retries, manualCandidates := 0, 0, 0, 0
 	for _, t := range trades {
 		l := em.log.With().Int64("trade_id", t.ID).Str("symbol", t.Symbol).Logger()
+
+		// Round 2.x Part 3: admin Web UI manual close — exit_reason is pre-set
+		// to 'manual_close' (status='closing'). Run close pipeline immediately,
+		// skipping timeout evaluation entirely.
+		if t.ExitReason.Valid && t.ExitReason.String == ExitReasonManualClose {
+			l.Info().Msg("exit.triggered: manual_close (admin Web UI pre-set)")
+			em.closePosition(ctx, t, ExitReasonManualClose, l)
+			manualCandidates++
+			continue
+		}
 
 		// 'closing' state from prior failed tick → retry close pipeline.
 		if t.CurrentQty.Valid && !decimalFromPgNumeric(t.CurrentQty).IsZero() {
@@ -177,6 +190,7 @@ func (em *ExitManager) EvaluateTick(ctx context.Context) {
 		Int("open_trades", len(trades)).
 		Int("soft_triggered", softCandidates).
 		Int("hard_triggered", hardCandidates).
+		Int("manual_triggered", manualCandidates).
 		Int("close_retries", retries).
 		Msg("exit.timeout_check.tick")
 }

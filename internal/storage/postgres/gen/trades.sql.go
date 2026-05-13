@@ -400,6 +400,7 @@ SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
        t.binance_disaster_stop_order_id,
        t.initial_oi,
+       t.exit_reason,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -419,6 +420,7 @@ type ListOpenTradesForExitRow struct {
 	Leverage                   int16
 	BinanceDisasterStopOrderID pgtype.Text
 	InitialOI                  pgtype.Numeric // v0.2 Round 3 Module C SIGFAIL
+	ExitReason                 pgtype.Text    // Round 2.x Part 3: pre-set 'manual_close' triggers immediate exit
 	CurrentQty                 pgtype.Numeric
 }
 
@@ -432,12 +434,32 @@ func (q *Queries) ListOpenTradesForExit(ctx context.Context) ([]ListOpenTradesFo
 	for rows.Next() {
 		var i ListOpenTradesForExitRow
 		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.EntryTs, &i.EntryPrice,
-			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID, &i.InitialOI, &i.CurrentQty); err != nil {
+			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID, &i.InitialOI, &i.ExitReason, &i.CurrentQty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
 	return items, rows.Err()
+}
+
+// Phase 5.2 Round 2.x Part 3: admin Web UI manual close — sets the close intent
+// atomically. exit_manager picks up next 1min tick. Idempotent: only flips
+// trades currently open with no pre-set exit_reason.
+const requestManualClose = `-- name: RequestManualClose :execrows
+UPDATE trades
+SET status = 'closing',
+    exit_reason = 'manual_close'
+WHERE id = $1
+  AND status IN ('open', 'partial')
+  AND exit_reason IS NULL
+`
+
+func (q *Queries) RequestManualClose(ctx context.Context, id int64) (int64, error) {
+	tag, err := q.db.Exec(ctx, requestManualClose, id)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // v0.2 Round 3 Module C: hand-edited UpdateInitialOI + GetLatestOI.

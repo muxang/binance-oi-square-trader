@@ -73,6 +73,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/admin/config/signal-thresholds", s.requireCsrf(s.handleSignalThresholds))
 	mux.HandleFunc("PUT /api/admin/watchlist/include/{symbol}", s.requireCsrf(s.handleWatchlistInclude))
 	mux.HandleFunc("PUT /api/admin/watchlist/exclude/{symbol}", s.requireCsrf(s.handleWatchlistExclude))
+	// Round 2.x Part 3: manual close — pre-sets exit_reason; exit_manager executes within 1min.
+	mux.HandleFunc("POST /api/admin/trades/{id}/close", s.requireCsrf(s.handleManualClose))
 	return s.cors(mux)
 }
 

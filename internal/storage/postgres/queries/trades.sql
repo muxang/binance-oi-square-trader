@@ -126,19 +126,32 @@ INNER JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status IN ('open', 'partial');
 
 -- name: ListOpenTradesForExit :many
--- Phase 4 Round 5 + Round 3: rows exit_manager iterates each 1min tick for soft/hard
--- timeout evaluation. Round 3 also feeds signal_fail_detector (5min cron) via
--- the same shape — initial_oi added so the detector can check OI drop without
--- a second query. NULL initial_oi → detector skips OI condition (legacy trade).
+-- Phase 4 Round 5 + Round 3 + Round 2.x Part 3: rows exit_manager iterates each
+-- 1min tick. Round 2.x Part 3 adds exit_reason — when admin Web UI manually
+-- closes a trade, it pre-sets status='closing' + exit_reason='manual_close';
+-- exit_manager detects the pre-set reason and runs the close pipeline immediately
+-- (skipping the timeout check).
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
        t.binance_disaster_stop_order_id,
        t.initial_oi,
+       t.exit_reason,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status IN ('open', 'partial', 'closing')
 ORDER BY t.entry_ts ASC;
+
+-- name: RequestManualClose :exec
+-- Phase 5.2 Round 2.x Part 3: admin Web UI pre-sets the close intent.
+-- exit_manager 1min cron picks up + runs the close pipeline.
+-- Idempotent: only fires when trade is currently open AND no exit_reason set.
+UPDATE trades
+SET status = 'closing',
+    exit_reason = 'manual_close'
+WHERE id = $1
+  AND status IN ('open', 'partial')
+  AND exit_reason IS NULL;
 
 -- name: UpdateInitialOI :exec
 -- v0.2 Round 3 Module C: snapshot OI at entry time so SIGFAIL detector can

@@ -382,3 +382,87 @@ func clientIPOrNull(r *http.Request) any {
 
 // strconv used in some endpoints (compile placeholder so file compiles in isolation).
 var _ = strconv.Itoa
+
+// --- d. manual close (Round 2.x Part 3) ---
+
+type manualCloseRequest struct {
+	Confirm bool   `json:"confirm"`
+	Reason  string `json:"reason"` // e.g. "RCA decision" / "going out for the weekend"
+}
+
+// handleManualClose pre-sets the close intent (status='closing' + exit_reason='manual_close').
+// exit_manager picks up next 1min tick + runs the close pipeline (cancel algos + market sell).
+// Returns 202 Accepted — close is async, completes within ~60s.
+func (s *Server) handleManualClose(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	tradeID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid trade id")
+		return
+	}
+	var req manualCloseRequest
+	if !s.decodeAndConfirm(w, r, &req.Confirm, &req, "confirm=true required") {
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.writeDB.Begin(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "db tx error")
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Read previous state for audit + 409-gate.
+	var status, symbol string
+	var prevExitReason *string
+	if err := tx.QueryRow(ctx, `SELECT symbol, status, exit_reason FROM trades WHERE id=$1`, tradeID).
+		Scan(&symbol, &status, &prevExitReason); err != nil {
+		s.writeError(w, http.StatusNotFound, "trade not found")
+		return
+	}
+	if status != "open" && status != "partial" {
+		s.writeError(w, http.StatusConflict, "trade not in open/partial state (current: "+status+")")
+		return
+	}
+	if prevExitReason != nil && *prevExitReason != "" {
+		s.writeError(w, http.StatusConflict, "exit_reason already set: "+*prevExitReason)
+		return
+	}
+
+	// Apply: status='closing' + exit_reason='manual_close'.
+	// We bypass RequestManualClose (gen helper) to keep the audit + UPDATE
+	// in the same transaction.
+	if _, err := tx.Exec(ctx, `
+		UPDATE trades SET status='closing', exit_reason='manual_close'
+		WHERE id=$1 AND status IN ('open','partial') AND exit_reason IS NULL
+	`, tradeID); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "update error")
+		return
+	}
+
+	prev, _ := json.Marshal(map[string]any{
+		"trade_id": tradeID,
+		"symbol":   symbol,
+		"status":   status,
+	})
+	newSt, _ := json.Marshal(map[string]any{
+		"status":      "closing",
+		"exit_reason": "manual_close",
+		"reason":      req.Reason,
+	})
+	if err := s.insertAuditLogTx(ctx, tx, r, "manual_close", "trade", idStr, prev, newSt, req.Reason); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "audit error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "commit error")
+		return
+	}
+	s.log.Warn().Int64("trade_id", tradeID).Str("symbol", symbol).Str("reason", req.Reason).
+		Msg("admin.manual_close: trade flagged for close; exit_manager will execute within 1min")
+	s.writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok": true, "trade_id": tradeID, "symbol": symbol,
+		"note": "exit_manager 1min cron picks up + executes close pipeline; check trade detail page",
+	})
+}
