@@ -105,6 +105,9 @@ func (ar *AlgoReconciler) sumAlgoFees(ctx context.Context, symbol, actualOrderID
 // ReconcileTick polls every open trade with an Algo and auto-closes the ones
 // where Binance reports algoStatus=FINISHED. Per-trade errors are logged but
 // don't block subsequent rows (best-effort, retries next tick).
+//
+// Round 1.x: each row may carry up to 2 algos (disaster_stop + trail). Poll
+// each independently and dispatch with the correct exit_reason on FINISHED.
 func (ar *AlgoReconciler) ReconcileTick(ctx context.Context) {
 	rows, err := ar.db.ListOpenTradesWithAlgo(ctx)
 	if err != nil {
@@ -119,40 +122,19 @@ func (ar *AlgoReconciler) ReconcileTick(ctx context.Context) {
 
 	triggered := 0
 	for _, r := range rows {
-		algoID, err := strconv.ParseInt(r.BinanceDisasterStopOrderID.String, 10, 64)
-		if err != nil {
-			ar.log.Warn().Err(err).Int64("trade_id", r.ID).
-				Str("algo_id_raw", r.BinanceDisasterStopOrderID.String).
-				Msg("algo.polling: invalid algo_id, skipping")
-			continue
+		// Disaster stop poll.
+		if r.BinanceDisasterStopOrderID.Valid && r.BinanceDisasterStopOrderID.String != "" {
+			if ar.pollOne(ctx, r, r.BinanceDisasterStopOrderID.String, ExitReasonDisaster, "disaster") {
+				triggered++
+				continue // trade closed; skip trail poll for same row
+			}
 		}
-		l := ar.log.With().Int64("trade_id", r.ID).Str("symbol", r.Symbol).Int64("algo_id", algoID).Logger()
-
-		q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
-		if err != nil {
-			l.Warn().Err(err).Msg("algo.polling: query failed (will retry next tick)")
-			continue
-		}
-		switch q.AlgoStatus {
-		case "WORKING":
-			// Normal — algo armed waiting for trigger. No action.
-		case "FINISHED":
-			// Algo triggered + market SELL filled. Auto-close the trade.
-			if ar.autoClose(ctx, r, q, l) {
+		// Trail poll (independent algo — may be active alongside disaster).
+		if r.BinanceTrailAlgoID.Valid && r.BinanceTrailAlgoID.String != "" {
+			reason := trailExitReasonForStage(r.TrailStage)
+			if ar.pollOne(ctx, r, r.BinanceTrailAlgoID.String, reason, "trail") {
 				triggered++
 			}
-		case "CANCELED", "EXPIRED":
-			// Algo gone but trade still 'open'. Could be:
-			//   a) regular close pipeline cancelled it mid-flight (race with
-			//      exit_manager.closePosition between cancel + UPDATE 'closing')
-			//   b) manual cancel via UI
-			// Either way the missing Algo is now mu's problem — position_manager
-			// local_only_orphan path will flag it on the next 1min tick when
-			// Binance also reports the position missing. Log and continue.
-			l.Warn().Str("algo_status", q.AlgoStatus).
-				Msg("algo.polling: algo gone but trade open (position_manager orphan path will detect)")
-		default:
-			l.Warn().Str("algo_status", q.AlgoStatus).Msg("algo.polling: unknown status, treating as WORKING")
 		}
 	}
 
@@ -163,12 +145,66 @@ func (ar *AlgoReconciler) ReconcileTick(ctx context.Context) {
 	metrics.AlgoPollingRunsTotal.WithLabelValues("ok").Inc()
 }
 
+// trailExitReasonForStage maps trail_stage (1-4) to its exit_reason string.
+// Stage 0 shouldn't have a trail algo, but treat as S1 defensively.
+func trailExitReasonForStage(stage int16) string {
+	switch stage {
+	case 2:
+		return ExitReasonTrailS2
+	case 3:
+		return ExitReasonTrailS3
+	case 4:
+		return ExitReasonTrailS4
+	default:
+		return ExitReasonTrailS1
+	}
+}
+
+// pollOne queries one algo for a trade and dispatches by status. Returns true
+// if the trade was successfully closed (FINISHED + autoClose succeeded).
+func (ar *AlgoReconciler) pollOne(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, algoIDStr, exitReason, kind string) bool {
+	algoID, err := strconv.ParseInt(algoIDStr, 10, 64)
+	if err != nil {
+		ar.log.Warn().Err(err).Int64("trade_id", r.ID).
+			Str("algo_id_raw", algoIDStr).Str("kind", kind).
+			Msg("algo.polling: invalid algo_id, skipping")
+		return false
+	}
+	l := ar.log.With().Int64("trade_id", r.ID).Str("symbol", r.Symbol).
+		Int64("algo_id", algoID).Str("kind", kind).Str("exit_reason", exitReason).Logger()
+
+	q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
+	if err != nil {
+		l.Warn().Err(err).Msg("algo.polling: query failed (will retry next tick)")
+		return false
+	}
+	switch q.AlgoStatus {
+	case "WORKING":
+		return false
+	case "FINISHED":
+		return ar.autoClose(ctx, r, q, exitReason, l)
+	case "CANCELED", "EXPIRED":
+		// For trail algos, trader-initiated cancel during S1→S2 upgrade is
+		// normal — trail_upgrader cancels old + rewrites algo_id atomically.
+		// If the DB still references this exact algo_id and we see CANCELED,
+		// it's either mid-upgrade race or external cancel. Either way the
+		// next tick will resolve (DB will show new algo_id or null).
+		// For disaster algos, missing algo means regular close pipeline
+		// cancelled mid-flight OR mu cancelled in UI — position_manager
+		// local_only_orphan path catches genuine cases.
+		l.Info().Str("algo_status", q.AlgoStatus).Msg("algo.polling: algo gone (trader upgrade or external cancel)")
+		return false
+	default:
+		l.Warn().Str("algo_status", q.AlgoStatus).Msg("algo.polling: unknown status, treating as WORKING")
+		return false
+	}
+}
+
 // TryReconcile is the single-trade public entry point used by
 // position_manager.SyncTick local_only_orphan defensive check (v0.2 Step 5).
 // Queries the Algo status; if FINISHED, performs the same auto-close as
-// ReconcileTick. Returns true on successful reconcile (caller skips the
-// orphan halt). Returns false on any other algoStatus, query error, or
-// unsuccessful close — caller proceeds with its normal orphan handling.
+// ReconcileTick with exit_reason='disaster'. Returns true on successful
+// reconcile (caller skips the orphan halt).
 //
 // Caller passes the trade fields rather than a row type so this works from
 // BOTH ListOpenTradesWithAlgoRow (proactive sweep) and ListOpenTradesForSyncRow
@@ -192,12 +228,12 @@ func (ar *AlgoReconciler) TryReconcile(ctx context.Context, tradeID int64, symbo
 	if q.AlgoStatus != "FINISHED" {
 		return false
 	}
-	return ar.autoCloseFromFields(ctx, tradeID, symbol, q, entryPrice, currentQty, entryTs, l)
+	return ar.autoCloseFromFields(ctx, tradeID, symbol, q, entryPrice, currentQty, entryTs, ExitReasonDisaster, l)
 }
 
 // autoClose adapts the original row-based call site to the new primitive
 // helper. Used by ReconcileTick (proactive sweep).
-func (ar *AlgoReconciler) autoClose(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, q binance.AlgoOrderQuery, log zerolog.Logger) bool {
+func (ar *AlgoReconciler) autoClose(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, q binance.AlgoOrderQuery, exitReason string, log zerolog.Logger) bool {
 	entryTs := time.Time{}
 	if r.EntryTs.Valid {
 		entryTs = r.EntryTs.Time
@@ -205,14 +241,15 @@ func (ar *AlgoReconciler) autoClose(ctx context.Context, r gen.ListOpenTradesWit
 	return ar.autoCloseFromFields(ctx, r.ID, r.Symbol, q,
 		decimalFromPgNumeric(r.EntryPrice),
 		decimalFromPgNumeric(r.CurrentQty),
-		entryTs, log)
+		entryTs, exitReason, log)
 }
 
 // autoCloseFromFields is the shared close pipeline taking primitive inputs.
 // Mirrors exit_manager.persistClose so the close artifacts look identical to
-// a soft/hard timeout exit, just with exit_reason='disaster' and price from
+// a soft/hard timeout exit, just with exit_reason from the caller (disaster
+// for STOP_MARKET / trail_sN for TRAILING_STOP_MARKET) and price from
 // Algo.actualPrice.
-func (ar *AlgoReconciler) autoCloseFromFields(ctx context.Context, tradeID int64, symbol string, q binance.AlgoOrderQuery, entryPrice, currentQty decimal.Decimal, entryTs time.Time, log zerolog.Logger) bool {
+func (ar *AlgoReconciler) autoCloseFromFields(ctx context.Context, tradeID int64, symbol string, q binance.AlgoOrderQuery, entryPrice, currentQty decimal.Decimal, entryTs time.Time, exitReason string, log zerolog.Logger) bool {
 	now := ar.nowFn()
 	// Use Algo.actualPrice (Binance authoritative fill price). Fallback to
 	// triggerPrice if actualPrice is somehow 0 (shouldn't happen for FINISHED
@@ -247,7 +284,7 @@ func (ar *AlgoReconciler) autoCloseFromFields(ctx context.Context, tradeID int64
 	n, err := ar.db.InsertTradeExitIdempotent(ctx, gen.InsertTradeExitParams{
 		TradeID: pgtype.Int8{Int64: tradeID, Valid: true},
 		Ts:      now,
-		Type:    ExitReasonDisaster,
+		Type:    exitReason,
 		Qty:     qty,
 		Price:   closePrice,
 		Pnl:     realizedPnl,
@@ -267,7 +304,7 @@ func (ar *AlgoReconciler) autoCloseFromFields(ctx context.Context, tradeID int64
 		ID:          tradeID,
 		ExitTs:      pgtype.Timestamptz{Time: now, Valid: true},
 		ExitPrice:   closePrice,
-		ExitReason:  pgtype.Text{String: ExitReasonDisaster, Valid: true},
+		ExitReason:  pgtype.Text{String: exitReason, Valid: true},
 		RealizedPnl: realizedPnl,
 		Fees:        fees,
 	}); err != nil {
@@ -301,13 +338,13 @@ func (ar *AlgoReconciler) autoCloseFromFields(ctx context.Context, tradeID int64
 	}
 	// Counter.Add panics on negative; metric labels sign and adds |pnl|.
 	metrics.RealizedPnlTotal.WithLabelValues(symbol, sign).Add(mustFloat(realizedPnl.Abs()))
-	metrics.AlgoTriggeredTotal.WithLabelValues(symbol, ExitReasonDisaster).Inc()
+	metrics.AlgoTriggeredTotal.WithLabelValues(symbol, exitReason).Inc()
 
 	holdHours := 0.0
 	if !entryTs.IsZero() {
 		holdHours = now.Sub(entryTs).Hours()
 	}
-	metrics.PositionHoldDurationHours.WithLabelValues(ExitReasonDisaster).Observe(holdHours)
+	metrics.PositionHoldDurationHours.WithLabelValues(exitReason).Observe(holdHours)
 
 	log.Info().
 		Str("close_price", closePrice.String()).

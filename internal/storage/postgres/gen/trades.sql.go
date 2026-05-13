@@ -549,12 +549,16 @@ func (q *Queries) ListOpenTradesForSync(ctx context.Context) ([]ListOpenTradesFo
 const listOpenTradesWithAlgo = `-- name: ListOpenTradesWithAlgo :many
 SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.binance_disaster_stop_order_id,
+       t.binance_trail_algo_id,
+       t.trail_stage,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status = 'open'
-  AND t.binance_disaster_stop_order_id IS NOT NULL
-  AND t.binance_disaster_stop_order_id != ''
+  AND (
+    (t.binance_disaster_stop_order_id IS NOT NULL AND t.binance_disaster_stop_order_id != '')
+    OR (t.binance_trail_algo_id IS NOT NULL AND t.binance_trail_algo_id != '')
+  )
 ORDER BY t.entry_ts ASC
 `
 
@@ -566,13 +570,13 @@ type ListOpenTradesWithAlgoRow struct {
 	Margin                     decimal.Decimal
 	Leverage                   int16
 	BinanceDisasterStopOrderID pgtype.Text
+	BinanceTrailAlgoID         pgtype.Text
+	TrailStage                 int16
 	CurrentQty                 pgtype.Numeric
 }
 
-// v0.2 Gap 1: algo_reconciler iterates these rows each 1min tick to detect
-// Algo FINISHED auto-close. Excludes 'closing' trades (regular close pipeline
-// already cancelled the Algo) and trades with empty algo_id (Round 1 entries
-// where placement failed).
+// v0.2 Gap 1 + Round 1.x: algo_reconciler iterates these rows each 1min tick.
+// Returns both disaster and trail algo IDs so each is polled separately.
 func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesWithAlgoRow, error) {
 	rows, err := q.db.Query(ctx, listOpenTradesWithAlgo)
 	if err != nil {
@@ -583,7 +587,7 @@ func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesW
 	for rows.Next() {
 		var i ListOpenTradesWithAlgoRow
 		if err := rows.Scan(&i.ID, &i.Symbol, &i.EntryTs, &i.EntryPrice, &i.Margin, &i.Leverage,
-			&i.BinanceDisasterStopOrderID, &i.CurrentQty); err != nil {
+			&i.BinanceDisasterStopOrderID, &i.BinanceTrailAlgoID, &i.TrailStage, &i.CurrentQty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

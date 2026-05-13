@@ -86,6 +86,17 @@ func mkAlgoRow(id int64, symbol string, entryPrice float64, qty float64, leverag
 	}
 }
 
+// mkTrailRow builds a row with both disaster + trail algos set (Round 1.x).
+// trailAlgoID empty → no trail algo. trailStage 0–4 maps to trail_sN exit_reason.
+func mkAlgoRowWithTrail(id int64, symbol string, entryPrice, qty float64, disasterID, trailID string, trailStage int16) gen.ListOpenTradesWithAlgoRow {
+	r := mkAlgoRow(id, symbol, entryPrice, qty, 10, disasterID)
+	if trailID != "" {
+		r.BinanceTrailAlgoID = pgtype.Text{String: trailID, Valid: true}
+	}
+	r.TrailStage = trailStage
+	return r
+}
+
 func TestReconcileTick_NoOpenTrades(t *testing.T) {
 	deps := &fakeAlgoDeps{}
 	bc := &fakeAlgoQuerier{}
@@ -228,4 +239,112 @@ func TestReconcileTick_InvalidAlgoID_SkipsRow(t *testing.T) {
 	ar := newTestAR(deps, bc)
 	ar.ReconcileTick(context.Background())
 	assert.Empty(t, deps.exits, "invalid algo_id → skip row, no Query attempt")
+}
+
+// --- Round 1.x: trail algo FINISHED auto-reconcile ---
+
+func TestReconcileTick_TrailS1_Finished_ClosesWithTrailS1Reason(t *testing.T) {
+	// Disaster algo WORKING, trail S1 algo FINISHED → close with exit_reason='trail_s1'.
+	// Entry 80000, qty 0.006, trail filled at 84000 → pnl = (84000-80000) × 0.006 = 24
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(70, "BTCUSDT", 80000, 0.006, "1000", "2000", 1),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		1000: {AlgoID: 1000, Symbol: "BTCUSDT", AlgoStatus: "WORKING"},
+		2000: {AlgoID: 2000, Symbol: "BTCUSDT", AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(84000), Quantity: decimal.NewFromFloat(0.006),
+			TriggerTime: time.Unix(1778699950, 0).UTC()},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	require.Len(t, deps.exits, 1, "trail FINISHED triggers one close")
+	assert.Equal(t, ExitReasonTrailS1, deps.exits[0].Type, "exit_reason='trail_s1'")
+	assert.True(t, deps.exits[0].Price.Equal(decimal.NewFromFloat(84000)))
+	assert.True(t, deps.exits[0].Pnl.Equal(decimal.NewFromFloat(24)))
+
+	require.Len(t, deps.closed, 1)
+	assert.Equal(t, ExitReasonTrailS1, deps.closed[0].ExitReason.String, "trades.exit_reason='trail_s1'")
+}
+
+func TestReconcileTick_TrailS3_Finished_UsesS3Reason(t *testing.T) {
+	// Stage 3 (trader-managed STOP_MARKET) FINISHED → trail_s3.
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(71, "RIFUSDT", 0.1, 1000, "", "3000", 3),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		3000: {AlgoID: 3000, Symbol: "RIFUSDT", AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(0.117), Quantity: decimal.NewFromFloat(1000)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	require.Len(t, deps.exits, 1)
+	assert.Equal(t, ExitReasonTrailS3, deps.exits[0].Type)
+}
+
+func TestReconcileTick_TrailS4_Finished_UsesS4Reason(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(72, "SOLUSDT", 100, 1.0, "", "4000", 4),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		4000: {AlgoID: 4000, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(150), Quantity: decimal.NewFromFloat(1.0)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	require.Len(t, deps.exits, 1)
+	assert.Equal(t, ExitReasonTrailS4, deps.exits[0].Type)
+}
+
+func TestReconcileTick_TrailCanceled_NoClose(t *testing.T) {
+	// Trader-initiated cancel during S1→S2 upgrade is normal: info-level log, no close.
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(73, "BTCUSDT", 80000, 0.006, "", "5000", 1),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		5000: {AlgoID: 5000, AlgoStatus: "CANCELED"},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	assert.Empty(t, deps.exits, "trail CANCELED → no close (upgrade race or external)")
+}
+
+func TestReconcileTick_DisasterFinished_TrailUnpolled(t *testing.T) {
+	// If disaster FINISHED first, skip trail poll (trade already closed).
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(74, "BTCUSDT", 80000, 0.006, "6000", "7000", 1),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		6000: {AlgoID: 6000, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(75200), Quantity: decimal.NewFromFloat(0.006)},
+		7000: {AlgoID: 7000, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(84000), Quantity: decimal.NewFromFloat(0.006)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	require.Len(t, deps.exits, 1, "only disaster close fires; trail skipped (trade already closed)")
+	assert.Equal(t, ExitReasonDisaster, deps.exits[0].Type)
+}
+
+func TestReconcileTick_TrailOnly_NoDisasterAlgoID(t *testing.T) {
+	// Trade with only trail algo set (disaster placement failed earlier).
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(75, "BTCUSDT", 80000, 0.006, "", "8000", 2),
+	}}
+	bc := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		8000: {AlgoID: 8000, AlgoStatus: "FINISHED",
+			ActualPrice: decimal.NewFromFloat(92000), Quantity: decimal.NewFromFloat(0.006)},
+	}}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+	require.Len(t, deps.exits, 1)
+	assert.Equal(t, ExitReasonTrailS2, deps.exits[0].Type, "trail_stage=2 → trail_s2 reason")
+}
+
+func TestTrailExitReasonForStage(t *testing.T) {
+	assert.Equal(t, ExitReasonTrailS1, trailExitReasonForStage(0), "stage 0 defaults to S1 reason (defensive)")
+	assert.Equal(t, ExitReasonTrailS1, trailExitReasonForStage(1))
+	assert.Equal(t, ExitReasonTrailS2, trailExitReasonForStage(2))
+	assert.Equal(t, ExitReasonTrailS3, trailExitReasonForStage(3))
+	assert.Equal(t, ExitReasonTrailS4, trailExitReasonForStage(4))
 }

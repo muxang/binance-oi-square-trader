@@ -200,17 +200,22 @@ WHERE t.status IN ('open', 'partial')
 ORDER BY t.entry_ts ASC;
 
 -- name: ListOpenTradesWithAlgo :many
--- v0.2 Gap 1: rows algo_reconciler iterates to detect Algo FINISHED auto-close.
--- Filters to status='open' AND has Algo (binance_disaster_stop_order_id NOT NULL).
--- 'closing' trades excluded: regular close pipeline already cancelled the Algo.
+-- v0.2 Gap 1 + Round 1.x: rows algo_reconciler iterates to detect Algo FINISHED.
+-- Returns BOTH disaster_stop and trail algo IDs so the reconciler can poll each.
+-- Filter: status='open' AND has EITHER algo (disaster or trail).
+-- 'closing' trades excluded: regular close pipeline already cancelled both.
 SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.binance_disaster_stop_order_id,
+       t.binance_trail_algo_id,
+       t.trail_stage,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status = 'open'
-  AND t.binance_disaster_stop_order_id IS NOT NULL
-  AND t.binance_disaster_stop_order_id != ''
+  AND (
+    (t.binance_disaster_stop_order_id IS NOT NULL AND t.binance_disaster_stop_order_id != '')
+    OR (t.binance_trail_algo_id IS NOT NULL AND t.binance_trail_algo_id != '')
+  )
 ORDER BY t.entry_ts ASC;
 
 -- name: CleanupOrphanEnteringTrades :execrows
