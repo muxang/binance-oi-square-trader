@@ -399,6 +399,7 @@ const listOpenTradesForExit = `-- name: ListOpenTradesForExit :many
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
        t.binance_disaster_stop_order_id,
+       t.initial_oi,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -417,6 +418,7 @@ type ListOpenTradesForExitRow struct {
 	Notional                   decimal.Decimal
 	Leverage                   int16
 	BinanceDisasterStopOrderID pgtype.Text
+	InitialOI                  pgtype.Numeric // v0.2 Round 3 Module C SIGFAIL
 	CurrentQty                 pgtype.Numeric
 }
 
@@ -430,12 +432,39 @@ func (q *Queries) ListOpenTradesForExit(ctx context.Context) ([]ListOpenTradesFo
 	for rows.Next() {
 		var i ListOpenTradesForExitRow
 		if err := rows.Scan(&i.ID, &i.SignalID, &i.Symbol, &i.Direction, &i.EntryTs, &i.EntryPrice,
-			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID, &i.CurrentQty); err != nil {
+			&i.Margin, &i.Notional, &i.Leverage, &i.BinanceDisasterStopOrderID, &i.InitialOI, &i.CurrentQty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
 	return items, rows.Err()
+}
+
+// v0.2 Round 3 Module C: hand-edited UpdateInitialOI + GetLatestOI.
+
+const updateInitialOI = `-- name: UpdateInitialOI :exec
+UPDATE trades SET initial_oi = $2 WHERE id = $1
+`
+
+type UpdateInitialOIParams struct {
+	ID        int64
+	InitialOI pgtype.Numeric
+}
+
+func (q *Queries) UpdateInitialOI(ctx context.Context, arg UpdateInitialOIParams) error {
+	_, err := q.db.Exec(ctx, updateInitialOI, arg.ID, arg.InitialOI)
+	return err
+}
+
+const getLatestOI = `-- name: GetLatestOI :one
+SELECT oi FROM oi_history WHERE symbol = $1 ORDER BY ts DESC LIMIT 1
+`
+
+func (q *Queries) GetLatestOI(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	row := q.db.QueryRow(ctx, getLatestOI, symbol)
+	var oi decimal.Decimal
+	err := row.Scan(&oi)
+	return oi, err
 }
 
 const updateTradeClosed = `-- name: UpdateTradeClosed :exec

@@ -241,6 +241,11 @@ func (e *Executor) PlaceEntry(
 	// Steps 11-12 (v0.2 Round 2 Module A): arm TP1 (+10%, 20% qty) + TP2 (+25%, 20% qty).
 	// Failure of either is non-fatal — trail + disaster cover the position.
 	e.placeTakeProfits(ctx, tradeID, symbol, filled.ExecutedQty, filled.AvgPrice, tickSize, log)
+
+	// Step 13 (v0.2 Round 3 Module C SIGFAIL): snapshot symbol OI for the
+	// signal_fail_detector to compare against later. Non-fatal: NULL initial_oi
+	// means detector skips the OI condition for this trade.
+	e.snapshotInitialOI(ctx, tradeID, symbol, log)
 }
 
 // waitFill polls until the order is FILLED or the deadline is exceeded.
@@ -401,6 +406,31 @@ func (e *Executor) placeTrailingStop(
 		Str("activation", activation.String()).
 		Float64("callback_pct", cb).
 		Msg("order.trail.placed: S1 armed at entry")
+}
+
+// snapshotInitialOI fetches current OI from Binance and persists to trades.initial_oi.
+// Non-fatal: failure leaves the column NULL; sigfail detector treats NULL as
+// "skip OI condition for this trade" so disaster + trail + EMA20 still protect.
+func (e *Executor) snapshotInitialOI(ctx context.Context, tradeID int64, symbol string, log zerolog.Logger) {
+	oi, err := e.bc.GetOpenInterest(ctx, symbol)
+	if err != nil {
+		log.Warn().Err(err).Msg("order.initial_oi: fetch failed (sigfail OI condition will skip for this trade)")
+		return
+	}
+	if oi.IsZero() || oi.IsNegative() {
+		log.Warn().Str("oi", oi.String()).Msg("order.initial_oi: zero or negative OI, skipping persist")
+		return
+	}
+	var pgOI pgtype.Numeric
+	if err := pgOI.Scan(oi.String()); err != nil {
+		log.Warn().Err(err).Msg("order.initial_oi: pgtype Scan failed")
+		return
+	}
+	if err := e.db.UpdateInitialOI(ctx, gen.UpdateInitialOIParams{ID: tradeID, InitialOI: pgOI}); err != nil {
+		log.Warn().Err(err).Msg("order.initial_oi: DB update failed")
+		return
+	}
+	log.Info().Str("initial_oi", oi.String()).Msg("order.initial_oi.snapshot")
 }
 
 // placeTakeProfits (v0.2 Round 2 Module A) arms TP1 + TP2 TAKE_PROFIT_MARKET algos

@@ -56,6 +56,10 @@ const (
 	// per trade are valid for TPs (trade_exits unique constraint is on trade_id+type).
 	ExitReasonTP1 = "tp1"
 	ExitReasonTP2 = "tp2"
+	// v0.2 Round 3 Module C: signal-fail full close — entry signal stopped working
+	// (OI drop ≥ N% AND/OR last K closes < EMA20). Driven by signal_fail_detector
+	// (5min cron) which calls ExitManager.ClosePosition with this reason.
+	ExitReasonSigfail = "sigfail"
 )
 
 // Round 5 v0.1 thresholds (Round 0 §2 4.3 + SPEC §出场).
@@ -197,6 +201,12 @@ func (em *ExitManager) computeUnrealizedPnl(ctx context.Context, t gen.ListOpenT
 	qty := decimalFromPgNumeric(t.CurrentQty)
 	// LONG: (mark - entry) × qty. Round 5 only supports LONG.
 	return markPrice.Sub(entryPrice).Mul(qty)
+}
+
+// ClosePosition is the public entry point for caller-driven closes (e.g. SIGFAIL
+// detector). Delegates to the internal closePosition pipeline.
+func (em *ExitManager) ClosePosition(ctx context.Context, t gen.ListOpenTradesForExitRow, exitReason string, log zerolog.Logger) {
+	em.closePosition(ctx, t, exitReason, log)
 }
 
 // closePosition runs the close pipeline:

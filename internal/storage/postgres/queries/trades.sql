@@ -126,18 +126,31 @@ INNER JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status IN ('open', 'partial');
 
 -- name: ListOpenTradesForExit :many
--- Phase 4 Round 5: rows exit_manager iterates each 1min tick for soft/hard
--- timeout evaluation. Returns enough for the close pipeline:
--- entry_ts (timing) + entry_price (pnl calc) + qty (SELL amount) + algo id
--- (cancel before close) + leverage (sizing crosscheck).
+-- Phase 4 Round 5 + Round 3: rows exit_manager iterates each 1min tick for soft/hard
+-- timeout evaluation. Round 3 also feeds signal_fail_detector (5min cron) via
+-- the same shape — initial_oi added so the detector can check OI drop without
+-- a second query. NULL initial_oi → detector skips OI condition (legacy trade).
 SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        t.margin, t.notional, t.leverage,
        t.binance_disaster_stop_order_id,
+       t.initial_oi,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
 WHERE t.status IN ('open', 'partial', 'closing')
 ORDER BY t.entry_ts ASC;
+
+-- name: UpdateInitialOI :exec
+-- v0.2 Round 3 Module C: snapshot OI at entry time so SIGFAIL detector can
+-- compute drop_pct = (initial - current) / initial. Caller passes NULL when
+-- OI fetch failed at entry — detector treats NULL as "skip OI condition".
+UPDATE trades SET initial_oi = $2 WHERE id = $1;
+
+-- name: GetLatestOI :one
+-- v0.2 Round 3 Module C: latest OI sample for a symbol (oi_history is hypertable;
+-- index symbol_ts_desc makes this O(1)). Returns the raw `oi` column (contract
+-- count) — the SIGFAIL drop semantic is "positions closing", not USD value.
+SELECT oi FROM oi_history WHERE symbol = $1 ORDER BY ts DESC LIMIT 1;
 
 -- name: UpdateTradeClosed :exec
 -- Phase 4 Round 5: terminal write after SELL fill confirmed.

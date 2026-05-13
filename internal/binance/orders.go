@@ -342,6 +342,30 @@ func (c *Client) PlaceAlgoTrailingStop(ctx context.Context, symbol, quantity, ac
 	return AlgoOrderResult{AlgoID: resp.AlgoID, ClientAlgoID: resp.ClientAlgoID, Status: resp.AlgoStatus}, nil
 }
 
+// GetOpenInterest returns the current openInterest (contract count) for a symbol.
+// Used by v0.2 Round 3 Module C to snapshot initial_oi at entry time.
+// weight=1, public endpoint (no API key required).
+//
+// ref: GET /fapi/v1/openInterest
+// docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest
+// fetched: 2026-05-13
+func (c *Client) GetOpenInterest(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	body, err := c.DoRead(ctx, "/fapi/v1/openInterest", params, 1)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("get open interest %s: %w", symbol, err)
+	}
+	var resp struct {
+		OpenInterest string `json:"openInterest"`
+		Symbol       string `json:"symbol"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return decimal.Zero, fmt.Errorf("parse open interest resp: %w", err)
+	}
+	return parseDecimalOrZero(resp.OpenInterest), nil
+}
+
 // PlaceAlgoTakeProfit places a TAKE_PROFIT_MARKET via Algo Service (Round 2 Module A).
 // Fires SELL MARKET when mark price >= stopPrice. quantity is partial (e.g. 20% of
 // position for TP1). reduceOnly=true keeps it position-bounded so multiple TPs +

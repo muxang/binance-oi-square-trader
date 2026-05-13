@@ -120,6 +120,14 @@ type ExitConfig struct {
 	ATRTimeframe                string          `mapstructure:"ATR_TIMEFRAME"`
 	SignalFailOIDropPct         decimal.Decimal `mapstructure:"SIGNAL_FAIL_OI_DROP_PCT"`
 	SignalFailPriceLowBufferPct decimal.Decimal `mapstructure:"SIGNAL_FAIL_PRICE_LOW_BUFFER_PCT"`
+	// v0.2 Round 3 Module C SIGFAIL: signal-fail exit conditions.
+	// Condition A (OI):    current_oi < initial_oi × (1 - SigfailOIDropPct)
+	// Condition B (EMA20): last EMA20KLines closes all < ema20 (15m timeframe)
+	// Condition C (price): deferred to forward calibration (Round 0 §4 PARTIAL).
+	// Logic: AND (default, conservative山寨币策略) or OR (more aggressive).
+	SigfailOIDropPct decimal.Decimal `mapstructure:"SIGFAIL_OI_DROP_PCT"`
+	SigfailEMA20KLines int          `mapstructure:"SIGFAIL_EMA20_K_LINES"`
+	SigfailLogic       string       `mapstructure:"SIGFAIL_LOGIC"` // AND | OR
 	TPStage1Pct                 decimal.Decimal `mapstructure:"TP_STAGE1_PCT"`
 	TPStage1Ratio               decimal.Decimal `mapstructure:"TP_STAGE1_RATIO"`
 	TPStage2Pct                 decimal.Decimal `mapstructure:"TP_STAGE2_PCT"`
@@ -239,6 +247,9 @@ func setDefaults(v *viper.Viper) {
 		"TP1_PCT": "0.10", "TP1_RATIO": "0.20",
 		"TP2_PCT": "0.25", "TP2_RATIO": "0.20",
 		"TRAIL_RATCHET_MIN_PCT": "0.005",
+		"SIGFAIL_OI_DROP_PCT":   "0.08",
+		"SIGFAIL_EMA20_K_LINES": 5,
+		"SIGFAIL_LOGIC":         "AND",
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
 		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
 		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,

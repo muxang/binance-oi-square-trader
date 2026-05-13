@@ -392,6 +392,26 @@ var (
 		},
 		[]string{"symbol", "stage"},
 	)
+
+	// SigfailDetectionRunsTotal counts SIGFAIL detector ticks by outcome.
+	// Labels: result — "ok" | "empty" | "err".
+	SigfailDetectionRunsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_sigfail_detection_runs_total",
+			Help: "v0.2 Round 3 SIGFAIL detector 5min ticks (ok/empty/err).",
+		},
+		[]string{"result"},
+	)
+
+	// SigfailDetectionsTotal counts trades closed via SIGFAIL per symbol+logic.
+	// Labels: symbol, logic ("AND" | "OR"). Cardinality bounded by active symbols × 2.
+	SigfailDetectionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_sigfail_detections_total",
+			Help: "v0.2 Round 3 SIGFAIL close fires per symbol+logic.",
+		},
+		[]string{"symbol", "logic"},
+	)
 )
 
 func init() {
@@ -409,5 +429,6 @@ func init() {
 		RestartRecoveryRunsTotal,
 		AlgoPollingRunsTotal, AlgoTriggeredTotal,
 		TrailingStageUpgradeTotal, TPFilledTotal,
+		SigfailDetectionRunsTotal, SigfailDetectionsTotal,
 	)
 }

@@ -343,6 +343,26 @@ func run() error {
 		log.Fatal().Err(err).Msg("register exit_manager collector")
 	}
 
+	// v0.2 Round 3 Module C: signal_fail_detector — 5min cron evaluates SIGFAIL
+	// conditions (OI drop + EMA20 break) and calls ExitManager.ClosePosition on fire.
+	// 5min cadence matches OI collector + klines/EMA refresh (finer = stale reads).
+	sigfailDetector := execution.NewSigfailDetector(
+		gen.New(pgPool), exitManager, rdb,
+		execution.SigfailConfig{
+			OIDropPct:   cfg.Exit.SigfailOIDropPct,
+			EMA20KLines: cfg.Exit.SigfailEMA20KLines,
+			Logic:       cfg.Exit.SigfailLogic,
+		}, log)
+	sigfailCol := collector.NewSigfailDetectorCollector(sigfailDetector, log, collector.SigfailDetectorConfig{})
+	if err := runner.Register(sigfailCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register sigfail_detector collector")
+	}
+	log.Info().
+		Str("oi_drop_pct", cfg.Exit.SigfailOIDropPct.String()).
+		Int("ema20_k_lines", cfg.Exit.SigfailEMA20KLines).
+		Str("logic", cfg.Exit.SigfailLogic).
+		Msg("sigfail_detector ready (Module C, 5min cron)")
+
 	// Phase 4 Round 6: 5-item circuit breaker tripper (called from decision_engine).
 	// mu's decision B (2026-05-11): default thresholds 8% daily / 8 consec / 3% BTC / 12% float / 3 api_err.
 	cbCfg := execution.CircuitBreakerConfig{
