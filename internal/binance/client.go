@@ -36,6 +36,8 @@ type APIErrorHook func(ctx context.Context, source, endpoint string, httpCode, b
 const (
 	MainnetREST = "https://fapi.binance.com"
 	TestnetREST = "https://testnet.binancefuture.com"
+	MainnetWS   = "wss://fstream.binance.com"
+	TestnetWS   = "wss://stream.binancefuture.com"
 )
 
 // clientSleep is a test seam for the mainnet 5-second pause inside New.

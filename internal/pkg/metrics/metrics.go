@@ -412,6 +412,27 @@ var (
 		},
 		[]string{"symbol", "logic"},
 	)
+
+	// v0.2 Round 4: User Data Stream metrics.
+	UserStreamConnectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "trader_user_stream_connected_total",
+		Help: "WS user-stream successful connections (each Run loop iteration counts on success).",
+	})
+	UserStreamReconnectTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "trader_user_stream_reconnect_total",
+		Help: "WS user-stream session ended with error (next iteration reconnects).",
+	})
+	UserStreamKeepaliveErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "trader_user_stream_keepalive_errors_total",
+		Help: "PUT /fapi/v1/listenKey failures (next read likely fails → reconnect).",
+	})
+	UserStreamEventsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_user_stream_events_total",
+			Help: "WS events received, labelled by event_type (ORDER_TRADE_UPDATE / ACCOUNT_UPDATE / MARGIN_CALL / etc.) plus 'raw' total.",
+		},
+		[]string{"event_type"},
+	)
 )
 
 func init() {
@@ -430,5 +451,7 @@ func init() {
 		AlgoPollingRunsTotal, AlgoTriggeredTotal,
 		TrailingStageUpgradeTotal, TPFilledTotal,
 		SigfailDetectionRunsTotal, SigfailDetectionsTotal,
+		UserStreamConnectedTotal, UserStreamReconnectTotal,
+		UserStreamKeepaliveErrors, UserStreamEventsTotal,
 	)
 }

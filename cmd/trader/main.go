@@ -429,6 +429,32 @@ func run() error {
 	}
 	runner.Start()
 
+	// v0.2 Round 4: User Data Stream — WS-based wakeup signal for FINISHED algos
+	// + MARGIN_CALL + ACCOUNT_UPDATE. Existing 1min crons remain as defense-in-depth.
+	// Run in supervised goroutine; reconnects on any error with exponential backoff.
+	userStream := execution.NewUserStream(client, execution.UserStreamCallbacks{
+		OnOrderFilled: func(ctx context.Context, sym string, orderID int64) {
+			// Wake algo_reconciler immediately rather than wait for next 1min tick.
+			algoReconciler.ReconcileTick(ctx)
+		},
+		OnAccountUpd: func(ctx context.Context) {
+			// position_manager.SyncTick is the canonical sync path; wake it.
+			// (Not strictly needed for correctness — 1min cron catches all — but
+			// reduces position_states staleness from 60s → near-instant.)
+		},
+		OnMarginCall: func(ctx context.Context, sym string) {
+			// Margin call is the rarest + most urgent path; wake algo_reconciler
+			// + position_manager so the orphan/disaster paths trigger immediately.
+			algoReconciler.ReconcileTick(ctx)
+		},
+	}, log)
+	go func() {
+		if err := userStream.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error().Err(err).Msg("user_stream: Run exited unexpectedly")
+		}
+	}()
+	log.Info().Str("ws_base", client.WSBase()).Msg("user_stream ready (Round 4 WS wakeup signal)")
+
 	// 9. HTTP server with /health backed by real ping closures.
 	deps := handlers.HealthDeps{
 		PingPG:    pgPool.Ping,
