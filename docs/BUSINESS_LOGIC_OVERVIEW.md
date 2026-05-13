@@ -35,12 +35,14 @@
 
 trader 不知道任何东西,所以第一件事是把币安的数据搬过来。
 
-### 1.1 OI 持仓量采集 (`oi_collector`) — 1 分钟一次
+### 1.1 OI 持仓量采集 (`oi_collector`) — 5 分钟一次
 
 - **干什么**: 拉币安每个 watchlist symbol 的 Open Interest (USDⓈ-M 永续未平仓合约量)
+- **采样粒度**: Binance `period=5m`,每条记录 = 一个 5 分钟蜡烛 (Binance 对齐到 :00 / :05 / :10 / ...)
+- **每次拉**: 最近 10 期 (= 50 分钟) — `OI_SURGE_LOOKBACK_PERIODS`
 - **存哪**: `oi_history` 表 (timescaledb hypertable)
 - **保留**: 30 天
-- **为什么**: 信号引擎判定 "OI 暴涨" 需要近 1 小时 OI 序列
+- **为什么**: 信号引擎判定 "OI 暴涨" 需要 50 分钟 OI 序列 (近 6 期 = 30 分钟比对窗口 + 回溯 10 期最低点)
 
 ### 1.2 K 线 + ATR 采集 (`klines_collector`) — 5 分钟一次
 
@@ -80,22 +82,27 @@ trader 不知道任何东西,所以第一件事是把币安的数据搬过来。
 
 ### 2.1 OI 暴涨判定 (4 个条件,**全过**才算触发)
 
+> **1 期 = 5 分钟** (Binance `openInterestHist` 的 5min 蜡烛粒度)
+
 ```
-当前 OI = oi[-1]
-近期 6 期 = oi[-6 : -1]
-回溯 10 期最低点 = min(oi[-10:])
+当前 OI         = oi[-1]                 (最新 1 根 5min 蜡烛)
+近期 6 期       = oi[-6 : ]               (最近 30 分钟)
+回溯 10 期最低点 = min(oi[-10:])         (最近 50 分钟内 OI 最低值)
 
 条件 1: 距最低点涨幅 ≥ 5%       (OI_SURGE_FROM_LOW_PCT)
         即 (current - min) / min ≥ 0.05
 
-条件 2: 近 6 期累计涨幅 ≥ 3%     (OI_SURGE_RECENT_GROWTH_PCT)
+条件 2: 近 30 分钟累计涨幅 ≥ 3%   (OI_SURGE_RECENT_GROWTH_PCT)
         即 (current - oi[-6]) / oi[-6] ≥ 0.03
 
-条件 3: 近 6 期里至少 3 期是上涨的  (OI_SURGE_MIN_GROWING_RATIO=0.5)
+条件 3: 近 30 分钟 6 个 5min 蜡烛里至少 3 个是上涨的  (OI_SURGE_MIN_GROWING_RATIO=0.5)
         即 sum(oi[i] > oi[i-1] for i in -5..-1) ≥ 3
 
 条件 4: 当前价 > 1 小时前价        (防止接顶反弹陷阱)
+        用 15min K 线 close[-1] vs close[-5]
 ```
+
+**通俗讲**: 看的是半小时到一小时级别的 OI 突然冲高,不是日线长期趋势。每根蜡烛代表一个 5 分钟时间段,trader 想要看到 OI 在最近 30-50 分钟内既比前期低点涨了一截,又持续在涨。
 
 **真实例子 (VELVET #69 入场时,signal_id=21766)**:
 ```
