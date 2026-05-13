@@ -349,9 +349,11 @@ func run() error {
 	sigfailDetector := execution.NewSigfailDetector(
 		gen.New(pgPool), exitManager, rdb,
 		execution.SigfailConfig{
-			OIDropPct:   cfg.Exit.SigfailOIDropPct,
-			EMA20KLines: cfg.Exit.SigfailEMA20KLines,
-			Logic:       cfg.Exit.SigfailLogic,
+			OIDropPct:         cfg.Exit.SigfailOIDropPct,
+			EMA20KLines:       cfg.Exit.SigfailEMA20KLines,
+			Logic:             cfg.Exit.SigfailLogic,
+			LowBreakBufferPct: cfg.Exit.SigfailLowBreakBufferPct,
+			LowLookbackMin:    cfg.Exit.SigfailLowLookbackMin,
 		}, log)
 	sigfailCol := collector.NewSigfailDetectorCollector(sigfailDetector, log, collector.SigfailDetectorConfig{})
 	if err := runner.Register(sigfailCol, "*/5 * * * *"); err != nil {
@@ -360,8 +362,10 @@ func run() error {
 	log.Info().
 		Str("oi_drop_pct", cfg.Exit.SigfailOIDropPct.String()).
 		Int("ema20_k_lines", cfg.Exit.SigfailEMA20KLines).
+		Str("low_break_buffer", cfg.Exit.SigfailLowBreakBufferPct.String()).
+		Int("low_lookback_min", cfg.Exit.SigfailLowLookbackMin).
 		Str("logic", cfg.Exit.SigfailLogic).
-		Msg("sigfail_detector ready (Module C, 5min cron)")
+		Msg("sigfail_detector ready (Module C, 5min cron, Round 3.x 3 conditions)")
 
 	// Phase 4 Round 6: 5-item circuit breaker tripper (called from decision_engine).
 	// mu's decision B (2026-05-11): default thresholds 8% daily / 8 consec / 3% BTC / 12% float / 3 api_err.

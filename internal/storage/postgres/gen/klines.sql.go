@@ -7,6 +7,9 @@ package gen
 
 import (
 	"context"
+	"time"
+
+	decimal "github.com/shopspring/decimal"
 )
 
 const getLatestKlines = `-- name: GetLatestKlines :many
@@ -52,4 +55,62 @@ func (q *Queries) GetLatestKlines(ctx context.Context, arg GetLatestKlinesParams
 		return nil, err
 	}
 	return items, nil
+}
+
+// v0.2 Round 3.x SIGFAIL: hand-edited GetLastNCloses + GetLowestLowSince.
+
+const getLastNCloses = `-- name: GetLastNCloses :many
+SELECT close FROM klines
+WHERE symbol = $1 AND timeframe = $2
+ORDER BY open_time DESC
+LIMIT $3
+`
+
+type GetLastNClosesParams struct {
+	Symbol    string
+	Timeframe string
+	Limit     int32
+}
+
+func (q *Queries) GetLastNCloses(ctx context.Context, arg GetLastNClosesParams) ([]decimal.Decimal, error) {
+	rows, err := q.db.Query(ctx, getLastNCloses, arg.Symbol, arg.Timeframe, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []decimal.Decimal
+	for rows.Next() {
+		var c decimal.Decimal
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		items = append(items, c)
+	}
+	return items, rows.Err()
+}
+
+const getLowestLowSince = `-- name: GetLowestLowSince :one
+SELECT MIN(low)::numeric AS lowest_low FROM klines
+WHERE symbol = $1 AND timeframe = $2 AND open_time >= $3
+`
+
+type GetLowestLowSinceParams struct {
+	Symbol    string
+	Timeframe string
+	OpenTime  time.Time
+}
+
+// Returns decimal.Decimal{} (zero) when window has no bars — caller checks IsZero.
+// pgx scans SQL NULL into pgtype.Numeric{} (Valid=false); we convert to zero so
+// the caller's "no data → skip condition" path triggers naturally.
+func (q *Queries) GetLowestLowSince(ctx context.Context, arg GetLowestLowSinceParams) (decimal.Decimal, error) {
+	row := q.db.QueryRow(ctx, getLowestLowSince, arg.Symbol, arg.Timeframe, arg.OpenTime)
+	var lowest decimal.NullDecimal
+	if err := row.Scan(&lowest); err != nil {
+		return decimal.Zero, err
+	}
+	if !lowest.Valid {
+		return decimal.Zero, nil
+	}
+	return lowest.Decimal, nil
 }

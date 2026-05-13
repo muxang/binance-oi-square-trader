@@ -24,6 +24,11 @@ type fakeSigfailDeps struct {
 	listErr error
 	oi      map[string]decimal.Decimal
 	oiErr   map[string]error
+	// Round 3.x: PG-backed closes + low window.
+	closes    map[string][]decimal.Decimal // symbol → []close (newest first)
+	closesErr map[string]error
+	low       map[string]decimal.Decimal // symbol → window low
+	lowErr    map[string]error
 }
 
 func (f *fakeSigfailDeps) ListOpenTradesForExit(_ context.Context) ([]gen.ListOpenTradesForExitRow, error) {
@@ -37,6 +42,27 @@ func (f *fakeSigfailDeps) GetLatestOI(_ context.Context, sym string) (decimal.De
 		return v, nil
 	}
 	return decimal.Zero, errors.New("oi not found")
+}
+func (f *fakeSigfailDeps) GetLastNCloses(_ context.Context, arg gen.GetLastNClosesParams) ([]decimal.Decimal, error) {
+	if e, ok := f.closesErr[arg.Symbol]; ok {
+		return nil, e
+	}
+	if v, ok := f.closes[arg.Symbol]; ok {
+		if int(arg.Limit) < len(v) {
+			return v[:arg.Limit], nil
+		}
+		return v, nil
+	}
+	return nil, nil
+}
+func (f *fakeSigfailDeps) GetLowestLowSince(_ context.Context, arg gen.GetLowestLowSinceParams) (decimal.Decimal, error) {
+	if e, ok := f.lowErr[arg.Symbol]; ok {
+		return decimal.Zero, e
+	}
+	if v, ok := f.low[arg.Symbol]; ok {
+		return v, nil
+	}
+	return decimal.Zero, nil
 }
 
 type fakeCloser struct {
@@ -53,10 +79,24 @@ func (f *fakeCloser) ClosePosition(_ context.Context, t gen.ListOpenTradesForExi
 
 func defaultSigfailCfg() SigfailConfig {
 	return SigfailConfig{
-		OIDropPct:   decimal.NewFromFloat(0.08),
-		EMA20KLines: 5,
-		Logic:       "AND",
+		OIDropPct:         decimal.NewFromFloat(0.08),
+		EMA20KLines:       5,
+		Logic:             "AND",
+		LowBreakBufferPct: decimal.NewFromFloat(0.005),
+		LowLookbackMin:    30,
 	}
+}
+
+// makeCloses parses string closes into decimals (newest first).
+func makeCloses(t *testing.T, vals ...string) []decimal.Decimal {
+	t.Helper()
+	out := make([]decimal.Decimal, 0, len(vals))
+	for _, v := range vals {
+		d, err := decimal.NewFromString(v)
+		require.NoError(t, err)
+		out = append(out, d)
+	}
+	return out
 }
 
 func newTestSD(t *testing.T, mr *miniredis.Miniredis, deps *fakeSigfailDeps, closer *fakeCloser, cfg SigfailConfig) *SigfailDetector {
@@ -88,18 +128,29 @@ func setEMA(t *testing.T, mr *miniredis.Miniredis, sym, val string) {
 	require.NoError(t, mr.Set("ema20:"+sym, string(payload)))
 }
 
-func setCloses(t *testing.T, mr *miniredis.Miniredis, sym string, closes ...string) {
+// setClosesPG populates the fake deps.closes map (Round 3.x: PG-backed).
+// Closes are newest-first (matches PG query ORDER BY open_time DESC).
+func setClosesPG(t *testing.T, deps *fakeSigfailDeps, sym string, closes []decimal.Decimal) {
 	t.Helper()
-	// Push newest-first (LPUSH semantic — but miniredis RPush; we'll use RPush newest last and read with LRange 0..n-1 → wrong direction)
-	// Use RPush in order and the detector reads LRange 0..n-1, so first element = oldest.
-	// Test should match production semantic: detector's getLastNCloses returns whatever LRange gives.
-	// Production writer pushes newest-first via LPUSH. We mimic with RPush(reversed) → LRange returns newest-first.
-	// For simplicity: just RPush closes; detector reads all; tests use closes that are all consistent (all below or all above EMA).
-	for _, c := range closes {
-		_, err := mr.Lpush("klines:closes:"+sym+":15m", c)
-		require.NoError(t, err)
+	if deps.closes == nil {
+		deps.closes = map[string][]decimal.Decimal{}
 	}
+	deps.closes[sym] = closes
 }
+
+// setLow seeds the fake deps for condition C window low. Pair with setLatest
+// (Redis latest_price) to evaluate the price-low-break formula end-to-end.
+func setLow(t *testing.T, deps *fakeSigfailDeps, sym, low string) {
+	t.Helper()
+	if deps.low == nil {
+		deps.low = map[string]decimal.Decimal{}
+	}
+	d, err := decimal.NewFromString(low)
+	require.NoError(t, err)
+	deps.low[sym] = d
+}
+
+// (setLatest already defined in trail_upgrader_test.go — same package; reuse.)
 
 // --- OI condition ---
 
@@ -111,7 +162,7 @@ func TestSigfail_OI_NoInitialOI_SkipsCondition(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(1000)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400") // all below EMA
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400")) // all below EMA
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
@@ -127,30 +178,49 @@ func TestSigfail_OI_DropBelowThreshold_NoFire(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(950)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
 	assert.Empty(t, closer.closed, "OI drop 5% < 8% threshold")
 }
 
-func TestSigfail_AND_BothTrigger_Fires(t *testing.T) {
+func TestSigfail_AND_AllThreeTrigger_Fires(t *testing.T) {
 	mr, _ := miniredis.Run()
 	defer mr.Close()
-	// initial=1000, current=900 → drop=10% > 8% ✓
-	// closes all < EMA20 ✓
+	// A: drop=10% > 8% ✓
+	// B: closes all < EMA20 ✓
+	// C: current 79000 < window_low 80000 × 0.995 = 79600 → trigger ✓
 	deps := &fakeSigfailDeps{
 		rows: []gen.ListOpenTradesForExitRow{mkSigfailRow(1, "BTCUSDT", 1000)},
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
+	setLow(t, deps, "BTCUSDT", "80000")
+	setLatest(t, mr, "BTCUSDT", "79000")
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
-	require.Len(t, closer.closed, 1, "OI drop + EMA break → AND fires")
-	assert.Equal(t, int64(1), closer.closed[0].tradeID)
+	require.Len(t, closer.closed, 1, "all 3 triggers → AND fires")
 	assert.Equal(t, ExitReasonSigfail, closer.closed[0].exitReason)
+}
+
+func TestSigfail_AND_MissingConditionC_NoFire(t *testing.T) {
+	// A + B trigger but C data unavailable → AND must NOT fire (Round 3.x gate).
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	deps := &fakeSigfailDeps{
+		rows: []gen.ListOpenTradesForExitRow{mkSigfailRow(1, "BTCUSDT", 1000)},
+		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)},
+	}
+	setEMA(t, mr, "BTCUSDT", "80000")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
+	// No latest_price, no low → condition C unavailable
+	closer := &fakeCloser{}
+	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
+	sd.DetectTick(context.Background())
+	assert.Empty(t, closer.closed, "AND with 1 condition skipped → no fire (data quality gate)")
 }
 
 func TestSigfail_AND_OnlyOITrig_NoFire(t *testing.T) {
@@ -162,7 +232,7 @@ func TestSigfail_AND_OnlyOITrig_NoFire(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "81000", "81100", "81200", "81300", "81400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "81000", "81100", "81200", "81300", "81400"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
@@ -178,7 +248,7 @@ func TestSigfail_AND_OnlyEMATrig_NoFire(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(1000)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
@@ -195,7 +265,7 @@ func TestSigfail_OR_OnlyOITrig_Fires(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)}, // 10% drop
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "81000", "81100", "81200", "81300", "81400") // all above EMA
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "81000", "81100", "81200", "81300", "81400")) // all above EMA
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, cfg)
 	sd.DetectTick(context.Background())
@@ -212,7 +282,7 @@ func TestSigfail_OR_OnlyEMATrig_Fires(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(1000)}, // no drop
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, cfg)
 	sd.DetectTick(context.Background())
@@ -228,7 +298,7 @@ func TestSigfail_EMA_NotAllClosesBelow_NoFire(t *testing.T) {
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
 	// 4 below + 1 above → EMA condition NOT met (must be ALL N)
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "81000")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "81000"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
@@ -244,7 +314,7 @@ func TestSigfail_EMA_InsufficientCloses_SkipsCondition(t *testing.T) {
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
 	// Only 3 closes when we need 5
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
@@ -259,7 +329,7 @@ func TestSigfail_OI_FetchError_SkipsCondition(t *testing.T) {
 		oiErr: map[string]error{"BTCUSDT": errors.New("pg timeout")},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
@@ -284,11 +354,92 @@ func TestSigfail_BoundaryOIExactly8pct_Fires(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(920)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
+	setLow(t, deps, "BTCUSDT", "80000")
+	setLatest(t, mr, "BTCUSDT", "79000") // < 79600 trigger
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, defaultSigfailCfg())
 	sd.DetectTick(context.Background())
-	require.Len(t, closer.closed, 1, "drop == threshold (>= comparator) → fire")
+	require.Len(t, closer.closed, 1, "all 3 triggers + drop == threshold → fire")
+}
+
+// --- Round 3.x: condition C (price low break) ---
+
+func TestSigfail_OR_OnlyLowBreakTrig_Fires(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	cfg := defaultSigfailCfg()
+	cfg.Logic = "OR"
+	// A: no drop, B: closes above EMA, C: current 79000 < 80000×0.995=79600 → trigger
+	deps := &fakeSigfailDeps{
+		rows: []gen.ListOpenTradesForExitRow{mkSigfailRow(1, "BTCUSDT", 1000)},
+		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(1000)},
+	}
+	setEMA(t, mr, "BTCUSDT", "80000")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "81000", "81100", "81200", "81300", "81400"))
+	setLow(t, deps, "BTCUSDT", "80000")
+	setLatest(t, mr, "BTCUSDT", "79000")
+	closer := &fakeCloser{}
+	sd := newTestSD(t, mr, deps, closer, cfg)
+	sd.DetectTick(context.Background())
+	require.Len(t, closer.closed, 1, "OR + only condition C → fire")
+}
+
+func TestSigfail_LowBreak_NoBreakWithBuffer(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	cfg := defaultSigfailCfg()
+	cfg.Logic = "OR"
+	// current 79700 > threshold 79600 → no trigger
+	deps := &fakeSigfailDeps{
+		rows: []gen.ListOpenTradesForExitRow{mkSigfailRow(1, "BTCUSDT", 1000)},
+		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(1000)},
+	}
+	setEMA(t, mr, "BTCUSDT", "80000")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "81000", "81100", "81200", "81300", "81400"))
+	setLow(t, deps, "BTCUSDT", "80000")
+	setLatest(t, mr, "BTCUSDT", "79700") // > 79600 threshold
+	closer := &fakeCloser{}
+	sd := newTestSD(t, mr, deps, closer, cfg)
+	sd.DetectTick(context.Background())
+	assert.Empty(t, closer.closed, "current within buffer of low → no trigger")
+}
+
+func TestSigfail_LowBreak_NoLatestPrice_SkipsCondition(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	cfg := defaultSigfailCfg()
+	cfg.Logic = "OR"
+	// latest_price not set in Redis → condition C should skip; OR fires on OI alone
+	deps := &fakeSigfailDeps{
+		rows: []gen.ListOpenTradesForExitRow{mkSigfailRow(1, "BTCUSDT", 1000)},
+		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)},
+	}
+	setLow(t, deps, "BTCUSDT", "80000")
+	closer := &fakeCloser{}
+	sd := newTestSD(t, mr, deps, closer, cfg)
+	sd.DetectTick(context.Background())
+	require.Len(t, closer.closed, 1, "no latest_price → C skipped; OR fires on OI")
+}
+
+func TestSigfail_LowBreak_EmptyWindow_SkipsCondition(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	cfg := defaultSigfailCfg()
+	cfg.Logic = "AND"
+	// Window low = 0 (no bars in lookback) → C skipped → AND must NOT fire
+	deps := &fakeSigfailDeps{
+		rows: []gen.ListOpenTradesForExitRow{mkSigfailRow(1, "BTCUSDT", 1000)},
+		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)},
+	}
+	setEMA(t, mr, "BTCUSDT", "80000")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
+	// deps.low not set for BTCUSDT → GetLowestLowSince returns zero
+	setLatest(t, mr, "BTCUSDT", "79000")
+	closer := &fakeCloser{}
+	sd := newTestSD(t, mr, deps, closer, cfg)
+	sd.DetectTick(context.Background())
+	assert.Empty(t, closer.closed, "empty window → C skipped → AND no fire")
 }
 
 func TestSigfail_UnknownLogic_DefaultsToAND(t *testing.T) {
@@ -301,9 +452,11 @@ func TestSigfail_UnknownLogic_DefaultsToAND(t *testing.T) {
 		oi:   map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromInt(900)},
 	}
 	setEMA(t, mr, "BTCUSDT", "80000")
-	setCloses(t, mr, "BTCUSDT", "75000", "75100", "75200", "75300", "75400")
+	setClosesPG(t, deps, "BTCUSDT", makeCloses(t, "75000", "75100", "75200", "75300", "75400"))
+	setLow(t, deps, "BTCUSDT", "80000")
+	setLatest(t, mr, "BTCUSDT", "79000")
 	closer := &fakeCloser{}
 	sd := newTestSD(t, mr, deps, closer, cfg)
 	sd.DetectTick(context.Background())
-	require.Len(t, closer.closed, 1, "unknown logic falls back to AND (which fires here)")
+	require.Len(t, closer.closed, 1, "unknown logic falls back to AND (3 triggers → fire)")
 }

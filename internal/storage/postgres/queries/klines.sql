@@ -20,3 +20,21 @@ SELECT * FROM klines
 WHERE symbol = $1 AND timeframe = $2
 ORDER BY open_time DESC
 LIMIT $3;
+
+-- name: GetLastNCloses :many
+-- v0.2 Round 3.x SIGFAIL condition B: returns last N closes for a symbol
+-- (newest first). Replaces the Redis klines:closes:* path that was never
+-- written by any collector (Round 3 install gap). 15m timeframe matches
+-- the klines collector's only output and the EMA20 it computes.
+SELECT close FROM klines
+WHERE symbol = $1 AND timeframe = $2
+ORDER BY open_time DESC
+LIMIT $3;
+
+-- name: GetLowestLowSince :one
+-- v0.2 Round 3.x SIGFAIL condition C: lowest `low` over the recent time
+-- window. Caller passes ts_cutoff = NOW() - INTERVAL 'LOOKBACK_MIN minutes';
+-- the result anchors the price-low-break check. Returns NULL when window
+-- contains no bars (caller treats as "skip condition").
+SELECT MIN(low)::numeric AS lowest_low FROM klines
+WHERE symbol = $1 AND timeframe = $2 AND open_time >= $3;

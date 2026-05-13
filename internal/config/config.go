@@ -128,6 +128,12 @@ type ExitConfig struct {
 	SigfailOIDropPct decimal.Decimal `mapstructure:"SIGFAIL_OI_DROP_PCT"`
 	SigfailEMA20KLines int          `mapstructure:"SIGFAIL_EMA20_K_LINES"`
 	SigfailLogic       string       `mapstructure:"SIGFAIL_LOGIC"` // AND | OR
+	// Round 3.x condition C — price-low break (defense against intra-bar spike-reverse).
+	// Trigger: current_price < min(low) over the lookback window × (1 - buffer).
+	// 15m timeframe forces minimum sensible lookback ≥ 15min (~1 bar);
+	// default 30 ≈ 2 bars provides "防瞬时插针" semantic from Round 0 §4.
+	SigfailLowBreakBufferPct decimal.Decimal `mapstructure:"SIGFAIL_LOW_BREAK_BUFFER_PCT"`
+	SigfailLowLookbackMin    int             `mapstructure:"SIGFAIL_LOW_LOOKBACK_MIN"`
 	TPStage1Pct                 decimal.Decimal `mapstructure:"TP_STAGE1_PCT"`
 	TPStage1Ratio               decimal.Decimal `mapstructure:"TP_STAGE1_RATIO"`
 	TPStage2Pct                 decimal.Decimal `mapstructure:"TP_STAGE2_PCT"`
@@ -250,6 +256,9 @@ func setDefaults(v *viper.Viper) {
 		"SIGFAIL_OI_DROP_PCT":   "0.08",
 		"SIGFAIL_EMA20_K_LINES": 5,
 		"SIGFAIL_LOGIC":         "AND",
+		// 15m timeframe ≥ 15min lookback; 30min ≈ 2 bars matches Round 0 §4 "防瞬时插针" intent.
+		"SIGFAIL_LOW_BREAK_BUFFER_PCT": "0.005",
+		"SIGFAIL_LOW_LOOKBACK_MIN":     30,
 		"BINANCE_ALGO_MIGRATION_DATE": "2025-12-09T00:00:00Z",
 		"WATCHLIST_MAX_SIZE":          150, "WATCHLIST_MIN_SIZE": 50,
 		"WATCHLIST_MIN_VOLUME_USD": "10000000", "WATCHLIST_MIN_LIST_DAYS": 7,

@@ -2,18 +2,21 @@
 // SIGFAIL exit conditions for each open trade and triggers ExitManager.ClosePosition
 // when the entry signal has stopped working.
 //
-// Conditions evaluated:
-//   A. OI drop:  current_oi < initial_oi × (1 - OIDropPct)  (e.g. 8%)
-//   B. EMA20 break:  last EMA20KLines closes all < ema20 (15m timeframe)
-//   C. (deferred to forward calibration — see docs/V0_2_TRADER_DESIGN.md §4.4)
+// Conditions evaluated (Round 3.x: all 3 are now data-backed):
+//   A. OI drop:        current_oi < initial_oi × (1 - OIDropPct)         (oi_history PG)
+//   B. EMA20 break:    last N 15m closes all < ema20                     (klines PG + ema20 Redis)
+//   C. Price low break: current_price < min(low) × (1 - LowBreakBufferPct) (klines PG window)
+//
+// Round 3 used Redis "klines:closes:*" for condition B but that key had NO writer
+// (sigfail_detector was the only reader). Round 3.x routes B through PG GetLastNCloses
+// and adds condition C using klines.low over a time window.
 //
 // Logic mode (config SIGFAIL_LOGIC):
-//   AND — both A and B must trigger (default; conservative for 山寨币 noise)
-//   OR  — either A or B triggers (more responsive; higher false-positive risk)
+//   AND — all 3 must trigger (default; conservative for 山寨币 noise)
+//   OR  — any 1 triggers (more responsive; higher false-positive risk)
 //
-// 5min cadence chosen to match the OI collector (5min) and klines/EMA refresh
-// (5min) — finer-grained polls would just read stale Redis values. Round 4 WS
-// will replace this with real-time event-driven detection.
+// 5min cadence matches the OI + klines refresh; finer would read stale data.
+// Round 4 WS will replace with real-time event-driven detection.
 //
 // ref: docs/V0_2_TRADER_DESIGN.md §4
 package execution
@@ -34,10 +37,17 @@ import (
 	"trader/internal/storage/postgres/gen"
 )
 
+// sigfailKlinesTimeframe is the canonical timeframe SIGFAIL pulls from PG.
+// The klines collector only writes 15m bars (Round 3.x verify confirmed),
+// so 1m/5m semantics from the design doc become "use the 15m proxy".
+const sigfailKlinesTimeframe = "15m"
+
 // SigfailDetectorDeps is the minimal DB surface the detector needs.
 type SigfailDetectorDeps interface {
 	ListOpenTradesForExit(ctx context.Context) ([]gen.ListOpenTradesForExitRow, error)
 	GetLatestOI(ctx context.Context, symbol string) (decimal.Decimal, error)
+	GetLastNCloses(ctx context.Context, arg gen.GetLastNClosesParams) ([]decimal.Decimal, error)
+	GetLowestLowSince(ctx context.Context, arg gen.GetLowestLowSinceParams) (decimal.Decimal, error)
 }
 
 // SigfailCloser is the close pipeline (ExitManager.ClosePosition).
@@ -45,11 +55,14 @@ type SigfailCloser interface {
 	ClosePosition(ctx context.Context, t gen.ListOpenTradesForExitRow, exitReason string, log zerolog.Logger)
 }
 
-// SigfailConfig bundles the 3 detection knobs.
+// SigfailConfig bundles the 5 detection knobs (Round 3.x: 3 conditions).
 type SigfailConfig struct {
-	OIDropPct   decimal.Decimal // 0.08 = 8% OI drop trigger
-	EMA20KLines int             // 5 = N consecutive 15m closes below EMA20
+	OIDropPct   decimal.Decimal // 0.08 = 8% OI drop trigger (condition A)
+	EMA20KLines int             // 5 = N consecutive 15m closes below EMA20 (condition B)
 	Logic       string          // "AND" or "OR"
+	// Condition C — price low break:
+	LowBreakBufferPct decimal.Decimal // 0.005 = 0.5% below window-low
+	LowLookbackMin    int             // 30 = minutes back (15m TF → 2 bars)
 }
 
 // SigfailDetector runs the 5min cron tick.
@@ -89,37 +102,38 @@ func (sd *SigfailDetector) DetectTick(ctx context.Context) {
 }
 
 // evalAndMaybeClose returns true if the trade was triggered (and close started).
+// Round 3.x: 3 conditions (A: OI drop, B: EMA20 break, C: price low break).
+// Data-availability gate: missing data for a condition → that condition not counted.
+// AND requires all 3 (A∩B∩C); OR fires on any 1.
 func (sd *SigfailDetector) evalAndMaybeClose(ctx context.Context, r gen.ListOpenTradesForExitRow) bool {
 	log := sd.log.With().Int64("trade_id", r.ID).Str("symbol", r.Symbol).Logger()
 
 	oiTrigger, oiOK := sd.checkOIDrop(ctx, r, log)
 	emaTrigger, emaOK := sd.checkEMA20Break(ctx, r, log)
+	lowTrigger, lowOK := sd.checkPriceLowBreak(ctx, r, log)
 
-	// At least one condition source must be readable (data quality gate).
-	// Logic AND with one missing condition → don't fire (safer); OR fires if the readable one triggered.
 	var fire bool
 	switch sd.cfg.Logic {
 	case "OR":
-		if (oiOK && oiTrigger) || (emaOK && emaTrigger) {
-			fire = true
-		}
-	default: // "AND" (default + safer)
-		if oiOK && emaOK && oiTrigger && emaTrigger {
-			fire = true
-		}
+		fire = (oiOK && oiTrigger) || (emaOK && emaTrigger) || (lowOK && lowTrigger)
+	default: // AND
+		fire = oiOK && emaOK && lowOK && oiTrigger && emaTrigger && lowTrigger
 	}
 
 	if !fire {
 		log.Debug().
 			Bool("oi_ok", oiOK).Bool("oi_trig", oiTrigger).
 			Bool("ema_ok", emaOK).Bool("ema_trig", emaTrigger).
+			Bool("low_ok", lowOK).Bool("low_trig", lowTrigger).
 			Str("logic", sd.cfg.Logic).
 			Msg("sigfail.eval: no fire")
 		return false
 	}
 
 	log.Warn().
-		Bool("oi_trig", oiTrigger).Bool("ema_trig", emaTrigger).
+		Bool("oi_trig", oiTrigger).
+		Bool("ema_trig", emaTrigger).
+		Bool("low_trig", lowTrigger).
 		Str("logic", sd.cfg.Logic).
 		Msg("sigfail.fire: closing trade")
 	metrics.SigfailDetectionsTotal.WithLabelValues(r.Symbol, sd.cfg.Logic).Inc()
@@ -155,22 +169,22 @@ func (sd *SigfailDetector) checkOIDrop(ctx context.Context, r gen.ListOpenTrades
 	return trigger, true
 }
 
-// checkEMA20Break: last N 15m closes (Redis klines:closes:{symbol}:15m) all < EMA20.
+// checkEMA20Break: last N 15m closes (PG klines) all < EMA20 (Redis ema20:{symbol}).
+// Round 3.x: PG replaces the unwritten Redis closes key.
 // Returns (trigger, ok). ok=false on data unavailable.
-//
-// Data model: position_price collector + klines collector keep
-//   ema20:{symbol}      → indicatorPayload JSON ({"value":"X","computed_at":"..."})
-//   klines:closes:{symbol}:15m → Redis list of last N closes (newest first)
-// If the closes list isn't populated yet (v0.2 Round 3 install), this returns ok=false.
 func (sd *SigfailDetector) checkEMA20Break(ctx context.Context, r gen.ListOpenTradesForExitRow, log zerolog.Logger) (bool, bool) {
 	ema, err := sd.getEMA20(ctx, r.Symbol)
 	if err != nil || ema.IsZero() {
 		log.Debug().Err(err).Msg("sigfail.ema20: EMA unavailable; skip EMA condition")
 		return false, false
 	}
-	closes, err := sd.getLastNCloses(ctx, r.Symbol, sd.cfg.EMA20KLines)
+	closes, err := sd.db.GetLastNCloses(ctx, gen.GetLastNClosesParams{
+		Symbol:    r.Symbol,
+		Timeframe: sigfailKlinesTimeframe,
+		Limit:     int32(sd.cfg.EMA20KLines),
+	})
 	if err != nil || len(closes) < sd.cfg.EMA20KLines {
-		log.Debug().Err(err).Int("got", len(closes)).Msg("sigfail.ema20: closes list short; skip EMA condition")
+		log.Debug().Err(err).Int("got", len(closes)).Msg("sigfail.ema20: closes short; skip EMA condition")
 		return false, false
 	}
 	for _, c := range closes {
@@ -181,6 +195,56 @@ func (sd *SigfailDetector) checkEMA20Break(ctx context.Context, r gen.ListOpenTr
 	}
 	log.Debug().Str("ema", ema.String()).Int("n", sd.cfg.EMA20KLines).Msg("sigfail.ema20.eval: all closes < EMA → trigger")
 	return true, true
+}
+
+// checkPriceLowBreak (Round 3.x condition C): current_price < window_low × (1 - buffer).
+// Window = last LowLookbackMin minutes of 15m klines (MIN(low) across the bars).
+// current_price source: Redis latest_price:{symbol} (1min update, written by position_price collector).
+// Returns (trigger, ok). ok=false when current price or window low unavailable.
+func (sd *SigfailDetector) checkPriceLowBreak(ctx context.Context, r gen.ListOpenTradesForExitRow, log zerolog.Logger) (bool, bool) {
+	if sd.cfg.LowLookbackMin <= 0 || sd.cfg.LowBreakBufferPct.IsZero() {
+		log.Debug().Msg("sigfail.low: lookback/buffer zero; skip condition C")
+		return false, false
+	}
+	current, err := sd.getCurrentPrice(ctx, r.Symbol)
+	if err != nil || current.IsZero() {
+		log.Debug().Err(err).Msg("sigfail.low: latest_price unavailable; skip condition C")
+		return false, false
+	}
+	cutoff := sd.nowFn().Add(-time.Duration(sd.cfg.LowLookbackMin) * time.Minute)
+	low, err := sd.db.GetLowestLowSince(ctx, gen.GetLowestLowSinceParams{
+		Symbol: r.Symbol, Timeframe: sigfailKlinesTimeframe, OpenTime: cutoff,
+	})
+	if err != nil || low.IsZero() {
+		log.Debug().Err(err).Msg("sigfail.low: window low unavailable (empty window?); skip condition C")
+		return false, false
+	}
+	threshold := low.Mul(decimal.NewFromInt(1).Sub(sd.cfg.LowBreakBufferPct))
+	trigger := current.LessThan(threshold)
+	log.Debug().
+		Str("current", current.String()).
+		Str("window_low", low.String()).
+		Str("threshold", threshold.String()).
+		Int("lookback_min", sd.cfg.LowLookbackMin).
+		Bool("trigger", trigger).
+		Msg("sigfail.low.eval")
+	return trigger, true
+}
+
+// getCurrentPrice mirrors trail_upgrader.getCurrentPrice (Redis latest_price:{symbol}).
+func (sd *SigfailDetector) getCurrentPrice(ctx context.Context, symbol string) (decimal.Decimal, error) {
+	raw, err := sd.rdb.Get(ctx, "latest_price:"+symbol).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return decimal.Zero, fmt.Errorf("latest_price not in redis")
+		}
+		return decimal.Zero, err
+	}
+	p, err := decimal.NewFromString(raw)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("parse latest_price %q: %w", raw, err)
+	}
+	return p, nil
 }
 
 // getEMA20 reads ema20:{symbol} (JSON payload from klines collector).
@@ -205,23 +269,3 @@ func (sd *SigfailDetector) getEMA20(ctx context.Context, symbol string) (decimal
 	return v, nil
 }
 
-// getLastNCloses reads klines:closes:{symbol}:15m Redis list (newest first).
-// Returns up to n closes. Empty list → caller skips EMA condition.
-func (sd *SigfailDetector) getLastNCloses(ctx context.Context, symbol string, n int) ([]decimal.Decimal, error) {
-	if n <= 0 {
-		return nil, fmt.Errorf("getLastNCloses: n must be > 0")
-	}
-	raws, err := sd.rdb.LRange(ctx, "klines:closes:"+symbol+":15m", 0, int64(n-1)).Result()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]decimal.Decimal, 0, len(raws))
-	for _, s := range raws {
-		d, err := decimal.NewFromString(s)
-		if err != nil {
-			continue // skip malformed entries; len check at caller handles
-		}
-		out = append(out, d)
-	}
-	return out, nil
-}
