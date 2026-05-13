@@ -27,6 +27,7 @@ import (
 	"trader/internal/binance"
 	"trader/internal/collector"
 	"trader/internal/config"
+	"trader/internal/decision"
 	"trader/internal/execution"
 	"trader/internal/pkg/logger"
 	"trader/internal/pkg/metrics"
@@ -403,11 +404,24 @@ func run() error {
 	startupCancel()
 	metrics.RestartRecoveryRunsTotal.WithLabelValues(restartResult(report)).Inc()
 
-	// Phase 3 v0.1: decision_engine — 5min cron, reads entered_* signals,
+	// Phase 3 v0.1 + Round R.1 fix: decision_engine — 5min cron, reads entered_* signals,
 	// runs filters + sizing → trades.entering. Phase 4: fires executor.PlaceEntry.
+	//
+	// Round R.1 bug fix: sizing config was using SizingConfig defaults (Leverage=10)
+	// because the EngineConfig.Sizing was never wired from cfg.Position. This caused
+	// sizing to compute qty for 10x while executor.SetLeverage set Binance to 5x,
+	// resulting in user-visible margin = notional / 5 = $50 instead of $25 (mu catch
+	// 2026-05-13 16:05 INJUSDT entry).
 	decisionEngineCol := collector.NewDecisionEngineCollector(
 		gen.New(pgPool), rdb, symbolService, executor, circuitBreaker, log, collector.DecisionEngineConfig{
 			PerTickTimeout: 4 * time.Minute,
+			EngineCfg: decision.EngineConfig{
+				Sizing: decision.SizingConfig{
+					FullMarginUSDT: cfg.Position.MarginPerTradeFull,
+					HalfMarginUSDT: cfg.Position.MarginPerTradeHalf,
+					Leverage:       int32(cfg.Position.Leverage),
+				},
+			},
 		},
 	)
 	if err := runner.Register(decisionEngineCol, "*/5 * * * *"); err != nil {
