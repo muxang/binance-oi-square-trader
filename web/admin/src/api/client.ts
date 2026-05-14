@@ -115,6 +115,8 @@ export interface CBThresholdsRequest {
   trail_stage2_callback_rate?: string
   trail_stage3_callback_rate?: string
   trail_stage4_callback_rate?: string
+  // Round R.7 F2: API 错误率熔断阈值
+  api_error_rate_limit?: number
   note?: string
 }
 export interface ThresholdsAck { ok: boolean; updated_keys: number }

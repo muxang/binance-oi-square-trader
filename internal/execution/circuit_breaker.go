@@ -134,6 +134,14 @@ func (cb *CircuitBreakerTripper) btcCrashHaltPct() decimal.Decimal {
 	return cb.cfg.BTCCrashHaltPct
 }
 
+// Round R.7 F2: api error rate threshold — admin Web UI tunable.
+func (cb *CircuitBreakerTripper) apiErrorRateLimit() int {
+	if rt := cfgpkg.Get(); rt != nil && rt.APIErrorRateLimit > 0 {
+		return rt.APIErrorRateLimit
+	}
+	return cb.cfg.APIErrorRateLimit
+}
+
 func NewCircuitBreakerTripper(db CircuitBreakerDeps, bc CircuitBreakerBinance, rdb *redis.Client, cfg CircuitBreakerConfig, log zerolog.Logger) *CircuitBreakerTripper {
 	return &CircuitBreakerTripper{db: db, bc: bc, rdb: rdb, cfg: cfg, log: log, nowFn: timez.NowUTC}
 }
@@ -266,15 +274,16 @@ func (cb *CircuitBreakerTripper) tripAPIErrorRate(ctx context.Context) bool {
 		cb.log.Warn().Err(err).Msg("circuit_breaker.api_error: count failed")
 		return false
 	}
-	if int(count) < cb.cfg.APIErrorRateLimit {
+	threshold := cb.apiErrorRateLimit()
+	if int(count) < threshold {
 		return false
 	}
-	cb.log.Warn().Int64("error_count", count).Int("threshold", cb.cfg.APIErrorRateLimit).
+	cb.log.Warn().Int64("error_count", count).Int("threshold", threshold).
 		Float64("window_seconds", apiErrorRateWindow.Seconds()).
 		Msg("circuit_breaker.trip.api_error")
 	cb.fireTrip(ctx, tripTypeAPIError, map[string]any{
 		"error_count":    count,
-		"threshold":      cb.cfg.APIErrorRateLimit,
+		"threshold":      threshold,
 		"window_seconds": apiErrorRateWindow.Seconds(),
 	})
 	return true

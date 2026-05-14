@@ -115,6 +115,8 @@ type cbThresholdsRequest struct {
 	TrailStage2CallbackRate *string `json:"trail_stage2_callback_rate"`
 	TrailStage3CallbackRate *string `json:"trail_stage3_callback_rate"`
 	TrailStage4CallbackRate *string `json:"trail_stage4_callback_rate"`
+	// Round R.7 F2 — API error rate threshold (proxy 故障容忍度).
+	APIErrorRateLimit       *int    `json:"api_error_rate_limit"`
 	Note                   string  `json:"note"`
 }
 
@@ -198,6 +200,13 @@ func (s *Server) handleCBThresholds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updates["TRAIL_STAGE4_CALLBACK_RATE"] = *req.TrailStage4CallbackRate
+	}
+	if req.APIErrorRateLimit != nil {
+		if *req.APIErrorRateLimit <= 0 || *req.APIErrorRateLimit > 1000 {
+			s.writeError(w, http.StatusBadRequest, "api_error_rate_limit: must be in (0, 1000]")
+			return
+		}
+		updates["API_ERROR_RATE_LIMIT"] = *req.APIErrorRateLimit
 	}
 	if len(updates) == 0 {
 		s.writeError(w, http.StatusBadRequest, "no threshold provided")

@@ -101,6 +101,7 @@ func (c *ConfigReloader) Run(ctx context.Context) error {
 		Str("trail_s2_callback", newRt.TrailStage2CallbackRate.String()).
 		Str("trail_s3_callback", newRt.TrailStage3CallbackRate.String()).
 		Str("trail_s4_callback", newRt.TrailStage4CallbackRate.String()).
+		Int("api_error_rate_limit", newRt.APIErrorRateLimit).
 		Msg("config_reloader.tick: runtime swapped")
 	metrics.ConfigReloadTotal.WithLabelValues("ok").Inc()
 	return nil
@@ -225,6 +226,13 @@ func (c *ConfigReloader) applyOverride(newRt *cfgpkg.Runtime, key string, val an
 			newRt.TrailStage4CallbackRate = d
 			return true
 		}
+	// Round R.7 F2 — proxy transient outage shouldn't trip 24h halt.
+	// Sensible range: 1..1000 errors/min. Default 30 (was hardcoded 3).
+	case "API_ERROR_RATE_LIMIT":
+		if n, ok := toInt(val); ok && n > 0 && n <= 1000 {
+			newRt.APIErrorRateLimit = n
+			return true
+		}
 	default:
 		c.log.Debug().Str("key", key).Msg("config_reloader: key not yet wired into Runtime")
 	}
@@ -284,5 +292,6 @@ func runtimesEqual(a, b *cfgpkg.Runtime) bool {
 		a.TrailStage1CallbackRate.Equal(b.TrailStage1CallbackRate) &&
 		a.TrailStage2CallbackRate.Equal(b.TrailStage2CallbackRate) &&
 		a.TrailStage3CallbackRate.Equal(b.TrailStage3CallbackRate) &&
-		a.TrailStage4CallbackRate.Equal(b.TrailStage4CallbackRate)
+		a.TrailStage4CallbackRate.Equal(b.TrailStage4CallbackRate) &&
+		a.APIErrorRateLimit == b.APIErrorRateLimit
 }

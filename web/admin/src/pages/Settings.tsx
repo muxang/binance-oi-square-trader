@@ -61,6 +61,7 @@ function CBThresholdsCard() {
     trail_stage2_callback_rate: '',
     trail_stage3_callback_rate: '',
     trail_stage4_callback_rate: '',
+    api_error_rate_limit: '',
     note: '',
   })
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -81,6 +82,7 @@ function CBThresholdsCard() {
     if (form.trail_stage2_callback_rate) out.trail_stage2_callback_rate = form.trail_stage2_callback_rate
     if (form.trail_stage3_callback_rate) out.trail_stage3_callback_rate = form.trail_stage3_callback_rate
     if (form.trail_stage4_callback_rate) out.trail_stage4_callback_rate = form.trail_stage4_callback_rate
+    if (form.api_error_rate_limit)       out.api_error_rate_limit       = Number(form.api_error_rate_limit)
     if (form.note)                       out.note                       = form.note
     return out
   }
@@ -99,6 +101,7 @@ function CBThresholdsCard() {
         trail_stage3_upgrade_pct: '', trail_stage4_upgrade_pct: '',
         trail_stage1_callback_rate: '', trail_stage2_callback_rate: '',
         trail_stage3_callback_rate: '', trail_stage4_callback_rate: '',
+        api_error_rate_limit: '',
         note: '',
       })
     },
@@ -123,6 +126,9 @@ function CBThresholdsCard() {
         </FieldRow>
         <FieldRow label="MAX_STOP_PCT" hint="ATR 止损上限,0-1">
           <TextInput value={form.max_stop_pct} onChange={upd('max_stop_pct')} placeholder="e.g. 0.12" />
+        </FieldRow>
+        <FieldRow label="API_ERROR_RATE_LIMIT" hint="60 秒内 API 错误数熔断阈值 (Round R.7 F2;proxy 容忍度,推荐 30+)">
+          <TextInput value={form.api_error_rate_limit} onChange={upd('api_error_rate_limit')} placeholder="e.g. 30" />
         </FieldRow>
         <div className="border-t border-[#2d2d2d] mt-3 pt-3">
           <div className="text-xs text-gray-500 mb-2">Trail stage thresholds (Round 2.z, mu 真盘 owner catch):</div>

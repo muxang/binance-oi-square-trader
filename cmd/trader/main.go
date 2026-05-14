@@ -339,6 +339,9 @@ func run() error {
 		TrailStage2CallbackRate: cfg.Exit.TrailStage2CallbackRate,
 		TrailStage3CallbackRate: cfg.Exit.TrailStage3CallbackRate,
 		TrailStage4CallbackRate: cfg.Exit.TrailStage4CallbackRate,
+		// Round R.7 F2 (mu owner 13:30 BJT 2026-05-14 catch — proxy 13s outage
+		// false halt). Threshold tunable via admin Web UI.
+		APIErrorRateLimit: cfg.Risk.APIErrorRateLimit,
 	}
 	// Seed atomic Runtime so consumer getters see baseline before the first reloader tick.
 	config.Set(baselineRuntime)
@@ -363,8 +366,9 @@ func run() error {
 		Str("trail_s2_callback_baseline", baselineRuntime.TrailStage2CallbackRate.String()).
 		Str("trail_s3_callback_baseline", baselineRuntime.TrailStage3CallbackRate.String()).
 		Str("trail_s4_callback_baseline", baselineRuntime.TrailStage4CallbackRate.String()).
-		Int("wired_keys", 16).
-		Msg("config_reloader ready (Phase 5.2 Round 2.w, 1min cron)")
+		Int("api_error_rate_limit_baseline", baselineRuntime.APIErrorRateLimit).
+		Int("wired_keys", 17).
+		Msg("config_reloader ready (Phase 5.2 Round 2.w + R.7 F2, 1min cron)")
 
 	// v0.2 Round 1 Module B + Round 1.y: trail_upgrader — 1min sweep (was 5min).
 	// Activates S1 fallback, upgrades S1→S2→S3→S4, ratchets S3/S4 stop higher.

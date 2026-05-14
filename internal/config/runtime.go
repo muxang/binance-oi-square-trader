@@ -66,6 +66,11 @@ type Runtime struct {
 	TrailStage2CallbackRate decimal.Decimal // S2: ≤ 0.05 (Binance native upper bound)
 	TrailStage3CallbackRate decimal.Decimal // S3: trader-managed, no Binance limit
 	TrailStage4CallbackRate decimal.Decimal // S4: trader-managed, no Binance limit
+	// Round R.7 F2: API error rate halt threshold (mu 真盘 13:30 BJT 2026-05-14
+	// catch — 代理 13 秒认证故障 → 28 errors/min trip → 24h false halt).
+	// Old default 3/min too sensitive for proxy transient spikes. Wired to
+	// admin Web UI for mu to tune live as proxy provider stability improves.
+	APIErrorRateLimit int
 }
 
 var runtime atomic.Pointer[Runtime]
@@ -106,5 +111,7 @@ func InitRuntimeFromConfig(cfg *Config) {
 		TrailStage2CallbackRate: cfg.Exit.TrailStage2CallbackRate,
 		TrailStage3CallbackRate: cfg.Exit.TrailStage3CallbackRate,
 		TrailStage4CallbackRate: cfg.Exit.TrailStage4CallbackRate,
+		// Round R.7 F2:
+		APIErrorRateLimit: cfg.Risk.APIErrorRateLimit,
 	})
 }
