@@ -157,13 +157,19 @@ OI 涨幅 (距最低点): 7.86% ✓ (>5%)
 ```
 
 **Round R.6 重要变化** (vs 旧 v0.1 24h 时间窗口):
-- ✅ 同 symbol 平仓后**立即**可再 entry,无需等 24h
+- ✅ 同 symbol 平仓后**立即**可再 entry,无需等 24h (mu 真实诉求 catch)
 - ✅ failed (e.g. Binance -4168 拒绝) 也立即可再 entry
-- ✅ 顺手修原 SQL 漏掉 `closing` 状态的 bug — 手工平仓中之前能叠仓
-- ⚠️ mu owner 接受 risk: 同 symbol disaster cluster 可能 (forward 评估真实 verify)
+- ✅ 顺手修原 SQL 漏掉 `closing` 状态的 bug — 手工平仓中之前能叠仓,跟 Round 2.x Part 3 manual close pre-set pattern 配套修
+- 🎯 部署当下 **5 个 symbols 立即解锁** (旧 logic 拦截但新 logic 允许):
+  INJ #66 / TURBOUSDT #67 / ESPORTSUSDT #59 / VELVET #69 / COSUSDT #70 — 全部
+  closed,以前要等 12-22h 才能再入,现在 signal 一触发就放行
+- ⚠️ mu owner 接受 risk: 同 symbol disaster cluster 可能 — forward 评估真实 verify;
+  必要时再加 watchlist auto-exclude on N losses
 
 旧 v0.1 用 `signals.ts > NOW() - 24h` + `status IN (..., 'closed')` 拦 — 即使刚平仓
 5 分钟,只要原始 signal 距今 < 24h 也被拒。新版用 status 直接判,语义更清晰。
+
+> **Commit chain**: `77ff143` 后端 SQL + filter + interface 改名 → `d6b505b` 文档 §3.1/§9.3/§13 首轮 catch up → 本 commit 补 5 symbols unlock highlight。
 
 ### 3.2 仓位计算 (sizing)
 
