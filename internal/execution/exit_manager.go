@@ -63,6 +63,12 @@ const (
 	// (OI drop ≥ N% AND/OR last K closes < EMA20). Driven by signal_fail_detector
 	// (5min cron) which calls ExitManager.ClosePosition with this reason.
 	ExitReasonSigfail = "sigfail"
+	// Round R.8 (2026-05-16, mu 真盘 catch): orphan auto-sync. When Binance shows
+	// no position for ≥2 ticks AND no algo FINISHED (R.4 F1 + R.5 defenses both
+	// fail), mark trade closed locally with pnl=0 + no halt. Real fill may be
+	// recoverable via Binance userTrades manual review (out of scope automation).
+	// Distinguishes from disaster/trail/timeout where pnl is authoritative.
+	ExitReasonOrphanSynced = "orphan_synced"
 )
 
 // Round 5 v0.1 thresholds (Round 0 §2 4.3 + SPEC §出场).

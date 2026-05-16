@@ -405,6 +405,19 @@ var (
 		[]string{"symbol"},
 	)
 
+	// PositionOrphanAutoSyncedTotal — Round R.8 (2026-05-16). Counts trades
+	// auto-closed by 2-tick orphan confirmation (Binance position missing for
+	// ≥ 2 SyncTick cycles AND no algo FINISHED). pnl=0 recorded; mu may
+	// reconcile via Binance trade history. > 0 = mu should investigate
+	// (Binance UI close, external liquidation, or algo state propagation gap).
+	PositionOrphanAutoSyncedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trader_orphan_auto_synced_total",
+			Help: "Round R.8 2-tick orphan auto-syncs (no halt, pnl=0).",
+		},
+		[]string{"symbol"},
+	)
+
 	// SigfailDetectionRunsTotal counts SIGFAIL detector ticks by outcome.
 	// Labels: result — "ok" | "empty" | "err".
 	SigfailDetectionRunsTotal = prometheus.NewCounterVec(
@@ -494,6 +507,7 @@ func init() {
 		RestartRecoveryRunsTotal,
 		AlgoPollingRunsTotal, AlgoTriggeredTotal,
 		TrailingStageUpgradeTotal, TPFilledTotal, TrailActivationMismatchTotal,
+		PositionOrphanAutoSyncedTotal,
 		SigfailDetectionRunsTotal, SigfailDetectionsTotal,
 		UserStreamConnectedTotal, UserStreamReconnectTotal,
 		UserStreamKeepaliveErrors, UserStreamEventsTotal,

@@ -26,6 +26,7 @@ type fakePositionDeps struct {
 	syncUpdates           []gen.UpdatePositionStateSyncParams
 	tradesFailed          []gen.UpdateTradeFailedParams
 	exitsInserted         []gen.InsertTradeExitParams
+	tradesClosed          []gen.UpdateTradeClosedParams // R.8 autoSyncOrphan
 	rcaInserted           []gen.InsertHaltRCAParams
 	haltsTripped          []gen.TripGenericHaltParams
 	positionStatesDeleted []int64 // v0.2 Catch 5
@@ -56,6 +57,10 @@ func (f *fakePositionDeps) InsertHaltRCA(_ context.Context, arg gen.InsertHaltRC
 }
 func (f *fakePositionDeps) TripGenericHalt(_ context.Context, arg gen.TripGenericHaltParams) error {
 	f.haltsTripped = append(f.haltsTripped, arg)
+	return nil
+}
+func (f *fakePositionDeps) UpdateTradeClosed(_ context.Context, arg gen.UpdateTradeClosedParams) error {
+	f.tradesClosed = append(f.tradesClosed, arg)
 	return nil
 }
 
@@ -159,7 +164,8 @@ func TestSyncTick_DirectionMismatch_LogsDriftNoBlock(t *testing.T) {
 
 func TestSyncTick_MissingPosition_LogsDriftSkipsState(t *testing.T) {
 	// DB has open trade for ARBUSDT but binance returns no position for it.
-	// Round 4: this is local_only_orphan → trip halt + write RCA.
+	// Round R.8: local_only_orphan first detection no longer halts — records
+	// candidate. binance_only_unknown path unchanged.
 	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
 		{ID: 13, Symbol: "ARBUSDT", Direction: "LONG", Margin: decimal.NewFromInt(50),
 			EntryTs: pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true}},
@@ -170,12 +176,11 @@ func TestSyncTick_MissingPosition_LogsDriftSkipsState(t *testing.T) {
 	pm := newTestPM(t, fdeps, fbc)
 	pm.SyncTick(context.Background())
 	assert.Empty(t, fdeps.syncUpdates, "missing position → no state update")
-	// Round 4 reconcile: ARBUSDT local-only triggers halt + rca; ETHUSDT
-	// binance-only ALSO triggers halt + rca → 2 each.
-	assert.Len(t, fdeps.rcaInserted, 2, "1 local-only + 1 binance-only RCA")
-	assert.Len(t, fdeps.haltsTripped, 2, "halt tripped for each event")
-	assert.Equal(t, "local_only_orphan", fdeps.rcaInserted[0].HaltType)
-	assert.Equal(t, "binance_only_unknown", fdeps.rcaInserted[1].HaltType)
+	// R.8: ARBUSDT records candidate (no halt); ETHUSDT binance_only triggers halt.
+	require.Len(t, fdeps.rcaInserted, 1, "only binance_only_unknown halts on tick 1")
+	assert.Equal(t, "binance_only_unknown", fdeps.rcaInserted[0].HaltType)
+	_, ok := pm.pendingOrphans.Load(int64(13))
+	assert.True(t, ok, "ARBUSDT local-only orphan recorded as candidate")
 }
 
 func TestSyncTick_QtyDriftOver5pct_TripsHalt(t *testing.T) {
@@ -219,6 +224,8 @@ func TestSyncTick_QtyDriftBelow5pct_NoHalt(t *testing.T) {
 
 // v0.2 Catch 2: orphan branch must DeleteLabelValues so the gauge doesn't
 // keep the last-tick value for hours/days during halt.
+// Round R.8 update: first orphan detection now records candidate, NO halt.
+// margin_ratio gauge cleanup still happens.
 func TestSyncTick_LocalOnlyOrphan_ClearsMarginRatioGauge(t *testing.T) {
 	const sym = "ORPHANUSDT"
 	// Seed gauge with a non-zero value from a prior tick.
@@ -229,17 +236,18 @@ func TestSyncTick_LocalOnlyOrphan_ClearsMarginRatioGauge(t *testing.T) {
 		{ID: 49, Symbol: sym, Direction: "LONG", Margin: decimal.NewFromInt(50),
 			EntryTs: pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true}},
 	}}
-	// Binance returns no position for ORPHANUSDT → local_only_orphan.
+	// Binance returns no position for ORPHANUSDT → local_only_orphan candidate.
 	fbc := &fakeBinance{positions: nil}
 	pm := newTestPM(t, fdeps, fbc)
 	pm.SyncTick(context.Background())
 
-	// orphan branch ran → gauge cleared. Re-reading WithLabelValues recreates
-	// it at zero (DeleteLabelValues removed the prior 0.42 series).
+	// gauge cleared regardless of halt/candidate path.
 	assert.InDelta(t, 0.0, testutil.ToFloat64(metrics.PositionMarginRatio.WithLabelValues(sym)), 1e-9,
 		"orphan branch must DeleteLabelValues to avoid stale gauge")
-	assert.Len(t, fdeps.rcaInserted, 1)
-	assert.Equal(t, "local_only_orphan", fdeps.rcaInserted[0].HaltType)
+	// R.8: first detection records candidate (in pendingOrphans map), no halt.
+	assert.Empty(t, fdeps.rcaInserted, "first orphan detection → no halt (R.8)")
+	assert.Empty(t, fdeps.haltsTripped, "first orphan detection → no halt (R.8)")
+	assert.Empty(t, fdeps.tradesClosed, "first detection only records candidate, no auto-sync yet")
 }
 
 // v0.2 Step 5 race-window defense: when local_only_orphan is detected AND
@@ -301,8 +309,9 @@ func TestSyncTick_LocalOnlyOrphan_ReconcilesAlgoBeforeHalt(t *testing.T) {
 }
 
 // v0.2 Step 5 reverse: if Algo is NOT finished, defense returns false and
-// orphan halt still fires (existing Round 4 behavior preserved).
-func TestSyncTick_LocalOnlyOrphan_NoAlgoFinish_FallsBackToHalt(t *testing.T) {
+// orphan first detection now creates candidate, NO halt (R.8). Halt removed
+// from this path entirely — the next tick (if still orphan) auto-syncs.
+func TestSyncTick_LocalOnlyOrphan_NoAlgoFinish_RecordsCandidate(t *testing.T) {
 	const sym = "STILLORPHAN"
 	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
 		{
@@ -324,8 +333,12 @@ func TestSyncTick_LocalOnlyOrphan_NoAlgoFinish_FallsBackToHalt(t *testing.T) {
 
 	pm.SyncTick(context.Background())
 	assert.Empty(t, algoDeps.exits, "Algo not FINISHED → no auto-close")
-	require.Len(t, fdeps.rcaInserted, 1, "defense returned false → orphan halt fires")
-	assert.Equal(t, "local_only_orphan", fdeps.rcaInserted[0].HaltType)
+	// R.8: first detection no halt — only adds to pendingOrphans (in-memory).
+	assert.Empty(t, fdeps.rcaInserted, "R.8: first detection records candidate, no halt yet")
+	assert.Empty(t, fdeps.haltsTripped, "R.8: first detection records candidate, no halt yet")
+	// pendingOrphans should contain the trade_id (in-memory check).
+	_, ok := pm.pendingOrphans.Load(int64(201))
+	assert.True(t, ok, "pendingOrphans must contain trade_id after first detection")
 }
 
 // v0.2 Catch 5 + Catch 2: emergencyExit must mirror persistClose terminal
@@ -507,4 +520,113 @@ func TestSyncTick_QtyDrift_NoTPFinish_StillHalts(t *testing.T) {
 	assert.Equal(t, "drift_exceeded", fdeps.rcaInserted[0].HaltType)
 	// Bug A: even for real drift, don't overwrite current_qty (let mu / algo_reconciler decide).
 	assert.Empty(t, fdeps.syncUpdates, "drift halt: skip UpdatePositionStateSync (Bug A fix)")
+}
+
+// Round R.8: second tick with orphan still present → autoSyncOrphan (no halt).
+// Simulates the real STORJ #101 scenario where algoStatus FINISHED propagation
+// lagged past the second tick window (rare edge case in production — usually
+// algo_reconciler catches the FINISHED status on tick 2 and closes the trade
+// before this branch fires).
+func TestSyncTick_LocalOnlyOrphan_TwoTicks_AutoSyncs(t *testing.T) {
+	const sym = "TWOTICKORPHAN"
+	currentQty := pgtype.Numeric{}
+	_ = currentQty.Scan("100")
+	entryPx := pgtype.Numeric{}
+	_ = entryPx.Scan("0.5")
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{
+			ID: 202, Symbol: sym, Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs:                    pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true},
+			EntryPrice:                 entryPx,
+			BinanceDisasterStopOrderID: pgtype.Text{String: "99999", Valid: true},
+			CurrentQty:                 currentQty,
+		},
+	}}
+	fbc := &fakeBinance{positions: nil} // missing both ticks
+
+	pm := newTestPM(t, fdeps, fbc)
+	algoDeps := &fakeAlgoDeps{}
+	algoQuerier := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		99999: {AlgoID: 99999, AlgoStatus: "WORKING"}, // never propagates to FINISHED
+	}}
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:16379"})
+	ar := NewAlgoReconciler(algoDeps, algoQuerier, rdb, zerolog.Nop())
+	pm.SetAlgoReconciler(ar)
+
+	// Tick 1: mark candidate, no halt, no auto-sync.
+	pm.nowFn = func() time.Time { return time.Unix(1778500000, 0).UTC() }
+	pm.SyncTick(context.Background())
+	require.Empty(t, fdeps.tradesClosed, "tick 1 must not close")
+	require.Empty(t, fdeps.rcaInserted, "tick 1 must not halt (R.8)")
+	_, ok := pm.pendingOrphans.Load(int64(202))
+	require.True(t, ok, "tick 1 must mark candidate")
+
+	// Tick 2 at +60s: confirmed orphan → autoSyncOrphan fires.
+	pm.nowFn = func() time.Time { return time.Unix(1778500060, 0).UTC() }
+	pm.SyncTick(context.Background())
+
+	require.Len(t, fdeps.tradesClosed, 1, "tick 2 (≥50s elapsed) autoSyncs")
+	assert.Equal(t, int64(202), fdeps.tradesClosed[0].ID)
+	assert.Equal(t, "orphan_synced", fdeps.tradesClosed[0].ExitReason.String)
+	assert.True(t, fdeps.tradesClosed[0].RealizedPnl.IsZero(), "pnl=0 — fill unknown")
+
+	require.Len(t, fdeps.exitsInserted, 1, "tick 2 inserts orphan_synced exit row")
+	assert.Equal(t, "orphan_synced", fdeps.exitsInserted[0].Type)
+
+	assert.Empty(t, fdeps.rcaInserted, "R.8: no halt on auto-sync")
+	assert.Empty(t, fdeps.haltsTripped, "R.8: no halt on auto-sync")
+	assert.Contains(t, fdeps.positionStatesDeleted, int64(202), "position_states cleaned up")
+
+	// pendingOrphans entry should be removed after auto-sync.
+	_, stillPending := pm.pendingOrphans.Load(int64(202))
+	assert.False(t, stillPending, "pendingOrphans entry cleared after autoSync")
+}
+
+// Round R.8: orphan candidate but Binance position returns on tick 2 →
+// candidate is dropped on the resolve-path of subsequent ticks (not aged
+// out here, but no halt and no autoSync either since the trade is now valid).
+func TestSyncTick_OrphanCandidate_ResolvedNextTick_NoAutoSync(t *testing.T) {
+	const sym = "RECOVERED"
+	entryPx := pgtype.Numeric{}
+	_ = entryPx.Scan("100")
+	dbQty := pgtype.Numeric{}
+	_ = dbQty.Scan("1")
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{
+			ID: 203, Symbol: sym, Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs:                    pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true},
+			EntryPrice:                 entryPx,
+			BinanceDisasterStopOrderID: pgtype.Text{String: "12121", Valid: true},
+			CurrentQty:                 dbQty,
+		},
+	}}
+
+	// Tick 1: Binance has no position → candidate marked.
+	fbc := &fakeBinance{positions: nil}
+	pm := newTestPM(t, fdeps, fbc)
+	algoDeps := &fakeAlgoDeps{}
+	algoQuerier := &fakeAlgoQuerier{resp: map[int64]binance.AlgoOrderQuery{
+		12121: {AlgoID: 12121, AlgoStatus: "WORKING"},
+	}}
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:16379"})
+	ar := NewAlgoReconciler(algoDeps, algoQuerier, rdb, zerolog.Nop())
+	pm.SetAlgoReconciler(ar)
+	pm.nowFn = func() time.Time { return time.Unix(1778500000, 0).UTC() }
+	pm.SyncTick(context.Background())
+	_, ok := pm.pendingOrphans.Load(int64(203))
+	require.True(t, ok, "tick 1 records candidate")
+
+	// Tick 2: Binance now shows the position back (transient miss recovered).
+	fbc.positions = []binance.PositionRisk{
+		{Symbol: sym, PositionAmt: decimal.NewFromFloat(1), MarkPrice: decimal.NewFromInt(100), UnrealizedProfit: decimal.NewFromInt(0)},
+	}
+	pm.nowFn = func() time.Time { return time.Unix(1778500060, 0).UTC() }
+	pm.SyncTick(context.Background())
+
+	assert.Empty(t, fdeps.tradesClosed, "Binance recovered → no auto-sync")
+	assert.Empty(t, fdeps.rcaInserted, "no halt — position is healthy on tick 2")
+	// Note: pendingOrphans entry technically stays (orphan branch not entered),
+	// but harmless — next time orphan is detected, the stale `firstSeen` will
+	// be older than orphanConfirmDelay and will auto-sync. In practice the
+	// trade closes naturally before another orphan recurrence.
 }

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,6 +38,11 @@ const (
 	// Round 4 reconcile thresholds + halt window
 	driftHaltThresholdPct = 0.05         // > 5% qty drift trips halt (Round 3 logged at 1%)
 	reconcileHaltDuration = 1 * time.Hour // halt_until = NOW + 1h for reconcile halts
+	// Round R.8: 2-tick orphan confirmation delay. Set just under the 1min cron
+	// interval so the second SyncTick (at ~T+60s) triggers autoSyncOrphan.
+	// algoStatus FINISHED on Binance Algo Service can take 30-60s to propagate
+	// after a trail/disaster algo fires — R.4 F1 misses it on tick 1, R.8 covers.
+	orphanConfirmDelay = 50 * time.Second
 )
 
 // Round 4 halt_type label values written to halt_rca.halt_type.
@@ -58,6 +64,10 @@ type PositionSyncDeps interface {
 	// Round 4: write halt RCA + trip generic halt.
 	InsertHaltRCA(ctx context.Context, arg gen.InsertHaltRCAParams) (gen.InsertHaltRCARow, error)
 	TripGenericHalt(ctx context.Context, arg gen.TripGenericHaltParams) error
+	// Round R.8 (2026-05-16): autoSyncOrphan needs to mark trade closed without
+	// going through the usual algo_reconciler.autoCloseFromFields path (no PnL
+	// data available — orphan_synced exits record pnl=0).
+	UpdateTradeClosed(ctx context.Context, arg gen.UpdateTradeClosedParams) error
 }
 
 // PositionRiskFetcher is the minimal binance surface.
@@ -81,6 +91,15 @@ type PositionManager struct {
 	// Round 4: optional Feishu alerter — nil-safe. Fires 🔴 critical on
 	// tripReconcileHalt (local_only_orphan / binance_only_unknown / drift).
 	notifier *notify.Feishu
+	// Round R.8: 2-tick orphan confirmation. Maps trade_id → first orphan
+	// detection time. R.4 F1's same-tick TryReconcile defense covers the most
+	// common race (algo_polling runs same minute), but Binance Algo Service
+	// can take 30-60s to propagate algoStatus=FINISHED. mu's STORJ #101 hit
+	// this: tick 1 saw missing position + WORKING algo → trip; tick 2 saw
+	// FINISHED → auto-close, but halt already recorded.
+	// Pre-R.8: 1-tick = halt. Post-R.8: tick 1 mark candidate; tick 2 still
+	// missing = autoSyncOrphan (no halt).
+	pendingOrphans sync.Map // map[int64]time.Time (first detection ts)
 }
 
 // SetNotifier wires the Round 4 Feishu alerter. Called from main.go.
@@ -181,30 +200,37 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 					}
 				}
 				if resolved {
+					// Resolved this tick — drop any pending orphan candidate
+					// from R.8 tracker (Binance shows position gone but algo
+					// also FINISHED; no need to escalate to auto-sync).
+					pm.pendingOrphans.Delete(t.ID)
 					continue
 				}
 			}
-			// Round 4 local_only_orphan: DB has open trade, Binance doesn't,
-			// AND Algo (if any) is not FINISHED. Possible causes: Algo
-			// CANCELED/EXPIRED mid-flight, mu manually closed in Binance UI,
-			// or genuine state divergence. Trip halt + write RCA.
-			l.Error().Msg("position.local_only_orphan: open trade missing from Binance")
-			metrics.PositionLocalOnlyOrphanTotal.Inc()
-			metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "missing").Inc()
-			// v0.2 Catch 2: clear stale margin_ratio gauge — orphan branch
-			// `continue`s before the healthy Set() at line ~219, so without
-			// this delete the gauge keeps its last value for hours/days while
-			// trader-app stays up. Verified by trade 49 BUSDT in Round 8.
+			// Round R.8 (2026-05-16, mu STORJ #101 catch): 2-tick orphan
+			// confirmation. Pre-R.8 the immediate `else` of R.4 F1 was halt,
+			// which fired false-positives when Binance's algoStatus FINISHED
+			// hadn't propagated yet (race ~30-60s between algo trigger and
+			// the status field update). Now: first detection logs a candidate,
+			// second detection ≥50s later does autoSyncOrphan without halt.
 			metrics.PositionMarginRatio.DeleteLabelValues(t.Symbol)
-			pm.tripReconcileHalt(ctx, haltTypeLocalOrphan, map[string]any{
-				"trade_id":    t.ID,
-				"symbol":      t.Symbol,
-				"signal_id":   t.SignalID.Int64,
-				"db_status":   "open",
-				"binance":     "missing",
-				"detected_at": now.Format(time.RFC3339),
-			}, l)
-			drift++
+			if firstSeenVal, ok := pm.pendingOrphans.Load(t.ID); ok {
+				firstSeen := firstSeenVal.(time.Time)
+				if now.Sub(firstSeen) >= orphanConfirmDelay {
+					// Tick 2 (confirmed orphan): auto-sync DB without halt.
+					pm.autoSyncOrphan(ctx, t, l)
+					pm.pendingOrphans.Delete(t.ID)
+					continue
+				}
+				// Same tick or sub-50s — keep waiting (defensive; shouldn't
+				// normally happen since cron is 1min, but harmless).
+			}
+			// Tick 1 (first detection): mark candidate, no halt.
+			pm.pendingOrphans.Store(t.ID, now)
+			l.Warn().
+				Int64("signal_id", t.SignalID.Int64).
+				Msg("position.orphan_candidate: pending recheck next tick (no halt — R.8)")
+			metrics.PositionSyncDriftTotal.WithLabelValues(t.Symbol, "orphan_candidate").Inc()
 			continue
 		}
 
@@ -366,6 +392,62 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 }
 
 // tripReconcileHalt trips the circuit breaker for a reconcile event (orphan /
+// autoSyncOrphan (Round R.8) closes a trade locally when Binance has shown
+// no position for ≥ 2 ticks AND no algo FINISHED was caught by R.4 F1. This
+// is the rare-but-real case where algoStatus propagation lagged beyond the
+// confirmation window, or mu closed via Binance UI directly, or external
+// liquidation occurred outside our algos.
+//
+// PnL is recorded as 0 (we don't know the fill price authoritatively); mu
+// can manually reconcile via Binance trade history if needed. The audit row
+// is preserved with type='orphan_synced' so the discrepancy is visible.
+// NO halt fires — this is the whole point of R.8.
+func (pm *PositionManager) autoSyncOrphan(ctx context.Context, t gen.ListOpenTradesForSyncRow, log zerolog.Logger) {
+	now := pm.nowFn()
+	entryPrice := decimalFromPgNumeric(t.EntryPrice)
+	qty := decimalFromPgNumeric(t.CurrentQty)
+	if qty.IsZero() {
+		// position_states.current_qty NULL/0 → fall back to no-qty exit row;
+		// status update still useful for cleanup.
+		log.Warn().Msg("orphan_sync: current_qty zero, recording 0-qty exit row")
+	}
+	// trade_exits row — pnl=0, price=0 (unknown). Audit trail preserved.
+	if err := pm.db.InsertTradeExit(ctx, gen.InsertTradeExitParams{
+		TradeID: pgtype.Int8{Int64: t.ID, Valid: true},
+		Ts:      now,
+		Type:    ExitReasonOrphanSynced,
+		Qty:     qty,
+		Price:   decimal.Zero,
+		Pnl:     decimal.Zero,
+	}); err != nil {
+		log.Error().Err(err).Msg("orphan_sync: InsertTradeExit failed — trade stays open, will retry next tick")
+		return
+	}
+	if err := pm.db.UpdateTradeClosed(ctx, gen.UpdateTradeClosedParams{
+		ID:          t.ID,
+		ExitTs:      pgtype.Timestamptz{Time: now, Valid: true},
+		ExitPrice:   decimal.Zero,
+		ExitReason:  pgtype.Text{String: ExitReasonOrphanSynced, Valid: true},
+		RealizedPnl: decimal.Zero,
+		Fees:        decimal.Zero,
+	}); err != nil {
+		log.Error().Err(err).Msg("orphan_sync: UpdateTradeClosed failed (CRITICAL — exit row written but status still open)")
+		return
+	}
+	if err := pm.db.DeletePositionState(ctx, t.ID); err != nil {
+		log.Warn().Err(err).Msg("orphan_sync: DeletePositionState failed (non-fatal)")
+	}
+	if err := pm.rdb.ZRem(ctx, redisKeyPositionsActive, strconv.FormatInt(t.ID, 10)).Err(); err != nil {
+		log.Warn().Err(err).Msg("orphan_sync: ZREM positions_active failed (non-fatal)")
+	}
+	metrics.PositionOrphanAutoSyncedTotal.WithLabelValues(t.Symbol).Inc()
+	log.Warn().
+		Str("entry_price", entryPrice.String()).
+		Str("qty", qty.String()).
+		Str("exit_reason", ExitReasonOrphanSynced).
+		Msg("orphan_sync.complete: trade marked closed (pnl=0, mu can reconcile via Binance trade history)")
+}
+
 // unknown / drift > 5%) AND writes a halt_rca row with full context.
 // All failures are logged but non-fatal: sync tick continues so other halts
 // + position updates aren't lost. halt_until = NOW + 1h (auto-reset by
