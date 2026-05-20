@@ -123,6 +123,41 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
             </div>
           )}
 
+          {/* R.11.B3: 大户多空比 trends (双线 acct + pos) */}
+          {data.ratios_series.some(p => p.acct_ratio > 0 || p.pos_ratio > 0) && (
+            <div>
+              <div className="text-xs text-gray-500 mb-1">大户多空比 (24h, &lt;1 空头主导 / &gt;1 多头主导)</div>
+              <ResponsiveContainer width="100%" height={100}>
+                <LineChart data={data.ratios_series}>
+                  <XAxis dataKey="ts_ms" hide />
+                  <YAxis hide domain={['auto','auto']} />
+                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
+                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
+                    formatter={(v: number, name: string) => [v > 0 ? v.toFixed(3) : '—', name === 'acct_ratio' ? '账户多空' : '持仓多空']} />
+                  <Line type="monotone" dataKey="acct_ratio" stroke="#4096ff" dot={false} strokeWidth={1.5} connectNulls />
+                  <Line type="monotone" dataKey="pos_ratio"  stroke="#fa8c16" dot={false} strokeWidth={1.5} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* R.11.B3: 持仓市值占比 trends (≥50% 黄线警示阈值 by contract-monitor.js) */}
+          {data.ratios_series.some(p => p.mcap_pct > 0) && (
+            <div>
+              <div className="text-xs text-gray-500 mb-1">持仓市值占比 (24h, ≥50% 高风险)</div>
+              <ResponsiveContainer width="100%" height={80}>
+                <LineChart data={data.ratios_series}>
+                  <XAxis dataKey="ts_ms" hide />
+                  <YAxis hide domain={[0, 'auto']} />
+                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
+                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
+                    formatter={(v: number) => [v > 0 ? v.toFixed(2) + '%' : '—', '市值占比']} />
+                  <Line type="monotone" dataKey="mcap_pct" stroke="#f5a623" dot={false} strokeWidth={1.5} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {data.square_posts.length > 0 && (
             <div>
               <div className="text-xs text-gray-500 mb-1">Square 帖子 (24h, {data.square_posts.length})</div>

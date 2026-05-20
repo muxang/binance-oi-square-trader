@@ -428,6 +428,8 @@ export const fetchSquareTrending = (limit = 50): Promise<SquareTrendingData> =>
 export interface OiPoint             { ts_ms: number; oi_usd_m: number }
 export interface PricePoint          { ts_ms: number; close: number }
 export interface SquareMentionPoint  { ts_ms: number; mentions: number }
+// R.11.B3: large_holder_ratios time series.
+export interface RatioPoint          { ts_ms: number; acct_ratio: number; pos_ratio: number; mcap_pct: number }
 
 export interface SymbolSquarePost {
   ts_ms: number; title: string; content: string; views: number; likes: number
@@ -448,6 +450,7 @@ export interface SymbolDetailData {
   square_series: SquareMentionPoint[]
   square_posts:  SymbolSquarePost[]
   trades:        SymbolTrade[]
+  ratios_series: RatioPoint[]   // R.11.B3
 }
 
 export const fetchSymbolDetail = (symbol: string, hours = 6, ds: DataSource = 'mainnet'): Promise<SymbolDetailData> =>

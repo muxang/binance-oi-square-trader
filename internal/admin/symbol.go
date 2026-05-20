@@ -51,6 +51,17 @@ type SymbolDetailResponse struct {
 	SquareSeries  []SquareMentionPoint  `json:"square_series"`
 	SquarePosts   []SymbolSquarePost    `json:"square_posts"`
 	Trades        []SymbolTrade         `json:"trades"`
+	// R.11.B3 — large_holder_ratios trends within the same hours window.
+	RatiosSeries  []RatioPoint          `json:"ratios_series"`
+}
+
+// RatioPoint: one large_holder_ratios row in time-series shape. Any field can
+// be 0 — frontend chart skips 0 points (collector miss / market_cap NULL).
+type RatioPoint struct {
+	TsMs        int64   `json:"ts_ms"`
+	AcctRatio   float64 `json:"acct_ratio"`
+	PosRatio    float64 `json:"pos_ratio"`
+	McapPct     float64 `json:"mcap_pct"`
 }
 
 func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
@@ -231,9 +242,36 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// R.11.B3: large_holder_ratios trends within same hours window. Non-fatal —
+	// pre-R.11 symbols / empty table just yields empty series.
+	ratiosSeries := make([]RatioPoint, 0)
+	if rhRows, err := s.db.Query(ctx, `
+		SELECT ts,
+		       COALESCE(account_long_short_ratio::float8, 0),
+		       COALESCE(position_long_short_ratio::float8, 0),
+		       COALESCE(market_cap_ratio_pct::float8, 0)
+		FROM large_holder_ratios
+		WHERE symbol = $1 AND ts >= NOW() - ($2 || ' hours')::INTERVAL
+		ORDER BY ts ASC
+	`, symbol, strconv.Itoa(hours)); err == nil {
+		defer rhRows.Close()
+		for rhRows.Next() {
+			var ts pgtype.Timestamptz
+			var acct, pos, mcap float64
+			if err := rhRows.Scan(&ts, &acct, &pos, &mcap); err != nil { continue }
+			if ts.Valid {
+				ratiosSeries = append(ratiosSeries, RatioPoint{
+					TsMs: ts.Time.UnixMilli(),
+					AcctRatio: acct, PosRatio: pos, McapPct: mcap,
+				})
+			}
+		}
+	}
+
 	s.writeJSON(w, http.StatusOK, SymbolDetailResponse{
 		Symbol: symbol, CurrentPrice: currentPrice, Price24hPct: price24hPct,
 		OiSeries: oiSeries, PriceSeries: priceSeries,
 		SquareSeries: squareSeries, SquarePosts: squarePosts, Trades: trades,
+		RatiosSeries: ratiosSeries,
 	})
 }
