@@ -207,6 +207,13 @@ func run() error {
 	if err := runner.Register(cgMapCol, "0 0,12 * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register coingecko_symbol_map collector")
 	}
+	// Round R.11.A2c-2: 6h cron back-fills large_holder_ratios.market_cap_ratio_pct
+	// using CoinGecko /coins/markets supply + cached oi_history.oi_value_usd.
+	// ref: references/user-snippets/contract-monitor.js (calculateMarketCapRatio)
+	suppCol := collector.NewCirculatingSupplyCollector(cgCli, pgPool, log)
+	if err := runner.Register(suppCol, "0 */6 * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register circulating_supply collector")
+	}
 	btcCol := collector.NewBTCRegimeCollector(client, rdb, log, collector.BTCRegimeConfig{})
 	if err := runner.Register(btcCol, "* * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register btc_regime collector")
