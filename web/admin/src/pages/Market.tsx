@@ -227,6 +227,7 @@ export default function Market() {
                 <thead className="border-b border-[#2d2d2d]">
                   <tr>
                     <SortTH current={sortBy} order={order} onSort={handleSort}>Symbol</SortTH>
+                    <SortTH right current={sortBy} order={order} onSort={handleSort}>流动市值</SortTH>
                     <SortTH right sortKey="oi_usd"        current={sortBy} order={order} onSort={handleSort}>OI (USD)</SortTH>
                     <SortTH right sortKey="oi_1h_pct"     current={sortBy} order={order} onSort={handleSort}>OI 1h%</SortTH>
                     <SortTH right sortKey="oi_24h_pct"    current={sortBy} order={order} onSort={handleSort}>OI 24h%</SortTH>
@@ -249,6 +250,10 @@ export default function Market() {
                         onClick={() => setSelected(selected === item.symbol ? null : item.symbol)}
                         className={`border-b border-[#252525] cursor-pointer transition-colors ${selected === item.symbol ? 'bg-[#1e2a3a]' : 'hover:bg-[#252525]'}`}>
                         <td className="py-2 px-2 font-mono text-sm text-white font-semibold">{item.symbol}</td>
+                        {/* R.11.B1+: 流动市值 = circulating_supply × current_price */}
+                        <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">
+                          {item.cmcap_usd_m > 0 ? fmtOi(item.cmcap_usd_m) : '—'}
+                        </td>
                         <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">{fmtOi(item.oi_usd_m)}</td>
                         <td className="py-2 px-2 text-xs text-right tabular-nums font-semibold"
                           style={{ color: item.oi_1h_pct > 0 ? colors.up : item.oi_1h_pct < 0 ? colors.down : '#8c8c8c' }}>

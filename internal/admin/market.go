@@ -13,6 +13,9 @@ import (
 
 type MarketItem struct {
 	Symbol          string  `json:"symbol"`
+	// R.11.B1+ contract-monitor.js 维度. 流动市值 = circulating_supply × current_price
+	// (USD millions). 0 = no CoinGecko supply data or no klines price.
+	CMcapUsdM       float64 `json:"cmcap_usd_m"`
 	OiUsdM          float64 `json:"oi_usd_m"`        // OI in USD millions
 	Oi1hPct         float64 `json:"oi_1h_pct"`
 	Oi24hPct        float64 `json:"oi_24h_pct"`
@@ -35,9 +38,9 @@ type MarketResponse struct {
 }
 
 const (
-	// Cache key bumped to v2 in R.11.B1 (added acct_ls/pos_ls/mcap columns).
-	// Old :v1 cached blobs lack the new fields and would deserialize to 0.
-	marketCacheKey = "admin:market:full:v2"
+	// Cache key bumped to v3 in R.11.B1+ (added cmcap_usd_m column).
+	// Old :v2 cached blobs lack the new fields and would deserialize to 0.
+	marketCacheKey = "admin:market:full:v3"
 	marketCacheTTL = 2 * time.Minute
 )
 
@@ -175,6 +178,9 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 		)
 		SELECT
 			lo.symbol,
+			-- R.11.B1+: 流动市值 USD millions = circulating_supply × current_price.
+			-- Returns 0 if either piece is missing (mu sees "—" in UI).
+			COALESCE((lh.circulating_supply * lp.price / 1e6)::float8, 0),
 			(lo.oi_value_usd / 1e6)::float8,
 			CASE WHEN h1.v>0 THEN ((lo.oi_value_usd-h1.v)/h1.v*100)::float8 ELSE 0 END,
 			CASE WHEN h24.v>0 THEN ((lo.oi_value_usd-h24.v)/h24.v*100)::float8 ELSE 0 END,
@@ -210,27 +216,28 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 	items := make([]MarketItem, 0, 600)
 	for rows.Next() {
 		var (
-			sym      string
-			oiUsdM   float64
-			oi1h     float64
-			oi24h    float64
-			price    float64
-			p24pct   float64
-			sqCnt    int64
-			sqGrowth float64
-			acctLS   float64
-			posLS    float64
-			mcapPct  float64
-			inWl     bool
-			inPos    bool
+			sym       string
+			cmcapUsdM float64
+			oiUsdM    float64
+			oi1h      float64
+			oi24h     float64
+			price     float64
+			p24pct    float64
+			sqCnt     int64
+			sqGrowth  float64
+			acctLS    float64
+			posLS     float64
+			mcapPct   float64
+			inWl      bool
+			inPos     bool
 		)
-		if err := rows.Scan(&sym, &oiUsdM, &oi1h, &oi24h, &price, &p24pct, &sqCnt, &sqGrowth,
+		if err := rows.Scan(&sym, &cmcapUsdM, &oiUsdM, &oi1h, &oi24h, &price, &p24pct, &sqCnt, &sqGrowth,
 			&acctLS, &posLS, &mcapPct, &inWl, &inPos); err != nil {
 			s.log.Error().Err(err).Str("sym", sym).Msg("scan market row")
 			continue
 		}
 		items = append(items, MarketItem{
-			Symbol: sym, OiUsdM: oiUsdM,
+			Symbol: sym, CMcapUsdM: cmcapUsdM, OiUsdM: oiUsdM,
 			Oi1hPct: oi1h, Oi24hPct: oi24h,
 			CurrentPrice: price, Price24hPct: p24pct,
 			SquareMentions: sqCnt, Square24hPct: sqGrowth,

@@ -360,6 +360,7 @@ export type DataSource = 'mainnet' | 'testnet' | 'all'
 
 export interface MarketItem {
   symbol: string
+  cmcap_usd_m: number      // 流动市值 USD millions = circulating_supply × current_price; 0 = no data
   oi_usd_m: number
   oi_1h_pct: number
   oi_24h_pct: number
