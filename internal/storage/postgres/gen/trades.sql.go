@@ -258,6 +258,46 @@ func (q *Queries) UpdateTradeDisasterStop(ctx context.Context, arg UpdateTradeDi
 	return err
 }
 
+// Round R.9 data integrity: persist actual stop_loss + ATR at entry for
+// backtest accuracy. atr=0 means fallback DisasterStopPct path. Non-fatal.
+const updateTradeInitialDisasterLevels = `-- name: UpdateTradeInitialDisasterLevels :exec
+UPDATE trades
+SET initial_stop_loss = $2,
+    initial_atr = $3
+WHERE id = $1
+`
+
+type UpdateTradeInitialDisasterLevelsParams struct {
+	ID              int64
+	InitialStopLoss decimal.NullDecimal
+	InitialAtr      decimal.NullDecimal
+}
+
+func (q *Queries) UpdateTradeInitialDisasterLevels(ctx context.Context, arg UpdateTradeInitialDisasterLevelsParams) error {
+	_, err := q.db.Exec(ctx, updateTradeInitialDisasterLevels, arg.ID, arg.InitialStopLoss, arg.InitialAtr)
+	return err
+}
+
+// Round R.9 data integrity: persist TP1/TP2 prices at entry. Either side may
+// be NULL if its placement failed. Non-fatal.
+const updateTradeInitialTPLevels = `-- name: UpdateTradeInitialTPLevels :exec
+UPDATE trades
+SET initial_take_profit_1 = $2,
+    initial_take_profit_2 = $3
+WHERE id = $1
+`
+
+type UpdateTradeInitialTPLevelsParams struct {
+	ID                 int64
+	InitialTakeProfit1 decimal.NullDecimal
+	InitialTakeProfit2 decimal.NullDecimal
+}
+
+func (q *Queries) UpdateTradeInitialTPLevels(ctx context.Context, arg UpdateTradeInitialTPLevelsParams) error {
+	_, err := q.db.Exec(ctx, updateTradeInitialTPLevels, arg.ID, arg.InitialTakeProfit1, arg.InitialTakeProfit2)
+	return err
+}
+
 const insertPositionState = `-- name: InsertPositionState :exec
 INSERT INTO position_states (
     trade_id, current_qty, highest_price, last_check_ts

@@ -117,7 +117,9 @@ type atrPayload struct {
 // computeStopPct reads ATR from Redis and computes the stop fraction for a new entry.
 // Formula: clip(ATR / entryPrice × ATRStopMult, MinStopPct, MaxStopPct).
 // Falls back to DisasterStopPct when Redis is unavailable or ATR is missing.
-func (e *Executor) computeStopPct(ctx context.Context, symbol string, entryPrice decimal.Decimal, log zerolog.Logger) decimal.Decimal {
+// Round R.9: also returns the raw ATR value so placeDisasterStop can persist
+// it on trades.initial_atr for backtest accuracy. atr=Zero ⇒ fallback path.
+func (e *Executor) computeStopPct(ctx context.Context, symbol string, entryPrice decimal.Decimal, log zerolog.Logger) (decimal.Decimal, decimal.Decimal) {
 	raw, err := e.rdb.Get(ctx, "atr:"+symbol).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
@@ -126,17 +128,17 @@ func (e *Executor) computeStopPct(ctx context.Context, symbol string, entryPrice
 			log.Warn().Str("symbol", symbol).Msg("executor: ATR not in Redis (klines may be stale), using fallback stop")
 		}
 		log.Info().Str("stop_pct", e.cfg.DisasterStopPct.String()).Msg("executor: stop_pct=fallback (atr_missing)")
-		return e.cfg.DisasterStopPct
+		return e.cfg.DisasterStopPct, decimal.Zero
 	}
 	var p atrPayload
 	if err := json.Unmarshal([]byte(raw), &p); err != nil || p.Value == "" {
 		log.Warn().Str("raw", raw).Msg("executor: ATR payload parse failed, using fallback stop")
-		return e.cfg.DisasterStopPct
+		return e.cfg.DisasterStopPct, decimal.Zero
 	}
 	atr, err := decimal.NewFromString(p.Value)
 	if err != nil || atr.IsZero() || atr.IsNegative() {
 		log.Warn().Str("atr_value", p.Value).Msg("executor: ATR value invalid, using fallback stop")
-		return e.cfg.DisasterStopPct
+		return e.cfg.DisasterStopPct, decimal.Zero
 	}
 
 	stopPct := atr.Div(entryPrice).Mul(e.cfg.ATRStopMult)
@@ -151,7 +153,7 @@ func (e *Executor) computeStopPct(ctx context.Context, symbol string, entryPrice
 		Str("atr_mult", e.cfg.ATRStopMult.String()).
 		Str("stop_pct", stopPct.String()).
 		Msg("executor: stop_pct=ATR-based")
-	return stopPct
+	return stopPct, atr
 }
 
 // PlaceEntry runs Steps 1-9 for a trade that passed the decision engine.
@@ -336,7 +338,7 @@ func (e *Executor) placeDisasterStop(
 	fillQty, fillPrice, tickSize decimal.Decimal,
 	log zerolog.Logger,
 ) {
-	stopPct := e.computeStopPct(ctx, symbol, fillPrice, log)
+	stopPct, atrValue := e.computeStopPct(ctx, symbol, fillPrice, log)
 	stopPrice := fillPrice.Mul(decimal.NewFromInt(1).Sub(stopPct))
 	// Round to symbol tickSize multiple — Binance rejects with -1111 otherwise.
 	// Truncate (floor for positive) = round down = looser stop, conservative re slippage.
@@ -389,6 +391,20 @@ func (e *Executor) placeDisasterStop(
 	}); err != nil {
 		log.Error().Err(err).Str("algo_id", algoIDStr).
 			Msg("order.disaster_stop.placed: update trade failed (non-fatal, disaster stop IS active)")
+	}
+
+	// Round R.9: persist initial_stop_loss + initial_atr for backtest accuracy.
+	// Non-fatal — disaster stop is already armed on Binance regardless.
+	atrParam := decimal.NullDecimal{}
+	if !atrValue.IsZero() {
+		atrParam = decimal.NullDecimal{Decimal: atrValue, Valid: true}
+	}
+	if err := e.db.UpdateTradeInitialDisasterLevels(ctx, gen.UpdateTradeInitialDisasterLevelsParams{
+		ID:              tradeID,
+		InitialStopLoss: decimal.NullDecimal{Decimal: stopPrice, Valid: true},
+		InitialAtr:      atrParam,
+	}); err != nil {
+		log.Warn().Err(err).Msg("order.disaster_stop.placed: initial levels DB write failed (non-fatal, backtest data only)")
 	}
 
 	// Step 8: INSERT position_states.
@@ -516,8 +532,8 @@ func (e *Executor) placeTakeProfits(
 		log.Warn().Msg("order.tp.skip: TP1/TP2 PCT zero (config issue)")
 		return
 	}
-	tp1AlgoID := e.placeOneTP(ctx, "tp1", symbol, fillQty, fillPrice, tickSize, stepSize, e.cfg.TP1Pct, e.cfg.TP1Ratio, log)
-	tp2AlgoID := e.placeOneTP(ctx, "tp2", symbol, fillQty, fillPrice, tickSize, stepSize, e.cfg.TP2Pct, e.cfg.TP2Ratio, log)
+	tp1AlgoID, tp1Price := e.placeOneTP(ctx, "tp1", symbol, fillQty, fillPrice, tickSize, stepSize, e.cfg.TP1Pct, e.cfg.TP1Ratio, log)
+	tp2AlgoID, tp2Price := e.placeOneTP(ctx, "tp2", symbol, fillQty, fillPrice, tickSize, stepSize, e.cfg.TP2Pct, e.cfg.TP2Ratio, log)
 	if tp1AlgoID == "" && tp2AlgoID == "" {
 		return
 	}
@@ -537,6 +553,24 @@ func (e *Executor) placeTakeProfits(
 		log.Error().Err(err).Str("tp1_algo_id", tp1AlgoID).Str("tp2_algo_id", tp2AlgoID).
 			Msg("order.tp.placed: DB update failed (algos armed on Binance but trade columns NULL — algo_polling won't see them)")
 	}
+
+	// Round R.9: persist actual TP1/TP2 prices for backtest accuracy. Either
+	// side stays NULL if its placement failed. Non-fatal.
+	tp1Param := decimal.NullDecimal{}
+	tp2Param := decimal.NullDecimal{}
+	if tp1AlgoID != "" {
+		tp1Param = decimal.NullDecimal{Decimal: tp1Price, Valid: true}
+	}
+	if tp2AlgoID != "" {
+		tp2Param = decimal.NullDecimal{Decimal: tp2Price, Valid: true}
+	}
+	if err := e.db.UpdateTradeInitialTPLevels(ctx, gen.UpdateTradeInitialTPLevelsParams{
+		ID:                 tradeID,
+		InitialTakeProfit1: tp1Param,
+		InitialTakeProfit2: tp2Param,
+	}); err != nil {
+		log.Warn().Err(err).Msg("order.tp.placed: initial TP levels DB write failed (non-fatal, backtest data only)")
+	}
 }
 
 // placeOneTP rounds and places one TAKE_PROFIT_MARKET. Returns "" on failure (non-fatal).
@@ -546,14 +580,17 @@ func (e *Executor) placeTakeProfits(
 // way too fine — alts like ARPA (stepSize=1) would receive fractional qty (e.g.
 // 10738 × 0.2 = 2147.6) and Binance rejected with -1111 LOT_SIZE precision.
 // Result: TP1/TP2 silently failed for any symbol with stepSize ≥ 1.
+// Round R.9: returns (algoID, stopPrice). stopPrice is the tickSize-rounded
+// value sent to Binance, persisted by caller to trades.initial_take_profit_*.
+// Returns ("", Zero) on any non-fatal failure / skip.
 func (e *Executor) placeOneTP(
 	ctx context.Context,
 	kind, symbol string,
 	fillQty, fillPrice, tickSize, stepSize, pct, ratio decimal.Decimal,
 	log zerolog.Logger,
-) string {
+) (string, decimal.Decimal) {
 	if pct.IsZero() || ratio.IsZero() {
-		return ""
+		return "", decimal.Zero
 	}
 	stopPrice := fillPrice.Mul(decimal.NewFromInt(1).Add(pct))
 	if !tickSize.IsZero() {
@@ -573,7 +610,7 @@ func (e *Executor) placeOneTP(
 			Str("raw_qty", rawQty.String()).
 			Str("step_size", stepSize.String()).
 			Msg("order.tp: partial qty rounds to zero, skipping (sub-stepSize position)")
-		return ""
+		return "", decimal.Zero
 	}
 	start := e.nowFn()
 	res, err := e.bc.PlaceAlgoTakeProfit(ctx, symbol, tpQty.String(), stopPrice.String())
@@ -584,7 +621,7 @@ func (e *Executor) placeOneTP(
 			Str("stop_price", stopPrice.String()).
 			Str("qty", tpQty.String()).
 			Msg("order.tp.failed: non-fatal (trail + disaster cover)")
-		return ""
+		return "", decimal.Zero
 	}
 	algoIDStr := strconv.FormatInt(res.AlgoID, 10)
 	log.Info().
@@ -593,7 +630,7 @@ func (e *Executor) placeOneTP(
 		Str("stop_price", stopPrice.String()).
 		Str("qty", tpQty.String()).
 		Msg("order.tp.placed")
-	return algoIDStr
+	return algoIDStr, stopPrice
 }
 
 // emergencyClose places an immediate MARKET SELL to close the position when the

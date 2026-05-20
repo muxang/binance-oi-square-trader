@@ -75,6 +75,25 @@ UPDATE trades
 SET binance_disaster_stop_order_id = $2
 WHERE id = $1;
 
+-- name: UpdateTradeInitialDisasterLevels :exec
+-- Round R.9 data integrity: persist the actual stop_loss price + ATR used at
+-- entry so post-hoc backtests can simulate alternate stop widths. Called
+-- non-fatally after placeDisasterStop succeeds. atr=0 means ATR was unavailable
+-- and fallback DisasterStopPct was used.
+UPDATE trades
+SET initial_stop_loss = $2,
+    initial_atr = $3
+WHERE id = $1;
+
+-- name: UpdateTradeInitialTPLevels :exec
+-- Round R.9 data integrity: persist TP1/TP2 prices used at entry for backtest
+-- accuracy. Either side may be NULL if its TP placement failed. Called after
+-- placeTakeProfits regardless of which TP succeeded.
+UPDATE trades
+SET initial_take_profit_1 = $2,
+    initial_take_profit_2 = $3
+WHERE id = $1;
+
 -- name: InsertPositionState :exec
 -- Phase 4: initial position state after entry fill + disaster stop placed.
 -- entry_oi left NULL for v0.1 (no real-time OI at entry).

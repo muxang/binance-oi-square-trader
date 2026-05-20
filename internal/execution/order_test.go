@@ -45,7 +45,7 @@ func TestComputeStopPct_BTCClass_ClipsToMin(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	setATR(t, mr, "BTCUSDT", "800") // ATR=800, price=80000 → 1% → ×2=2% < MIN
-	pct := e.computeStopPct(context.Background(), "BTCUSDT", decimal.NewFromFloat(80000), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "BTCUSDT", decimal.NewFromFloat(80000), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "BTC: expect MIN=6%%, got %s", pct)
 }
 
@@ -55,7 +55,7 @@ func TestComputeStopPct_MidCoin_ClipsToMin(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	setATR(t, mr, "SOLUSDT", "3.75") // ATR=3.75, price=150 → 2.5% → ×2=5% < MIN
-	pct := e.computeStopPct(context.Background(), "SOLUSDT", decimal.NewFromFloat(150), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "SOLUSDT", decimal.NewFromFloat(150), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "mid-coin: expect MIN=6%%, got %s", pct)
 }
 
@@ -65,7 +65,7 @@ func TestComputeStopPct_AltCoin_ATRBased(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	setATR(t, mr, "RIFUSDT", "0.007") // ATR=0.007, price=0.2 → 3.5% → ×2=7%
-	pct := e.computeStopPct(context.Background(), "RIFUSDT", decimal.NewFromFloat(0.2), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "RIFUSDT", decimal.NewFromFloat(0.2), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.07)), "alt-coin: expect 7%%, got %s", pct)
 }
 
@@ -75,7 +75,7 @@ func TestComputeStopPct_MidAlt_ATRBased(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	setATR(t, mr, "MIDALT", "0.05") // ATR=0.05, price=1.0 → 5% → ×2=10%
-	pct := e.computeStopPct(context.Background(), "MIDALT", decimal.NewFromFloat(1.0), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "MIDALT", decimal.NewFromFloat(1.0), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.10)), "mid-alt: expect 10%%, got %s", pct)
 }
 
@@ -85,7 +85,7 @@ func TestComputeStopPct_ExtremeAlt_ClipsToMax(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	setATR(t, mr, "MEMECOIN", "0.05") // ATR=0.05, price=0.5 → 10% → ×2=20% > MAX 12%
-	pct := e.computeStopPct(context.Background(), "MEMECOIN", decimal.NewFromFloat(0.5), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "MEMECOIN", decimal.NewFromFloat(0.5), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.12)), "extreme: expect MAX=12%%, got %s", pct)
 }
 
@@ -95,7 +95,7 @@ func TestComputeStopPct_ATRMiss_Fallback(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	// no setATR call → key absent
-	pct := e.computeStopPct(context.Background(), "NEWCOIN", decimal.NewFromFloat(1.0), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "NEWCOIN", decimal.NewFromFloat(1.0), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "ATR miss: expect fallback 6%%, got %s", pct)
 }
 
@@ -105,7 +105,7 @@ func TestComputeStopPct_ATRZero_Fallback(t *testing.T) {
 	defer mr.Close()
 	e := newTestExecutor(t, mr)
 	setATR(t, mr, "ODDCOIN", "0")
-	pct := e.computeStopPct(context.Background(), "ODDCOIN", decimal.NewFromFloat(1.0), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "ODDCOIN", decimal.NewFromFloat(1.0), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "ATR=0: expect fallback 6%%, got %s", pct)
 }
 
@@ -116,7 +116,7 @@ func TestComputeStopPct_ExactlyMin_NoClip(t *testing.T) {
 	e := newTestExecutor(t, mr)
 	// ATR=3, price=100 → 3% → ×2=6% == MIN (no clip)
 	setATR(t, mr, "EXACTMIN", "3")
-	pct := e.computeStopPct(context.Background(), "EXACTMIN", decimal.NewFromFloat(100), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "EXACTMIN", decimal.NewFromFloat(100), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.06)), "exactly MIN: got %s", pct)
 }
 
@@ -127,7 +127,7 @@ func TestComputeStopPct_ExactlyMax_NoExtraClip(t *testing.T) {
 	e := newTestExecutor(t, mr)
 	// ATR=6, price=100 → 6% → ×2=12% == MAX (no extra clip)
 	setATR(t, mr, "EXACTMAX", "6")
-	pct := e.computeStopPct(context.Background(), "EXACTMAX", decimal.NewFromFloat(100), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "EXACTMAX", decimal.NewFromFloat(100), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.12)), "exactly MAX: got %s", pct)
 }
 
@@ -145,7 +145,7 @@ func TestComputeStopPct_RuntimeOverride_ClipsToRuntimeMax(t *testing.T) {
 	cfgpkg.Set(&cfgpkg.Runtime{MaxStopPct: decimal.NewFromFloat(0.08)})
 	defer cfgpkg.Set(nil)
 
-	pct := e.computeStopPct(context.Background(), "RUNTIMEMAX", decimal.NewFromFloat(100), zerolog.Nop())
+	pct, _ := e.computeStopPct(context.Background(), "RUNTIMEMAX", decimal.NewFromFloat(100), zerolog.Nop())
 	assert.True(t, pct.Equal(decimal.NewFromFloat(0.08)),
 		"runtime MAX_STOP_PCT=0.08 should override cfg 0.12; got %s", pct)
 }
@@ -178,4 +178,25 @@ func TestExecutor_TrailStage1Activate_RuntimeOverride(t *testing.T) {
 
 	cfgpkg.Set(&cfgpkg.Runtime{}) // zero runtime
 	assert.True(t, e.trailStage1ActivatePct().Equal(decimal.NewFromFloat(0.03)), "zero runtime → cfg fallback")
+}
+
+// Round R.9: computeStopPct returns ATR value so placeDisasterStop can persist
+// trades.initial_atr for backtest accuracy. ATR-present path returns raw ATR;
+// fallback path (Redis miss / parse fail / ATR≤0) returns decimal.Zero.
+func TestComputeStopPct_ReturnsATR_R9(t *testing.T) {
+	mr, _ := miniredis.Run()
+	defer mr.Close()
+	e := newTestExecutor(t, mr)
+	setATR(t, mr, "FOO", "0.05")
+	_, atr := e.computeStopPct(context.Background(), "FOO", decimal.NewFromFloat(1.0), zerolog.Nop())
+	assert.True(t, atr.Equal(decimal.NewFromFloat(0.05)), "ATR-based path: expect raw ATR=0.05, got %s", atr)
+
+	// ATR missing in Redis → fallback returns Zero (caller writes NULL).
+	_, atr = e.computeStopPct(context.Background(), "MISSING", decimal.NewFromFloat(1.0), zerolog.Nop())
+	assert.True(t, atr.IsZero(), "ATR miss: expect Zero, got %s", atr)
+
+	// ATR=0 in Redis → fallback returns Zero.
+	setATR(t, mr, "ZERO", "0")
+	_, atr = e.computeStopPct(context.Background(), "ZERO", decimal.NewFromFloat(1.0), zerolog.Nop())
+	assert.True(t, atr.IsZero(), "ATR=0: expect Zero, got %s", atr)
 }
