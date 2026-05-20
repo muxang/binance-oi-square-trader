@@ -32,18 +32,27 @@ function MetricCard({ label, value, sub, valueColor }: {
 }
 
 const COLLECTOR_NAMES: Record<string, string> = {
-  algo_polling:    '条件单监控',
-  btc_regime:      'BTC行情监控',
-  decision_engine: '入场决策',
-  exit_manager:    '出场管理',
-  klines:          'K线/ATR采集',
-  oi:              '持仓量采集',
-  position_manager:'持仓对账',
-  position_price:  '持仓价格',
-  signal_engine:   '信号扫描',
-  square_feed:     'Square推文',
-  square_hashtag:  'Square话题',
-  watchlist:       '候选池更新',
+  algo_polling:         '条件单监控',
+  algo_reconciler:      '条件单对账',
+  btc_regime:           'BTC 行情监控',
+  circulating_supply:   '流通市值刷新',           // R.11.A2c-2 (6h, CoinGecko)
+  coingecko_symbol_map: 'CoinGecko 符号映射',     // R.11.A2b (12h)
+  config_reloader:      '配置热加载',             // 每 1min 拉 admin_overrides
+  decision_engine:      '入场决策',
+  exit_manager:         '出场管理',
+  klines:               'K线 / ATR 采集',
+  large_holder:         '大户多空比采集',         // R.11.A2c-1 (5min)
+  oi:                   '持仓量采集',
+  orphan_algo_cleaner:  '孤儿算法清理',
+  position_manager:     '持仓对账',
+  position_price:       '持仓价格',
+  signal_engine:        '信号扫描',
+  sigfail_detector:     '信号失效熔断',           // 入场后跌破信号 → 强平
+  square_feed:          'Square 推文',
+  square_hashtag:       'Square 话题',
+  trail_upgrader:       '移动止损升级',           // S1→S2→S3→S4 trail 阶梯
+  user_stream:          '账户事件流',             // WS listenKey
+  watchlist:            '候选池更新',
 }
 
 function CollectorRow({ c }: { c: CollectorStatus }) {
