@@ -80,6 +80,14 @@ func (c *Client) withCustomBase(base string) *Client {
 	return c
 }
 
+// NewTestClient is an exported test seam: returns a Client wired to baseURL
+// (typically an httptest server URL). Production code must use NewClient.
+// Kept exported so cross-package collectors can wire a fake CoinGecko backend
+// without re-implementing the HTTP layer.
+func NewTestClient(baseURL string) *Client {
+	return NewClient("").withCustomBase(baseURL)
+}
+
 // ListCoins fetches the full (id, symbol, name) catalog via /coins/list.
 // ~15k entries as of 2026; call sparingly (daily startup refresh is enough).
 // include_platform=false keeps the response small (no per-chain contract list).

@@ -25,6 +25,7 @@ import (
 	"trader/internal/api"
 	"trader/internal/api/handlers"
 	"trader/internal/binance"
+	"trader/internal/coingecko"
 	"trader/internal/collector"
 	"trader/internal/notify"
 	"trader/internal/config"
@@ -195,6 +196,16 @@ func run() error {
 	})
 	if err := runner.Register(lhCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register large_holder collector")
+	}
+	// Round R.11.A2b: CoinGecko symbol→id mapping refresh (twice daily BJT;
+	// run once at startup if table is empty). Failures non-fatal — circulating-
+	// supply collector tolerates missing mappings (writes NULL market_cap_ratio).
+	// ref: references/external/coingecko.md
+	cgCli := coingecko.NewClient(os.Getenv("COINGECKO_DEMO_API_KEY"))
+	cgMapCol := collector.NewCoingeckoSymbolMapCollector(cgCli, pgPool, log)
+	cgMapCol.EnsureMappingPopulated(ctx)
+	if err := runner.Register(cgMapCol, "0 0,12 * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register coingecko_symbol_map collector")
 	}
 	btcCol := collector.NewBTCRegimeCollector(client, rdb, log, collector.BTCRegimeConfig{})
 	if err := runner.Register(btcCol, "* * * * *"); err != nil {
