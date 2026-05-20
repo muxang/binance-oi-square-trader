@@ -314,6 +314,34 @@ export default function TradeDetail() {
               {d.signal.rejection_reason && (
                 <ROW label="拒绝原因" value={d.signal.rejection_reason} />
               )}
+              {/* R.11.B2: 入场时刻大户多空 / 市值占比快照 */}
+              {d.entry_ratios && (
+                <div className="mt-3 pt-2 border-t border-[#2d2d2d]">
+                  <div className="text-xs text-gray-400 mb-1">入场快照 (contract-monitor.js 3 维度)</div>
+                  {d.entry_ratios.acct_ls_ratio > 0 && (
+                    <ROW label="大户账户多空比" value={
+                      <span style={{ color: d.entry_ratios.acct_ls_ratio < 1 ? '#ff4d4f' : '#52c41a' }}>
+                        {d.entry_ratios.acct_ls_ratio.toFixed(3)} ({d.entry_ratios.acct_ls_ratio < 1 ? '空头主导' : '多头主导'})
+                      </span>
+                    } />
+                  )}
+                  {d.entry_ratios.pos_ls_ratio > 0 && (
+                    <ROW label="大户持仓多空比" value={
+                      <span style={{ color: d.entry_ratios.pos_ls_ratio < 1 ? '#ff4d4f' : '#52c41a' }}>
+                        {d.entry_ratios.pos_ls_ratio.toFixed(3)} ({d.entry_ratios.pos_ls_ratio < 1 ? '空头主导' : '多头主导'})
+                      </span>
+                    } />
+                  )}
+                  {d.entry_ratios.mcap_ratio_pct > 0 && (
+                    <ROW label="持仓市值占比" value={
+                      <span style={{ color: d.entry_ratios.mcap_ratio_pct >= 50 ? '#f5a623' : '#8c8c8c' }}>
+                        {d.entry_ratios.mcap_ratio_pct.toFixed(2)}% {d.entry_ratios.mcap_ratio_pct >= 50 && '⚠️'}
+                      </span>
+                    } />
+                  )}
+                  <div className="text-xs text-gray-600 mt-1">快照时间: {fmtTs(d.entry_ratios.snapshot_ts_ms)}</div>
+                </div>
+              )}
             </>
           ) : <div className="text-xs text-gray-600 py-2">无信号数据</div>}
         </Card>

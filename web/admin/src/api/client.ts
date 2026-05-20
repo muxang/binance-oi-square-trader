@@ -515,8 +515,20 @@ export interface TradeDetailData {
   fees?: number
   signal: TradeDetailSignal | null
   position: TradeDetailPosition | null
+  entry_ratios: TradeEntryRatios | null
   exits: TradeDetailExit[]
   api_errors: TradeDetailApiError[]
+}
+
+// R.11.B2: large_holder_ratios snapshot at/before entry. NULL if no row exists
+// (pre-R.11 trades, or collector hadn't run for this symbol yet at entry time).
+export interface TradeEntryRatios {
+  snapshot_ts_ms: number
+  acct_ls_ratio: number     // 0 = no data
+  pos_ls_ratio: number
+  open_interest_usd: number
+  circulating_supply: number
+  mcap_ratio_pct: number
 }
 
 export const fetchTradeDetail = (id: number): Promise<TradeDetailData> =>

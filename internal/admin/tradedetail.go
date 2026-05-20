@@ -29,10 +29,24 @@ type TradeDetailResponse struct {
 	ExitReason *string  `json:"exit_reason"`
 	RealPnl    *float64 `json:"realized_pnl"`
 	Fees       *float64 `json:"fees"`
-	Signal    *TradeSignal    `json:"signal"`
-	Position  *TradePosition  `json:"position"`
-	Exits     []TradeExit     `json:"exits"`
-	ApiErrors []TradeApiError `json:"api_errors"`
+	Signal      *TradeSignal      `json:"signal"`
+	Position    *TradePosition    `json:"position"`
+	EntryRatios *TradeEntryRatios `json:"entry_ratios"`
+	Exits       []TradeExit       `json:"exits"`
+	ApiErrors   []TradeApiError   `json:"api_errors"`
+}
+
+// TradeEntryRatios is the R.11.B2 snapshot — newest large_holder_ratios row
+// at or before this trade's entry_ts. Captures the contract-monitor.js 3
+// 维度 (大户多空 + 市值占比) state at the moment of entry. Any field may be
+// 0 (collector miss / supply unavailable / pre-R.11 historical trade).
+type TradeEntryRatios struct {
+	SnapshotTsMs       int64   `json:"snapshot_ts_ms"`
+	AcctLongShortRatio float64 `json:"acct_ls_ratio"`
+	PosLongShortRatio  float64 `json:"pos_ls_ratio"`
+	OpenInterestUsd    float64 `json:"open_interest_usd"`
+	CirculatingSupply  float64 `json:"circulating_supply"`
+	MarketCapRatioPct  float64 `json:"mcap_ratio_pct"`
 }
 
 type TradeSignal struct {
@@ -185,6 +199,34 @@ func (s *Server) handleTradeDetail(w http.ResponseWriter, r *http.Request) {
 			TpStage2Done:   tp2,
 			EntryOi:        nptr(entOi),
 			LastCheckTsMs:  tsptr(lcTs),
+		}
+	}
+
+	// Round R.11.B2: newest large_holder_ratios snapshot at/before entry_ts.
+	// Tolerant of missing data (pre-R.11 trades, collector miss). Each scalar
+	// becomes 0 on NULL — frontend treats >0 as "show".
+	if entryTs.Valid {
+		var (
+			lhTs                    pgtype.Timestamptz
+			acctLS, posLS           pgtype.Numeric
+			oiUsd, supply, mcapPct  pgtype.Numeric
+		)
+		lhErr := s.db.QueryRow(ctx, `
+			SELECT ts, account_long_short_ratio, position_long_short_ratio,
+			       open_interest_usd, circulating_supply, market_cap_ratio_pct
+			FROM large_holder_ratios
+			WHERE symbol = $1 AND ts <= $2
+			ORDER BY ts DESC LIMIT 1
+		`, resp.Symbol, entryTs.Time).Scan(&lhTs, &acctLS, &posLS, &oiUsd, &supply, &mcapPct)
+		if lhErr == nil {
+			resp.EntryRatios = &TradeEntryRatios{
+				SnapshotTsMs:       lhTs.Time.UnixMilli(),
+				AcctLongShortRatio: numericToFloat64(acctLS),
+				PosLongShortRatio:  numericToFloat64(posLS),
+				OpenInterestUsd:    numericToFloat64(oiUsd),
+				CirculatingSupply:  numericToFloat64(supply),
+				MarketCapRatioPct:  numericToFloat64(mcapPct),
+			}
 		}
 	}
 
