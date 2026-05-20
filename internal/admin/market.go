@@ -20,6 +20,11 @@ type MarketItem struct {
 	Price24hPct     float64 `json:"price_24h_pct"`
 	SquareMentions  int64   `json:"square_mentions"` // 24h mention count
 	Square24hPct    float64 `json:"square_24h_pct"`  // vs prior 24h; 0 = no prior data
+	// Round R.11.B1: contract-monitor.js 3 维度 — 0 means no data yet (collector
+	// hasn't run or symbol not on CoinGecko). Frontend treats >0 as displayable.
+	AcctLongShortRatio float64 `json:"acct_ls_ratio"`  // newest large_holder_ratios.account_long_short_ratio
+	PosLongShortRatio  float64 `json:"pos_ls_ratio"`   // newest large_holder_ratios.position_long_short_ratio
+	MarketCapRatioPct  float64 `json:"mcap_ratio_pct"` // OI_USD / market_cap × 100; 0 = supply unavailable
 	InWatchlist     bool    `json:"in_watchlist"`
 	InOpenPosition  bool    `json:"in_open_position"`
 }
@@ -30,7 +35,9 @@ type MarketResponse struct {
 }
 
 const (
-	marketCacheKey = "admin:market:full"
+	// Cache key bumped to v2 in R.11.B1 (added acct_ls/pos_ls/mcap columns).
+	// Old :v1 cached blobs lack the new fields and would deserialize to 0.
+	marketCacheKey = "admin:market:full:v2"
 	marketCacheTTL = 2 * time.Minute
 )
 
@@ -159,7 +166,13 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			FROM watchlist_snapshots, jsonb_array_elements(symbols) snap
 			WHERE ts = (SELECT MAX(ts) FROM watchlist_snapshots)
 		),
-		op AS (SELECT DISTINCT symbol FROM trades WHERE status IN ('open','partial'))
+		op AS (SELECT DISTINCT symbol FROM trades WHERE status IN ('open','partial')),
+		-- Round R.11.B1: newest large_holder_ratios row per symbol.
+		lh AS (
+			SELECT DISTINCT ON (symbol) symbol,
+			       account_long_short_ratio, position_long_short_ratio, market_cap_ratio_pct
+			FROM large_holder_ratios ORDER BY symbol, ts DESC
+		)
 		SELECT
 			lo.symbol,
 			(lo.oi_value_usd / 1e6)::float8,
@@ -173,6 +186,9 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			CASE WHEN COALESCE(sq_prev.prev_count, 0) > 0
 			     THEN ((COALESCE(sq_cur.content_count, 0) - sq_prev.prev_count)::float8 / sq_prev.prev_count * 100)
 			     ELSE 0 END,
+			COALESCE(lh.account_long_short_ratio::float8, 0),
+			COALESCE(lh.position_long_short_ratio::float8, 0),
+			COALESCE(lh.market_cap_ratio_pct::float8, 0),
 			(wl.sym IS NOT NULL),
 			(op.symbol IS NOT NULL)
 		FROM lo
@@ -182,6 +198,7 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 		LEFT JOIN sq_prev ON sq_prev.symbol = lo.symbol
 		LEFT JOIN lp      ON lp.symbol      = lo.symbol
 		LEFT JOIN p24     ON p24.symbol     = lo.symbol
+		LEFT JOIN lh      ON lh.symbol      = lo.symbol
 		LEFT JOIN wl      ON wl.sym         = lo.symbol
 		LEFT JOIN op      ON op.symbol      = lo.symbol
 	`)
@@ -201,10 +218,14 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			p24pct   float64
 			sqCnt    int64
 			sqGrowth float64
+			acctLS   float64
+			posLS    float64
+			mcapPct  float64
 			inWl     bool
 			inPos    bool
 		)
-		if err := rows.Scan(&sym, &oiUsdM, &oi1h, &oi24h, &price, &p24pct, &sqCnt, &sqGrowth, &inWl, &inPos); err != nil {
+		if err := rows.Scan(&sym, &oiUsdM, &oi1h, &oi24h, &price, &p24pct, &sqCnt, &sqGrowth,
+			&acctLS, &posLS, &mcapPct, &inWl, &inPos); err != nil {
 			s.log.Error().Err(err).Str("sym", sym).Msg("scan market row")
 			continue
 		}
@@ -213,6 +234,8 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			Oi1hPct: oi1h, Oi24hPct: oi24h,
 			CurrentPrice: price, Price24hPct: p24pct,
 			SquareMentions: sqCnt, Square24hPct: sqGrowth,
+			AcctLongShortRatio: acctLS, PosLongShortRatio: posLS,
+			MarketCapRatioPct: mcapPct,
 			InWatchlist: inWl, InOpenPosition: inPos,
 		})
 	}

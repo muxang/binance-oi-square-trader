@@ -234,6 +234,9 @@ export default function Market() {
                     <SortTH right sortKey="price_24h_pct" current={sortBy} order={order} onSort={handleSort}>24h涨跌</SortTH>
                     <SortTH right sortKey="square"        current={sortBy} order={order} onSort={handleSort}>Square提及</SortTH>
                     <SortTH right sortKey="square_24h_pct" current={sortBy} order={order} onSort={handleSort}>Square 24h%</SortTH>
+                    <SortTH right current={sortBy} order={order} onSort={handleSort}>账户多空</SortTH>
+                    <SortTH right current={sortBy} order={order} onSort={handleSort}>持仓多空</SortTH>
+                    <SortTH right current={sortBy} order={order} onSort={handleSort}>市值占比</SortTH>
                     <SortTH current={sortBy} order={order} onSort={handleSort}>标记</SortTH>
                   </tr>
                 </thead>
@@ -270,6 +273,26 @@ export default function Market() {
                           {item.square_mentions > 0 && item.square_24h_pct !== 0
                             ? pct(item.square_24h_pct)
                             : item.square_mentions > 0 ? '新' : '—'}
+                        </td>
+                        {/* R.11.B1: 大户多空比 - 红色 <1 (空头主导), 绿色 >1 (多头主导) */}
+                        <td className="py-2 px-2 text-xs text-right tabular-nums"
+                          style={{ color: item.acct_ls_ratio > 0
+                            ? (item.acct_ls_ratio < 1 ? colors.down : colors.up)
+                            : '#555' }}>
+                          {item.acct_ls_ratio > 0 ? item.acct_ls_ratio.toFixed(2) : '—'}
+                        </td>
+                        <td className="py-2 px-2 text-xs text-right tabular-nums"
+                          style={{ color: item.pos_ls_ratio > 0
+                            ? (item.pos_ls_ratio < 1 ? colors.down : colors.up)
+                            : '#555' }}>
+                          {item.pos_ls_ratio > 0 ? item.pos_ls_ratio.toFixed(2) : '—'}
+                        </td>
+                        {/* R.11.B1: 市值占比 - 黄色警示 ≥50% (contract-monitor.js 阈值) */}
+                        <td className="py-2 px-2 text-xs text-right tabular-nums"
+                          style={{ color: item.mcap_ratio_pct > 0
+                            ? (item.mcap_ratio_pct >= 50 ? '#f5a623' : '#8c8c8c')
+                            : '#555' }}>
+                          {item.mcap_ratio_pct > 0 ? item.mcap_ratio_pct.toFixed(2) + '%' : '—'}
                         </td>
                         <td className="py-2 px-2">
                           {item.in_open_position && (

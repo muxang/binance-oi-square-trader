@@ -367,6 +367,10 @@ export interface MarketItem {
   price_24h_pct: number
   square_mentions: number  // 24h mention count
   square_24h_pct: number   // vs prior 24h; 0 = no prior data
+  // R.11.B1 contract-monitor.js 3 维度. 0 = collector 未运行 / 数据缺失.
+  acct_ls_ratio: number    // 大户账户多空比 (top trader account-weighted)
+  pos_ls_ratio: number     // 大户持仓多空比 (top trader position-weighted)
+  mcap_ratio_pct: number   // OI_USD / market_cap × 100; 0 = supply 缺失
   in_watchlist: boolean
   in_open_position: boolean
 }
