@@ -16,6 +16,7 @@
 - `binance/urls.md`         — 币安官方文档 URL 索引
 - `square/urls.md`          — Square 非官方接口来源索引
 - `github/urls.md`          — 第三方 GitHub 项目索引
+- `external/coingecko.md`   — CoinGecko Demo (free) API,仅供 circulating_supply(mu 2026-05-20 R.11.A 批准)
 
 如果你需要的信息不在以上索引中:
 1. **停下来**,不要 web_search 然后随意采信结果
