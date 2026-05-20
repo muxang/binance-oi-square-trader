@@ -188,6 +188,14 @@ func run() error {
 	if err := runner.Register(oiCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register oi collector")
 	}
+	// Round R.11.A2c-1: large-trader long/short ratio (account + position) for
+	// every watchlist symbol, 5min cron. ref: references/user-snippets/contract-monitor.js
+	lhCol := collector.NewLargeHolderCollector(client, pgPool, log, collector.LargeHolderCollectorConfig{
+		Concurrency: cfg.Collector.OIConcurrency,
+	})
+	if err := runner.Register(lhCol, "*/5 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register large_holder collector")
+	}
 	btcCol := collector.NewBTCRegimeCollector(client, rdb, log, collector.BTCRegimeConfig{})
 	if err := runner.Register(btcCol, "* * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register btc_regime collector")
