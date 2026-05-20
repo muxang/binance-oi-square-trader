@@ -171,9 +171,11 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 		),
 		op AS (SELECT DISTINCT symbol FROM trades WHERE status IN ('open','partial')),
 		-- Round R.11.B1: newest large_holder_ratios row per symbol.
+		-- R.11.B1+: circulating_supply added for 流动市值 column (lh × lp.price).
 		lh AS (
 			SELECT DISTINCT ON (symbol) symbol,
-			       account_long_short_ratio, position_long_short_ratio, market_cap_ratio_pct
+			       account_long_short_ratio, position_long_short_ratio,
+			       market_cap_ratio_pct, circulating_supply
 			FROM large_holder_ratios ORDER BY symbol, ts DESC
 		)
 		SELECT
