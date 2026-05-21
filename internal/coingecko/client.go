@@ -235,16 +235,52 @@ func (c *Client) acquireRate(ctx context.Context) error {
 	return nil
 }
 
-// do performs one Demo-API GET. Auth (when apiKey set) is via query param —
-// CoinGecko's documented method for the demo tier.
+// do performs one Demo-API GET with automatic 429 retry (CoinGecko Demo plan
+// rate-limits aggressively without an API key — observed 429 even at 5
+// calls/min unauthenticated). Single retry after 60s + a doubled wait.
+// Auth (when apiKey set) via x_cg_demo_api_key query param.
 func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, error) {
+	body, err := c.doOnce(ctx, path, q)
+	if err == nil {
+		return body, nil
+	}
+	var he *HTTPError
+	if !errorsAs(err, &he) || he.HTTPCode != 429 {
+		return nil, err
+	}
+	// 429: wait 60s + jittered, retry once. CoinGecko Demo rate window is per
+	// minute, so 65s buffer guarantees the count resets.
+	select {
+	case <-time.After(65 * time.Second):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return c.doOnce(ctx, path, q)
+}
+
+// errorsAs is a thin shim so we don't have to import "errors" just for As.
+func errorsAs(err error, target interface{}) bool {
+	if he, ok := err.(*HTTPError); ok {
+		if dst, ok := target.(**HTTPError); ok {
+			*dst = he
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) doOnce(ctx context.Context, path string, q url.Values) ([]byte, error) {
 	if err := c.acquireRate(ctx); err != nil {
 		return nil, err
 	}
-	if c.apiKey != "" {
-		q.Set("x_cg_demo_api_key", c.apiKey)
+	qLocal := url.Values{}
+	for k, v := range q {
+		qLocal[k] = v
 	}
-	full := c.baseURL + path + "?" + q.Encode()
+	if c.apiKey != "" {
+		qLocal.Set("x_cg_demo_api_key", c.apiKey)
+	}
+	full := c.baseURL + path + "?" + qLocal.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build req: %w", err)
