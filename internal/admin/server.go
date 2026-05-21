@@ -81,6 +81,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/admin/watchlist/exclude/{symbol}", s.requireCsrf(s.handleWatchlistExclude))
 	// Round 2.x Part 3: manual close — pre-sets exit_reason; exit_manager executes within 1min.
 	mux.HandleFunc("POST /api/admin/trades/{id}/close", s.requireCsrf(s.handleManualClose))
+	// R.12 Q2: CoinGecko mapping table read + manual override.
+	mux.HandleFunc("GET /api/admin/coingecko-mapping", s.handleMappingList)
+	mux.HandleFunc("PUT /api/admin/coingecko-mapping/{symbol}", s.requireCsrf(s.handleMappingUpdate))
 	return s.cors(mux)
 }
 

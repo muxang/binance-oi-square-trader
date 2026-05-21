@@ -383,6 +383,7 @@ export interface MarketData {
 
 export type MarketScope = 'all' | 'watchlist' | 'positions'
 export type MarketSort  = 'oi_1h_pct' | 'oi_24h_pct' | 'oi_usd' | 'price_24h_pct' | 'square' | 'square_24h_pct'
+  | 'cmcap_usd' | 'acct_ls' | 'pos_ls' | 'mcap_pct'  // R.11.B1+ (mu 2026-05-21)
 export type SortOrder   = 'asc' | 'desc'
 
 export interface MarketParams {
@@ -537,3 +538,22 @@ export interface TradeEntryRatios {
 
 export const fetchTradeDetail = (id: number): Promise<TradeDetailData> =>
   api.get<TradeDetailData>(`/trade/${id}`).then(r => r.data)
+
+// R.12 Q2: CoinGecko mapping
+export interface MappingRow {
+  binance_symbol: string
+  coingecko_id: string
+  market_cap_usd_m: number
+  circulating_supply: number
+  in_watchlist: boolean
+  in_open_position: boolean
+  last_refreshed_ms: number
+}
+export interface MappingResponse { total: number; items: MappingRow[] }
+
+export const fetchMappingList = (): Promise<MappingResponse> =>
+  api.get<MappingResponse>('/coingecko-mapping').then(r => r.data)
+
+export const updateMapping = (symbol: string, coingeckoId: string): Promise<{ status: string }> =>
+  api.put<{ status: string }>(`/coingecko-mapping/${encodeURIComponent(symbol)}`,
+    { coingecko_id: coingeckoId }).then(r => r.data)

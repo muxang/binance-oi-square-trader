@@ -8,6 +8,7 @@ import Square from './pages/Square'
 import TradeDetail from './pages/TradeDetail'
 import Settings from './pages/Settings'
 import AuditLog from './pages/AuditLog'
+import Mapping from './pages/Mapping'
 import { DataSourceProvider, useDataSource } from './context/DataSource'
 import type { DataSource } from './api/client'
 
@@ -44,6 +45,7 @@ const NAV_LINKS = [
   { to: '/pnl',       label: '💰 PnL 分析',     short: '💰' },
   { to: '/square',    label: '🔥 Square 热点',  short: '🔥' },
   { to: '/market',    label: '🌐 市场扫描',     short: '🌐' },
+  { to: '/mapping',   label: '🔗 符号映射',     short: '🔗' },
   { to: '/settings',  label: '⚙️ 设置',         short: '⚙️' },
   { to: '/audit',     label: '📋 操作历史',     short: '🧾' },
 ]
@@ -103,6 +105,7 @@ function AppLayout() {
               <Route path="/pnl"       element={<Pnl />} />
               <Route path="/square"    element={<Square />} />
               <Route path="/market"    element={<Market />} />
+              <Route path="/mapping"   element={<Mapping />} />
               <Route path="/settings"  element={<Settings />} />
               <Route path="/audit"     element={<AuditLog />} />
               <Route path="/trade/:id" element={<TradeDetail />} />
