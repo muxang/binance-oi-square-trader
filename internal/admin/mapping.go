@@ -105,7 +105,7 @@ func (s *Server) handleMappingUpdate(w http.ResponseWriter, r *http.Request) {
 	// UPSERT preserves the (binance_symbol, coingecko_id) invariant. Also
 	// nuke the cache row for this symbol so the next supply tick re-fetches
 	// against the new id (otherwise stale wrong-token mcap lingers).
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.writeDB.Begin(ctx)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "tx begin")
 		return
