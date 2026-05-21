@@ -121,10 +121,18 @@ func New(cfg *config.Config, proxy ProxyManager, limiter RateLimiter, log zerolo
 	if limiter == nil {
 		limiter = noopRateLimiter{}
 	}
+	// Pick API key by mode. Testnet requires keys generated at
+	// testnet.binancefuture.com — they are NOT the same account/key as mainnet.
+	// Using a mainnet key against testnet returns 401 -2015 on every write.
+	apiKey, apiSecret := cfg.Binance.APIKey, cfg.Binance.APISecret
+	if cfg.Mode == "testnet" && cfg.Binance.TestnetAPIKey != "" {
+		apiKey = cfg.Binance.TestnetAPIKey
+		apiSecret = cfg.Binance.TestnetAPISecret
+	}
 	c := &Client{
 		mode:       cfg.Mode,
-		apiKey:     cfg.Binance.APIKey,
-		apiSecret:  cfg.Binance.APISecret,
+		apiKey:     apiKey,
+		apiSecret:  apiSecret,
 		proxy:      proxy,
 		directHTTP: &http.Client{Timeout: 15 * time.Second},
 		limiter:    limiter,
@@ -144,6 +152,11 @@ func New(cfg *config.Config, proxy ProxyManager, limiter RateLimiter, log zerolo
 	} else {
 		c.restBaseRead = MainnetREST  // real OI / klines / etc.
 		c.restBaseWrite = TestnetREST // safe for test orders
+		if cfg.Binance.TestnetAPIKey == "" {
+			log.Warn().Msg("⚠️ TESTNET MODE but BINANCE_TESTNET_API_KEY is empty — falling back to mainnet key (writes will 401 -2015)")
+		} else {
+			log.Info().Msg("testnet mode using TestnetAPIKey (writes routed to testnet base)")
+		}
 	}
 	return c, nil
 }

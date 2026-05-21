@@ -49,6 +49,13 @@ type LogConfig struct {
 type BinanceConfig struct {
 	APIKey            string    `mapstructure:"BINANCE_API_KEY"`
 	APISecret         string    `mapstructure:"BINANCE_API_SECRET"`
+	// Testnet uses a DIFFERENT account/key system from mainnet — the testnet
+	// API key must be generated separately at testnet.binancefuture.com.
+	// When TRADER_MODE=testnet AND TestnetAPIKey is non-empty, all writes use
+	// these credentials. Otherwise testnet falls back to APIKey above (which
+	// is the 2026-05 catch — mainnet key against testnet base returned -2015).
+	TestnetAPIKey     string    `mapstructure:"BINANCE_TESTNET_API_KEY"`
+	TestnetAPISecret  string    `mapstructure:"BINANCE_TESTNET_API_SECRET"`
 	AlgoMigrationDate time.Time `mapstructure:"BINANCE_ALGO_MIGRATION_DATE"`
 }
 type ProxyConfig struct {
