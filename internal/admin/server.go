@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
+
+	"trader/internal/coingecko"
 )
 
 // Server holds shared dependencies for all admin-api handlers.
@@ -23,17 +25,19 @@ type Server struct {
 	rdb           *redis.Client
 	csrf          *csrfStore // Phase 5.2 Round 1: write-endpoint CSRF guard
 	prometheusURL string
+	cgCli         *coingecko.Client // R.13: mapping auto-fix via /search
 	log           zerolog.Logger
 	startTime     time.Time
 }
 
-func NewServer(db, writeDB *pgxpool.Pool, rdb *redis.Client, prometheusURL string, log zerolog.Logger) *Server {
+func NewServer(db, writeDB *pgxpool.Pool, rdb *redis.Client, prometheusURL string, cg *coingecko.Client, log zerolog.Logger) *Server {
 	return &Server{
 		db:            db,
 		writeDB:       writeDB,
 		rdb:           rdb,
 		csrf:          newCsrfStore(),
 		prometheusURL: prometheusURL,
+		cgCli:         cg,
 		log:           log,
 		startTime:     time.Now(),
 	}
@@ -84,6 +88,8 @@ func (s *Server) Routes() http.Handler {
 	// R.12 Q2: CoinGecko mapping table read + manual override.
 	mux.HandleFunc("GET /api/admin/coingecko-mapping", s.handleMappingList)
 	mux.HandleFunc("PUT /api/admin/coingecko-mapping/{symbol}", s.requireCsrf(s.handleMappingUpdate))
+	// R.13: batch-fix all mappings whose market_cap_ratio_pct > threshold via /search.
+	mux.HandleFunc("POST /api/admin/coingecko-mapping/auto-fix", s.requireCsrf(s.handleMappingAutoFix))
 	return s.cors(mux)
 }
 

@@ -558,3 +558,21 @@ export const fetchMappingList = (): Promise<MappingResponse> =>
 export const updateMapping = (symbol: string, coingeckoId: string): Promise<{ status: string }> =>
   api.put<{ status: string }>(`/coingecko-mapping/${encodeURIComponent(symbol)}`,
     { coingecko_id: coingeckoId }).then(r => r.data)
+
+// R.13: batch auto-fix mis-mapped symbols by /search canonical
+export interface MappingAutoFixRow {
+  symbol: string
+  old_id: string
+  new_id: string
+  old_ratio_pct: number
+  status: string  // 'fixed' | 'no_candidate' | 'no_change' | 'search_failed' | ...
+}
+export interface MappingAutoFixResponse {
+  threshold_pct: number
+  scanned: number
+  fixed: number
+  items: MappingAutoFixRow[]
+}
+export const autoFixMappings = (thresholdPct = 30): Promise<MappingAutoFixResponse> =>
+  api.post<MappingAutoFixResponse>('/coingecko-mapping/auto-fix',
+    { threshold_pct: thresholdPct }).then(r => r.data)

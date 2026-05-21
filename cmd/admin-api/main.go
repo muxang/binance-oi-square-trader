@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"trader/internal/admin"
+	"trader/internal/coingecko"
 )
 
 func main() {
@@ -75,7 +76,12 @@ func main() {
 		log.Warn().Err(err).Msg("redis ping failed (non-fatal)")
 	}
 
-	srv := admin.NewServer(pool, writePool, rdb, prometheusURL, log.Logger)
+	// R.13: CoinGecko client for mapping auto-fix /search calls. Demo API key
+	// optional (admin-api proxy not wired here — startup-only single calls
+	// from mu UI tolerate any 429 via the client's built-in retry).
+	cgCli := coingecko.NewClient(os.Getenv("COINGECKO_DEMO_API_KEY"))
+
+	srv := admin.NewServer(pool, writePool, rdb, prometheusURL, cgCli, log.Logger)
 	httpSrv := &http.Server{
 		Addr:         addr,
 		Handler:      srv.Routes(),

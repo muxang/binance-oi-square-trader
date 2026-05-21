@@ -211,6 +211,39 @@ func (c *Client) getMarketsByMcapPage(ctx context.Context, limit, page int) ([]M
 	return out, nil
 }
 
+// SearchCoin is one entry in /search?query= response coins[]. Returned ordered
+// by market_cap descending — the first entry whose symbol matches your query
+// is the canonical token (BounceBit beats bitboard for "BB", etc).
+type SearchCoin struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	APISymbol     string `json:"api_symbol"`
+	Symbol        string `json:"symbol"`
+	MarketCapRank int    `json:"market_cap_rank"`
+}
+
+// SearchByQuery hits GET /search?query=. Used by the mapping auto-fix
+// endpoint to resolve mis-mapped binance_symbols — search returns matches
+// already ordered by market_cap desc, so the first symbol-equal entry is
+// the canonical id (which is what mu wants when BB is "really BounceBit"
+// but heuristic picked bitboard).
+//
+// ref: https://docs.coingecko.com/reference/search-data
+func (c *Client) SearchByQuery(ctx context.Context, query string) ([]SearchCoin, error) {
+	q := url.Values{"query": {query}}
+	body, err := c.do(ctx, "/search", q)
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Coins []SearchCoin `json:"coins"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("parse /search: %w", err)
+	}
+	return raw.Coins, nil
+}
+
 // GetMarkets fetches up-to-250 coins' market data in one request. ids is the
 // CoinGecko slug list (NOT Binance symbols). vsCurrency typically "usd".
 // Empty ids returns ([],nil) without an HTTP call (defensive).

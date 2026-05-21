@@ -7,7 +7,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
-import { fetchMappingList, updateMapping } from '../api/client'
+import { fetchMappingList, updateMapping, autoFixMappings, type MappingAutoFixResponse } from '../api/client'
 
 export default function Mapping() {
   const qc = useQueryClient()
@@ -19,6 +19,15 @@ export default function Mapping() {
   const [showOnly, setShowOnly] = useState<'all' | 'no_mcap' | 'watchlist' | 'positions'>('all')
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [autoFixResult, setAutoFixResult] = useState<MappingAutoFixResponse | null>(null)
+
+  const autoFixMut = useMutation({
+    mutationFn: () => autoFixMappings(30),
+    onSuccess: (res) => {
+      setAutoFixResult(res)
+      qc.invalidateQueries({ queryKey: ['coingecko-mapping'] })
+    },
+  })
 
   const updateMut = useMutation({
     mutationFn: ({ symbol, id }: { symbol: string; id: string }) => updateMapping(symbol, id),
@@ -52,12 +61,51 @@ export default function Mapping() {
             {data ? `${data.total} 个映射 · ${data.items.filter(r => r.market_cap_usd_m > 0).length} 个有市值数据` : '加载中…'}
           </div>
         </div>
-        <input
-          type="text" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="搜索 symbol 或 coingecko id"
-          className="px-3 py-1.5 text-sm bg-[#252525] border border-[#3a3a3a] rounded text-white w-64 max-w-full"
-        />
+        <div className="flex gap-2 items-center">
+          <input
+            type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="搜索 symbol 或 coingecko id"
+            className="px-3 py-1.5 text-sm bg-[#252525] border border-[#3a3a3a] rounded text-white w-64 max-w-full"
+          />
+          <button
+            onClick={() => {
+              if (confirm('扫描 OI/市值占比 > 30% 的 mapping, 用 CoinGecko /search 自动找市值最高的 canonical token. 确定继续?')) {
+                setAutoFixResult(null)
+                autoFixMut.mutate()
+              }
+            }}
+            disabled={autoFixMut.isPending}
+            className="px-3 py-1.5 text-sm bg-amber-700 hover:bg-amber-600 text-white rounded disabled:opacity-50 whitespace-nowrap"
+            title="批量自动修正异常映射 (CoinGecko /search canonical)">
+            {autoFixMut.isPending ? '⏳ 修正中...' : '🔧 自动修正异常'}
+          </button>
+        </div>
       </div>
+
+      {autoFixResult && (
+        <div className="bg-[#1f1f1f] border border-amber-700 rounded-lg p-3 text-xs">
+          <div className="font-semibold text-amber-400 mb-2">
+            自动修正结果:扫描 {autoFixResult.scanned} 个超阈 ({autoFixResult.threshold_pct}%) mapping, 修正 {autoFixResult.fixed} 个
+          </div>
+          {autoFixResult.items.length > 0 && (
+            <div className="max-h-60 overflow-y-auto space-y-1">
+              {autoFixResult.items.map(i => (
+                <div key={i.symbol} className="flex gap-2 font-mono">
+                  <span className="text-gray-400 w-32">{i.symbol}</span>
+                  <span className="text-red-400 w-32 truncate" title={i.old_id}>{i.old_id}</span>
+                  <span className="text-gray-600">→</span>
+                  <span className={`w-32 truncate ${i.status === 'fixed' ? 'text-green-400' : 'text-gray-500'}`} title={i.new_id || '(none)'}>
+                    {i.new_id || '—'}
+                  </span>
+                  <span className="text-gray-500 w-20 text-right">{i.old_ratio_pct.toFixed(1)}%</span>
+                  <span className="text-gray-600">{i.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setAutoFixResult(null)} className="mt-2 text-gray-500 hover:text-white">关闭 ✕</button>
+        </div>
+      )}
 
       <div className="flex gap-2 text-xs">
         {([
