@@ -104,6 +104,34 @@ func (c *Client) ListCoins(ctx context.Context) ([]CoinInfo, error) {
 	return out, nil
 }
 
+// GetMarketsTopByMcap fetches the top-N coins ordered by market_cap descending.
+// Used by symbol_map collector to find the canonical (highest-mcap) id for
+// each Binance symbol — bypasses the disambiguation ambiguity of /coins/list.
+// limit is capped at 250 per CoinGecko docs (single page).
+//
+// Added 2026-05-21 after BTC → batcat mapping bug — shortest-id heuristic
+// alone is unsafe; mcap-weighted is the correct canonical signal.
+func (c *Client) GetMarketsTopByMcap(ctx context.Context, limit int) ([]MarketData, error) {
+	if limit <= 0 || limit > 250 {
+		limit = 250
+	}
+	q := url.Values{
+		"vs_currency": {"usd"},
+		"order":       {"market_cap_desc"},
+		"per_page":    {fmt.Sprintf("%d", limit)},
+		"page":        {"1"},
+	}
+	body, err := c.do(ctx, "/coins/markets", q)
+	if err != nil {
+		return nil, err
+	}
+	var out []MarketData
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("parse /coins/markets (top): %w", err)
+	}
+	return out, nil
+}
+
 // GetMarkets fetches up-to-250 coins' market data in one request. ids is the
 // CoinGecko slug list (NOT Binance symbols). vsCurrency typically "usd".
 // Empty ids returns ([],nil) without an HTTP call (defensive).

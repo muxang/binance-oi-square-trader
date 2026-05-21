@@ -74,15 +74,27 @@ const catalogFixture = `[
   {"id":"uni","symbol":"uni","name":"Generic UNI"}
 ]`
 
+// R.11.A2b revised: top-mcap is queried first now; supply a small top-N
+// fixture for tests so canonical preference can be exercised.
+const topMcapFixture = `[
+  {"id":"bitcoin","symbol":"btc","current_price":80000,"market_cap":1576000000000,"circulating_supply":19700000},
+  {"id":"ethereum","symbol":"eth","current_price":4200,"market_cap":504000000000,"circulating_supply":120000000},
+  {"id":"dogecoin","symbol":"doge","current_price":0.4,"market_cap":58000000000,"circulating_supply":145000000000}
+]`
+
 func newCatalogServer(t *testing.T) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/coins/list" {
+		switch r.URL.Path {
+		case "/coins/list":
+			_, _ = w.Write([]byte(catalogFixture))
+		case "/coins/markets":
+			// top-mcap query (order=market_cap_desc) — return fixture top-3.
+			_, _ = w.Write([]byte(topMcapFixture))
+		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			http.NotFound(w, r)
-			return
 		}
-		_, _ = w.Write([]byte(catalogFixture))
 	})
 }
 

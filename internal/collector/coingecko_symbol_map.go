@@ -22,19 +22,19 @@ import (
 // ref: references/user-snippets/contract-monitor.js (getCirculatingSupply
 //      implicit dependency — JS never exposed its mapping mechanism)
 //
-// Symbol disambiguation strategy:
-//   1. Strip the "USDT" quote-asset suffix from each watchlist symbol → BASE.
-//   2. Lowercase BASE → look up in the /coins/list catalog.
-//   3. If exactly one candidate id: that's the mapping.
-//   4. If multiple candidates: pick the lexicographically *shortest* id
-//      (heuristic: forks/wrapped variants usually have longer ids like
-//      "bitcoin-cash" / "wrapped-bitcoin" while the canonical is "bitcoin").
-//      Ties broken by alphabetical order for determinism.
-//   5. If zero candidates: skip (mapping row not written; circulating_supply
-//      collector will write NULL market_cap_ratio for that symbol).
+// Symbol disambiguation strategy (revised 2026-05-21 after BTC → batcat bug):
+//   1. Strip the "USDT" quote-asset suffix → BASE (lowercased).
+//   2. First lookup the top-250 by-market-cap snapshot (/coins/markets
+//      order=market_cap_desc per_page=250). Top tokens are canonical by
+//      virtue of being the highest-mcap holder of that symbol — BTC wins
+//      over batcat, ETH over ethereum-pow, etc. Single API call covers
+//      ~all major tokens mu cares about.
+//   3. If miss in top-250: fall back to /coins/list shortest-id heuristic
+//      (works for genuine micro-caps where the canonical IS the shortest).
+//   4. If still zero candidates: skip (NULL market_cap_ratio downstream).
 //
-// The heuristic is not perfect — mu can manually override via direct UPDATE
-// on coingecko_symbol_map.binance_symbol if a row is wrong.
+// mu can hand-correct mapping rows via UPDATE coingecko_symbol_map ... if
+// a heuristic decision is still wrong.
 type CoingeckoSymbolMapCollector struct {
 	cg          *coingecko.Client
 	log         zerolog.Logger
@@ -57,9 +57,9 @@ func NewCoingeckoSymbolMapCollector(cg *coingecko.Client, pool *pgxpool.Pool, lo
 
 func (c *CoingeckoSymbolMapCollector) Name() string { return "coingecko_symbol_map" }
 
-// Run pulls the full CoinGecko catalog (~15k coins) and rebuilds the watchlist
-// mapping. Tolerates per-symbol miss (just skips that row). Returns error only
-// on CoinGecko outage or empty watchlist.
+// Run pulls top-250-by-mcap + the full /coins/list catalog, then rebuilds
+// the watchlist mapping with market_cap_desc priority (canonical) and
+// shortest-id fallback (micro-caps). Tolerant of partial CoinGecko outage.
 func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
 	symbols, err := c.watchlistFn(ctx)
 	if err != nil {
@@ -67,6 +67,21 @@ func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
 	}
 	if len(symbols) == 0 {
 		return errors.New("coingecko_symbol_map: empty watchlist")
+	}
+
+	// Step 1: top-250 by market_cap (the canonical layer). ids=nil triggers
+	// the un-filtered top list. Failure here is tolerable — heuristic still
+	// works via /coins/list fallback.
+	topByMcap := make(map[string]string)
+	if topMarkets, err := c.cg.GetMarketsTopByMcap(ctx, 250); err == nil {
+		for _, m := range topMarkets {
+			s := strings.ToLower(m.Symbol)
+			if _, exists := topByMcap[s]; !exists {
+				topByMcap[s] = m.ID // first = highest market_cap for this symbol
+			}
+		}
+	} else {
+		c.log.Warn().Err(err).Msg("coingecko_symbol_map: top-mcap pull failed (will use shortest-id fallback only)")
 	}
 
 	catalog, err := c.cg.ListCoins(ctx)
@@ -77,26 +92,33 @@ func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
 		return errors.New("coingecko_symbol_map: catalog returned 0 coins")
 	}
 
-	// Build symbol-lowercase → []id index (catalog is ~15k entries; one pass).
+	// Fallback index for micro-caps not in top-250.
 	bySymbol := make(map[string][]string, len(catalog))
 	for _, coin := range catalog {
 		s := strings.ToLower(coin.Symbol)
 		bySymbol[s] = append(bySymbol[s], coin.ID)
 	}
 
-	mapped, skipped := 0, 0
+	mapped, skipped, fromTop := 0, 0, 0
 	for _, binSym := range symbols {
 		base := strings.ToLower(strings.TrimSuffix(binSym, "USDT"))
 		if base == "" {
 			skipped++
 			continue
 		}
-		candidates := bySymbol[base]
-		if len(candidates) == 0 {
-			skipped++
-			continue
+		// Priority 1: top-250 by market_cap.
+		id, ok := topByMcap[base]
+		if ok {
+			fromTop++
+		} else {
+			// Priority 2: shortest-id heuristic over /coins/list catalog.
+			candidates := bySymbol[base]
+			if len(candidates) == 0 {
+				skipped++
+				continue
+			}
+			id = pickCanonicalID(candidates)
 		}
-		id := pickCanonicalID(candidates)
 		if err := c.upsertFn(ctx, gen.UpsertCoingeckoMappingParams{
 			BinanceSymbol: binSym,
 			CoingeckoID:   id,
@@ -108,7 +130,8 @@ func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
 		}
 		mapped++
 	}
-	c.log.Info().Int("watchlist", len(symbols)).Int("mapped", mapped).Int("skipped", skipped).
+	c.log.Info().Int("watchlist", len(symbols)).Int("mapped", mapped).
+		Int("from_top_mcap", fromTop).Int("skipped", skipped).
 		Int("catalog", len(catalog)).Msg("coingecko_symbol_map tick complete")
 	return nil
 }
