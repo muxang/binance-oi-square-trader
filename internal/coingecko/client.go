@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -61,16 +62,26 @@ type Client struct {
 	baseURL string
 	apiKey  string // Demo key; empty = unauthenticated (slower rate, still works)
 	http    *http.Client
+	// Demo plan throttles ~30 req/min burst; 2 collectors firing in parallel
+	// hit 429 within seconds. Internal serialiser caps to ~24 req/min global.
+	rateMu      sync.Mutex
+	lastCallAt  time.Time
+	minInterval time.Duration
 }
 
 // NewClient constructs a Demo-API client. apiKey may be "" for unauthenticated
 // access (still works, lower rate limits). 15s timeout matches Square client
 // style; CoinGecko Demo p99 is well under that even on slow days.
+//
+// Internal rate limiter paces calls to ≥2500ms apart globally — Demo plan
+// 429 with burst, this serialiser avoids that even when symbol_map + supply
+// collectors run concurrently at startup.
 func NewClient(apiKey string) *Client {
 	return &Client{
-		baseURL: DemoBaseURL,
-		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:     DemoBaseURL,
+		apiKey:      apiKey,
+		http:        &http.Client{Timeout: 15 * time.Second},
+		minInterval: 2500 * time.Millisecond,
 	}
 }
 
@@ -203,9 +214,33 @@ func (c *Client) GetMarkets(ctx context.Context, ids []string, vsCurrency string
 	return out, nil
 }
 
+// acquireRate blocks until the configured minInterval has elapsed since the
+// last call. Serialises all CoinGecko requests across goroutines — at startup
+// 2 collectors fire simultaneously and Demo plan returns 429 within seconds
+// without this guard.
+func (c *Client) acquireRate(ctx context.Context) error {
+	c.rateMu.Lock()
+	defer c.rateMu.Unlock()
+	if c.minInterval > 0 && !c.lastCallAt.IsZero() {
+		wait := c.minInterval - time.Since(c.lastCallAt)
+		if wait > 0 {
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	c.lastCallAt = time.Now()
+	return nil
+}
+
 // do performs one Demo-API GET. Auth (when apiKey set) is via query param —
 // CoinGecko's documented method for the demo tier.
 func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, error) {
+	if err := c.acquireRate(ctx); err != nil {
+		return nil, err
+	}
 	if c.apiKey != "" {
 		q.Set("x_cg_demo_api_key", c.apiKey)
 	}
