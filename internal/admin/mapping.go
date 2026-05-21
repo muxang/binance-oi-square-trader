@@ -1,11 +1,83 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
+
+	"trader/internal/coingecko"
 )
+
+// binanceProductCache memoises the BAPI product list (~15k entries) for 5min
+// per process. Lookup is keyed by lowercased base asset ("bb" → "BounceBit").
+//
+// ref: references/binance/urls.md §「Spot Product Info」
+var binanceProductCache struct {
+	sync.Mutex
+	byBase    map[string]string // baseAsset (lower) → asset full name (`an`)
+	fetchedAt time.Time
+}
+
+const binanceProductCacheTTL = 5 * time.Minute
+
+// fetchBinanceProductNames pulls the BAPI public product list and returns
+// base-asset → project-name. Cached 5min. ~1MB JSON, no auth needed.
+func fetchBinanceProductNames(ctx context.Context) (map[string]string, error) {
+	binanceProductCache.Lock()
+	if binanceProductCache.byBase != nil && time.Since(binanceProductCache.fetchedAt) < binanceProductCacheTTL {
+		out := binanceProductCache.byBase
+		binanceProductCache.Unlock()
+		return out, nil
+	}
+	binanceProductCache.Unlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &binanceHTTPError{Code: resp.StatusCode}
+	}
+	var body struct {
+		Data []struct {
+			B  string `json:"b"`  // base asset, e.g. "BNB"
+			AN string `json:"an"` // asset name, e.g. "BNB" / "ChainLink" / "BounceBit"
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(body.Data))
+	for _, d := range body.Data {
+		if d.B == "" || d.AN == "" {
+			continue
+		}
+		out[strings.ToLower(d.B)] = d.AN
+	}
+	binanceProductCache.Lock()
+	binanceProductCache.byBase = out
+	binanceProductCache.fetchedAt = time.Now()
+	binanceProductCache.Unlock()
+	return out, nil
+}
+
+type binanceHTTPError struct{ Code int }
+
+func (e *binanceHTTPError) Error() string {
+	return "binance bapi: HTTP " + http.StatusText(e.Code)
+}
 
 // MappingRow combines coingecko_symbol_map + coingecko_market_cache for the
 // UI table. NULL cache means CoinGecko returned no data for that mapping (or
@@ -218,18 +290,41 @@ func (s *Server) handleMappingAutoFix(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 
-	// 2) For each, /search?query=<base> and pick top symbol-equal match as canonical.
+	// 2) Pull binance project-name map (5min cache). Fallback to symbol-only
+	//    search if BAPI is down.
+	binanceNames, binanceErr := fetchBinanceProductNames(ctx)
+	if binanceErr != nil {
+		s.log.Warn().Err(binanceErr).Msg("mapping auto-fix: binance product list pull failed, falling back to symbol-only search")
+	}
+
 	fixedCount := 0
 	for i := range suspects {
 		sus := &suspects[i]
 		base := strings.ToLower(strings.TrimSuffix(sus.Symbol, "USDT"))
 		base = strings.TrimPrefix(base, "1000")  // 1000SHIB → shib for search
 		base = strings.TrimPrefix(base, "1000000")
-		candidates, err := s.cgCli.SearchByQuery(ctx, base)
+
+		// Priority 1: search by binance project-full-name ("BounceBit", "ChainLink")
+		// — far more specific than symbol since CoinGecko fuzzy-matches name field.
+		var (
+			candidates []coingecko.SearchCoin
+			err        error
+			searchedBy string
+		)
+		if name := binanceNames[base]; name != "" && !strings.EqualFold(name, base) {
+			candidates, err = s.cgCli.SearchByQuery(ctx, name)
+			searchedBy = name
+		}
+		// Priority 2 (fallback): search by base symbol if name missing or name search empty.
+		if len(candidates) == 0 && err == nil {
+			candidates, err = s.cgCli.SearchByQuery(ctx, base)
+			searchedBy = base
+		}
 		if err != nil {
 			sus.Status = "search_failed"
 			continue
 		}
+		_ = searchedBy
 		var newID string
 		for _, c := range candidates {
 			if strings.EqualFold(c.Symbol, base) {

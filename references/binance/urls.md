@@ -31,6 +31,9 @@
 | Top Trader Long Short Position Ratio | https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Top-Trader-Long-Short-Ratio |
 | Top Trader Long Short Account Ratio | https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Top-Long-Short-Account-Ratio |
 | Get Funding Rate History | https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History |
+| **Spot Product Info** (bapi public, 含 `an` 项目全名) ⭐ | https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products |
+
+> 注:Spot Product Info 是币安 web 端用的公开 endpoint,无需鉴权。响应里 `b` = base asset (如 "BB"), `an` = 项目全名 (如 "BounceBit")。R.13 mapping 自动修正用它替代 CoinGecko symbol search,精度高得多 (BB → BounceBit 而非 bitboard / 等同 symbol 但 mcap 远低的 micro-cap)。fetched: 2026-05-22.
 
 ⭐ = 本项目核心信号源。
 
