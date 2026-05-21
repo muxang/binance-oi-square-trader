@@ -73,17 +73,19 @@ func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
 		return errors.New("coingecko_symbol_map: no active oi symbols")
 	}
 
-	// Step 1: top-250 by market_cap (the canonical layer). ids=nil triggers
-	// the un-filtered top list. Failure here is tolerable — heuristic still
-	// works via /coins/list fallback.
+	// Step 1: top-1000 by market_cap (canonical layer, 4 pages × 250).
+	// Top-250 alone leaves out alt coins in the $10M-$1B mcap range — the
+	// shortest-id fallback then mis-maps them (EDEN, PUMP, BB, etc).
+	// 4 batch calls / 6h = trivial vs CoinGecko Demo 30/min.
 	topByMcap := make(map[string]string)
-	if topMarkets, err := c.cg.GetMarketsTopByMcap(ctx, 250); err == nil {
+	if topMarkets, err := c.cg.GetMarketsTopByMcapMulti(ctx, 1000); err == nil {
 		for _, m := range topMarkets {
 			s := strings.ToLower(m.Symbol)
 			if _, exists := topByMcap[s]; !exists {
-				topByMcap[s] = m.ID // first = highest market_cap for this symbol
+				topByMcap[s] = m.ID // first occurrence = highest market_cap for this symbol
 			}
 		}
+		c.log.Info().Int("top_mcap_pool", len(topByMcap)).Msg("coingecko_symbol_map: top-mcap pool loaded")
 	} else {
 		c.log.Warn().Err(err).Msg("coingecko_symbol_map: top-mcap pull failed (will use shortest-id fallback only)")
 	}

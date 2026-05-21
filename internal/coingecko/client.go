@@ -104,22 +104,66 @@ func (c *Client) ListCoins(ctx context.Context) ([]CoinInfo, error) {
 	return out, nil
 }
 
-// GetMarketsTopByMcap fetches the top-N coins ordered by market_cap descending.
-// Used by symbol_map collector to find the canonical (highest-mcap) id for
-// each Binance symbol — bypasses the disambiguation ambiguity of /coins/list.
-// limit is capped at 250 per CoinGecko docs (single page).
-//
-// Added 2026-05-21 after BTC → batcat mapping bug — shortest-id heuristic
-// alone is unsafe; mcap-weighted is the correct canonical signal.
+// GetMarketsTopByMcap fetches one page of /coins/markets ordered by
+// market_cap_desc. limit ≤250 per docs. Use GetMarketsTopByMcapMulti for
+// totals beyond 250 — wraps multi-page pulls.
 func (c *Client) GetMarketsTopByMcap(ctx context.Context, limit int) ([]MarketData, error) {
+	return c.getMarketsByMcapPage(ctx, limit, 1)
+}
+
+// GetMarketsTopByMcapMulti pulls totalLimit coins by market_cap_desc across
+// multiple pages (250 per page). totalLimit clamped to [1, 2000].
+//
+// Added 2026-05-21 (R.12.B follow-up): top-250 alone leaves out alt coins
+// in the $10M-$1B mcap range — EDEN/PUMP/etc — so the shortest-id fallback
+// mis-mapped them. Top-1000 covers virtually every alt mu cares about,
+// fallback only triggers for genuine micro-caps (<$10M).
+//
+// 4 batch calls / 6h = trivial vs CoinGecko Demo 30 req/min.
+//
+// Partial failures (rate limit on later pages) are tolerated — returns what
+// it successfully pulled plus the latest error for the caller to log.
+func (c *Client) GetMarketsTopByMcapMulti(ctx context.Context, totalLimit int) ([]MarketData, error) {
+	if totalLimit <= 0 {
+		totalLimit = 250
+	}
+	if totalLimit > 2000 {
+		totalLimit = 2000
+	}
+	const pageSize = 250
+	pages := (totalLimit + pageSize - 1) / pageSize
+	all := make([]MarketData, 0, totalLimit)
+	var lastErr error
+	for p := 1; p <= pages; p++ {
+		want := pageSize
+		if p == pages && totalLimit%pageSize != 0 {
+			want = totalLimit % pageSize
+		}
+		batch, err := c.getMarketsByMcapPage(ctx, want, p)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		all = append(all, batch...)
+		if len(batch) < want {
+			break // end of catalog reached
+		}
+	}
+	return all, lastErr
+}
+
+func (c *Client) getMarketsByMcapPage(ctx context.Context, limit, page int) ([]MarketData, error) {
 	if limit <= 0 || limit > 250 {
 		limit = 250
+	}
+	if page < 1 {
+		page = 1
 	}
 	q := url.Values{
 		"vs_currency": {"usd"},
 		"order":       {"market_cap_desc"},
 		"per_page":    {fmt.Sprintf("%d", limit)},
-		"page":        {"1"},
+		"page":        {fmt.Sprintf("%d", page)},
 	}
 	body, err := c.do(ctx, "/coins/markets", q)
 	if err != nil {
@@ -127,7 +171,7 @@ func (c *Client) GetMarketsTopByMcap(ctx context.Context, limit int) ([]MarketDa
 	}
 	var out []MarketData
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("parse /coins/markets (top): %w", err)
+		return nil, fmt.Errorf("parse /coins/markets (page %d): %w", page, err)
 	}
 	return out, nil
 }
