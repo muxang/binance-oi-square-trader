@@ -33,9 +33,14 @@ type CirculatingSupplyCollector struct {
 	listMapFn   func(ctx context.Context) ([]gen.ListCoingeckoMappingsRow, error)
 	oiUSDFn     func(ctx context.Context, symbol string) (decimal.Decimal, error)
 	updateFn    func(ctx context.Context, arg gen.UpdateLatestMarketCapForSymbolParams) error
+	cacheFn     func(ctx context.Context, arg gen.UpsertCoingeckoMarketCacheParams) error
 }
 
 // NewCirculatingSupplyCollector wires pgx-backed reader/writer.
+// R.12.B (2026-05-21): now writes coingecko_market_cache (full market) instead
+// of just UPDATEing watchlist subset of large_holder_ratios. The legacy
+// UpdateLatestMarketCapForSymbol path is kept for the acct/pos ratio rows
+// that DO have a large_holder_ratios entry (watchlist).
 func NewCirculatingSupplyCollector(cg *coingecko.Client, pool *pgxpool.Pool, log zerolog.Logger) *CirculatingSupplyCollector {
 	q := gen.New(pool)
 	return &CirculatingSupplyCollector{
@@ -44,6 +49,7 @@ func NewCirculatingSupplyCollector(cg *coingecko.Client, pool *pgxpool.Pool, log
 		listMapFn: q.ListCoingeckoMappings,
 		oiUSDFn:   q.GetLatestOIValueUSD,
 		updateFn:  q.UpdateLatestMarketCapForSymbol,
+		cacheFn:   q.UpsertCoingeckoMarketCache,
 	}
 }
 
@@ -91,40 +97,69 @@ func (c *CirculatingSupplyCollector) Run(ctx context.Context) error {
 		return errors.New("circulating_supply: CoinGecko returned 0 markets across all batches")
 	}
 
-	updated, skipped := 0, 0
+	cached, lhUpdated, skipped := 0, 0, 0
 	for _, m := range mappings {
 		market, ok := markets[m.CoingeckoID]
 		if !ok {
 			skipped++
 			continue
 		}
+		// market.CirculatingSupply / market.MarketCap may be 0 — CoinGecko sometimes
+		// has the symbol cataloged but no live market data. Skip rather than write
+		// noise rows (downstream COALESCE would treat 0 as "no data" anyway).
+		if market.MarketCap <= 0 && market.CirculatingSupply <= 0 {
+			skipped++
+			continue
+		}
+
+		var supply, mcap, price decimal.NullDecimal
+		if market.CirculatingSupply > 0 {
+			supply = decimal.NullDecimal{Decimal: decimal.NewFromFloat(market.CirculatingSupply), Valid: true}
+		}
+		if market.MarketCap > 0 {
+			mcap = decimal.NullDecimal{Decimal: decimal.NewFromFloat(market.MarketCap), Valid: true}
+		}
+		if market.CurrentPrice > 0 {
+			price = decimal.NullDecimal{Decimal: decimal.NewFromFloat(market.CurrentPrice), Valid: true}
+		}
+
+		// R.12.B: full-market cache write (every mapped symbol gets a row, regardless
+		// of watchlist membership — this is the new Market 页 source of truth).
+		if err := c.cacheFn(ctx, gen.UpsertCoingeckoMarketCacheParams{
+			BinanceSymbol:     m.BinanceSymbol,
+			CoingeckoID:       m.CoingeckoID,
+			CirculatingSupply: supply,
+			MarketCapUsd:      mcap,
+			CurrentPriceUsd:   price,
+		}); err != nil {
+			c.log.Warn().Err(err).Str("symbol", m.BinanceSymbol).Msg("circulating_supply: cache upsert failed")
+			skipped++
+			continue
+		}
+		cached++
+
+		// Legacy R.11.A2c-2 path: still UPDATE the watchlist row's
+		// market_cap_ratio_pct so the existing acct/pos ratio sidebar charts
+		// keep their inline mcap column. Non-fatal — 0 rows affected for
+		// non-watchlist symbols (no large_holder_ratios row exists).
 		oiUSD, err := c.oiUSDFn(ctx, m.BinanceSymbol)
-		if err != nil {
-			// No oi_history row yet (new watchlist symbol) — skip silently.
-			skipped++
+		if err != nil || oiUSD.IsZero() || !mcap.Valid {
 			continue
 		}
-		if market.MarketCap <= 0 || oiUSD.IsZero() {
-			skipped++
-			continue
-		}
-		marketCap := decimal.NewFromFloat(market.MarketCap)
-		supply := decimal.NewFromFloat(market.CirculatingSupply)
-		ratio := oiUSD.Div(marketCap).Mul(decimal.NewFromInt(100))
-		err = c.updateFn(ctx, gen.UpdateLatestMarketCapForSymbolParams{
+		ratio := oiUSD.Div(mcap.Decimal).Mul(decimal.NewFromInt(100))
+		if err := c.updateFn(ctx, gen.UpdateLatestMarketCapForSymbolParams{
 			Symbol:            m.BinanceSymbol,
 			OpenInterestUsd:   decimal.NullDecimal{Decimal: oiUSD, Valid: true},
-			CirculatingSupply: decimal.NullDecimal{Decimal: supply, Valid: true},
+			CirculatingSupply: supply,
 			MarketCapRatioPct: decimal.NullDecimal{Decimal: ratio, Valid: true},
-		})
-		if err != nil {
-			c.log.Warn().Err(err).Str("symbol", m.BinanceSymbol).Msg("circulating_supply: update failed")
-			skipped++
+		}); err != nil {
+			c.log.Debug().Err(err).Str("symbol", m.BinanceSymbol).Msg("circulating_supply: legacy lh row update skipped")
 			continue
 		}
-		updated++
+		lhUpdated++
 	}
 	c.log.Info().Int("mappings", len(mappings)).Int("markets", len(markets)).
-		Int("updated", updated).Int("skipped", skipped).Msg("circulating_supply tick complete")
+		Int("cached", cached).Int("lh_updated", lhUpdated).Int("skipped", skipped).
+		Msg("circulating_supply tick complete")
 	return nil
 }

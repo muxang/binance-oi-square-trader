@@ -47,3 +47,28 @@ func (q *Queries) GetLatestOIHistory(ctx context.Context, arg GetLatestOIHistory
 	}
 	return items, nil
 }
+
+const getActiveOISymbols = `-- name: GetActiveOISymbols :many
+SELECT DISTINCT symbol FROM oi_history
+WHERE ts > NOW() - INTERVAL '1 hour'
+`
+
+// Round R.12.B: distinct symbols seen in oi_history within the past hour —
+// the full-market universe (~527 USDT-perp) for circulating_supply +
+// coingecko_symbol_map collectors. Watchlist (~24) is a small subset.
+func (q *Queries) GetActiveOISymbols(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, getActiveOISymbols)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		items = append(items, s)
+	}
+	return items, rows.Err()
+}

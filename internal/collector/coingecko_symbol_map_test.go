@@ -28,7 +28,7 @@ func newTestSymbolMapCollector(t *testing.T, symbols []string, h http.Handler) (
 
 	c := &CoingeckoSymbolMapCollector{
 		log: zerolog.Nop(),
-		watchlistFn: func(ctx context.Context) ([]string, error) {
+		symbolsFn: func(ctx context.Context) ([]string, error) {
 			return symbols, nil
 		},
 		upsertFn: func(ctx context.Context, arg gen.UpsertCoingeckoMappingParams) error {

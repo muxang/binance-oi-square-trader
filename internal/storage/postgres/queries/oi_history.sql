@@ -14,3 +14,10 @@ SELECT * FROM oi_history
 WHERE symbol = $1
 ORDER BY ts DESC
 LIMIT $2;
+
+-- name: GetActiveOISymbols :many
+-- Round R.12.B: distinct symbols seen in oi_history within the past hour —
+-- the full-market universe (~527 USDT-perp) for circulating_supply +
+-- coingecko_symbol_map collectors. Watchlist (~24) is a small subset.
+SELECT DISTINCT symbol FROM oi_history
+WHERE ts > NOW() - INTERVAL '1 hour';

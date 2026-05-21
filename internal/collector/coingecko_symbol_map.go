@@ -36,37 +36,41 @@ import (
 // mu can hand-correct mapping rows via UPDATE coingecko_symbol_map ... if
 // a heuristic decision is still wrong.
 type CoingeckoSymbolMapCollector struct {
-	cg          *coingecko.Client
-	log         zerolog.Logger
-	watchlistFn func(ctx context.Context) ([]string, error)
-	upsertFn    func(ctx context.Context, arg gen.UpsertCoingeckoMappingParams) error
-	countFn     func(ctx context.Context) (int64, error)
+	cg         *coingecko.Client
+	log        zerolog.Logger
+	symbolsFn  func(ctx context.Context) ([]string, error)
+	upsertFn   func(ctx context.Context, arg gen.UpsertCoingeckoMappingParams) error
+	countFn    func(ctx context.Context) (int64, error)
 }
 
 // NewCoingeckoSymbolMapCollector wires the collector with pgx-backed reader/writer.
+// R.12.B (2026-05-21): symbol source switched from watchlist (~24) to
+// oi_history.GetActiveOISymbols (~527 full market) — mu wants 流通市值 for
+// every USDⓈ-M perp, not just trading candidates.
 func NewCoingeckoSymbolMapCollector(cg *coingecko.Client, pool *pgxpool.Pool, log zerolog.Logger) *CoingeckoSymbolMapCollector {
 	q := gen.New(pool)
 	return &CoingeckoSymbolMapCollector{
-		cg:          cg,
-		log:         log,
-		watchlistFn: q.GetLatestWatchlistSymbols,
-		upsertFn:    q.UpsertCoingeckoMapping,
-		countFn:     q.CountCoingeckoMappings,
+		cg:        cg,
+		log:       log,
+		symbolsFn: q.GetActiveOISymbols, // R.12.B: full market via oi_history
+		upsertFn:  q.UpsertCoingeckoMapping,
+		countFn:   q.CountCoingeckoMappings,
 	}
 }
 
 func (c *CoingeckoSymbolMapCollector) Name() string { return "coingecko_symbol_map" }
 
 // Run pulls top-250-by-mcap + the full /coins/list catalog, then rebuilds
-// the watchlist mapping with market_cap_desc priority (canonical) and
-// shortest-id fallback (micro-caps). Tolerant of partial CoinGecko outage.
+// mappings for the full oi_history universe (~527 USDT-perp) with
+// market_cap_desc priority (canonical) and shortest-id fallback (micro-caps).
+// Tolerant of partial CoinGecko outage.
 func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
-	symbols, err := c.watchlistFn(ctx)
+	symbols, err := c.symbolsFn(ctx)
 	if err != nil {
-		return fmt.Errorf("watchlist: %w", err)
+		return fmt.Errorf("active oi symbols: %w", err)
 	}
 	if len(symbols) == 0 {
-		return errors.New("coingecko_symbol_map: empty watchlist")
+		return errors.New("coingecko_symbol_map: no active oi symbols")
 	}
 
 	// Step 1: top-250 by market_cap (the canonical layer). ids=nil triggers
@@ -130,7 +134,7 @@ func (c *CoingeckoSymbolMapCollector) Run(ctx context.Context) error {
 		}
 		mapped++
 	}
-	c.log.Info().Int("watchlist", len(symbols)).Int("mapped", mapped).
+	c.log.Info().Int("active_symbols", len(symbols)).Int("mapped", mapped).
 		Int("from_top_mcap", fromTop).Int("skipped", skipped).
 		Int("catalog", len(catalog)).Msg("coingecko_symbol_map tick complete")
 	return nil

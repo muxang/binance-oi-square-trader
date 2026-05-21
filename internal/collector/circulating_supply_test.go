@@ -22,18 +22,25 @@ const marketsBatchFixture = `[
   {"id":"ethereum","symbol":"eth","current_price":4200.0,"market_cap":504000000000,"circulating_supply":120000000}
 ]`
 
+// supplyTestCapture holds the three independent write streams the collector
+// emits per tick (full-market cache + legacy lh row update).
+type supplyTestCapture struct {
+	cache  []gen.UpsertCoingeckoMarketCacheParams
+	lhRows []gen.UpdateLatestMarketCapForSymbolParams
+}
+
 func newTestSupplyCollector(
 	t *testing.T,
 	mappings []gen.ListCoingeckoMappingsRow,
 	oiByBin map[string]decimal.Decimal,
 	h http.Handler,
-) (*CirculatingSupplyCollector, *[]gen.UpdateLatestMarketCapForSymbolParams) {
+) (*CirculatingSupplyCollector, *supplyTestCapture) {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
 	mu := sync.Mutex{}
-	captured := []gen.UpdateLatestMarketCapForSymbolParams{}
+	cap := &supplyTestCapture{}
 
 	c := &CirculatingSupplyCollector{
 		cg:  coingecko.NewTestClient(srv.URL),
@@ -50,11 +57,17 @@ func newTestSupplyCollector(
 		updateFn: func(ctx context.Context, arg gen.UpdateLatestMarketCapForSymbolParams) error {
 			mu.Lock()
 			defer mu.Unlock()
-			captured = append(captured, arg)
+			cap.lhRows = append(cap.lhRows, arg)
+			return nil
+		},
+		cacheFn: func(ctx context.Context, arg gen.UpsertCoingeckoMarketCacheParams) error {
+			mu.Lock()
+			defer mu.Unlock()
+			cap.cache = append(cap.cache, arg)
 			return nil
 		},
 	}
-	return c, &captured
+	return c, cap
 }
 
 func marketsHandler(t *testing.T, body string) http.Handler {
@@ -67,10 +80,8 @@ func marketsHandler(t *testing.T, body string) http.Handler {
 	})
 }
 
-func TestSupply_HappyPath_ComputesRatio(t *testing.T) {
-	// BTC: OI_USD=15.76 B → ratio = 15.76B / 1576B × 100 = 1.0%
-	// ETH: OI_USD=5.04 B → ratio = 5.04B / 504B × 100 = 1.0%
-	c, captured := newTestSupplyCollector(t,
+func TestSupply_HappyPath_CachesAllSymbols(t *testing.T) {
+	c, cap := newTestSupplyCollector(t,
 		[]gen.ListCoingeckoMappingsRow{
 			{BinanceSymbol: "BTCUSDT", CoingeckoID: "bitcoin"},
 			{BinanceSymbol: "ETHUSDT", CoingeckoID: "ethereum"},
@@ -82,37 +93,42 @@ func TestSupply_HappyPath_ComputesRatio(t *testing.T) {
 		marketsHandler(t, marketsBatchFixture),
 	)
 	require.NoError(t, c.Run(context.Background()))
-	require.Len(t, *captured, 2)
-
-	got := map[string]gen.UpdateLatestMarketCapForSymbolParams{}
-	for _, p := range *captured {
-		got[p.Symbol] = p
+	// R.12.B: cache row for every mapped symbol (full-market path).
+	require.Len(t, cap.cache, 2)
+	gotCache := map[string]gen.UpsertCoingeckoMarketCacheParams{}
+	for _, p := range cap.cache {
+		gotCache[p.BinanceSymbol] = p
 	}
-	// Both ratios should equal 1.0% (within decimal precision).
+	assert.True(t, gotCache["BTCUSDT"].CirculatingSupply.Decimal.Equal(decimal.NewFromInt(19_700_000)))
+	assert.True(t, gotCache["BTCUSDT"].MarketCapUsd.Valid)
+	// Legacy lh path: both BTC + ETH had oi_history rows → both lh updated.
+	require.Len(t, cap.lhRows, 2)
 	one := decimal.NewFromInt(1)
-	assert.True(t, got["BTCUSDT"].MarketCapRatioPct.Decimal.Sub(one).Abs().LessThan(decimal.NewFromFloat(0.001)),
-		"BTC ratio expected ~1%%, got %s", got["BTCUSDT"].MarketCapRatioPct.Decimal)
-	assert.True(t, got["ETHUSDT"].MarketCapRatioPct.Decimal.Sub(one).Abs().LessThan(decimal.NewFromFloat(0.001)),
-		"ETH ratio expected ~1%%, got %s", got["ETHUSDT"].MarketCapRatioPct.Decimal)
-	assert.True(t, got["BTCUSDT"].CirculatingSupply.Decimal.Equal(decimal.NewFromInt(19_700_000)))
+	gotLh := map[string]gen.UpdateLatestMarketCapForSymbolParams{}
+	for _, p := range cap.lhRows {
+		gotLh[p.Symbol] = p
+	}
+	assert.True(t, gotLh["BTCUSDT"].MarketCapRatioPct.Decimal.Sub(one).Abs().LessThan(decimal.NewFromFloat(0.001)))
 }
 
-func TestSupply_NoOIHistory_SkipsSymbol(t *testing.T) {
-	c, captured := newTestSupplyCollector(t,
+func TestSupply_NoOIHistory_CachesButSkipsLh(t *testing.T) {
+	// R.12.B: even without oi_history (symbol newly listed), cache still
+	// receives a row — Market 页 cmcap doesn't need OI.
+	c, cap := newTestSupplyCollector(t,
 		[]gen.ListCoingeckoMappingsRow{
 			{BinanceSymbol: "BTCUSDT", CoingeckoID: "bitcoin"},
 			{BinanceSymbol: "ETHUSDT", CoingeckoID: "ethereum"},
 		},
-		map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromFloat(15_760_000_000)}, // ETH absent
+		map[string]decimal.Decimal{"BTCUSDT": decimal.NewFromFloat(15_760_000_000)}, // ETH no OI
 		marketsHandler(t, marketsBatchFixture),
 	)
 	require.NoError(t, c.Run(context.Background()))
-	assert.Len(t, *captured, 1)
-	assert.Equal(t, "BTCUSDT", (*captured)[0].Symbol)
+	assert.Len(t, cap.cache, 2, "both symbols cached regardless of OI presence")
+	assert.Len(t, cap.lhRows, 1, "only BTC had OI → only BTC legacy lh update")
 }
 
-func TestSupply_MarketCapZero_SkipsSymbol(t *testing.T) {
-	c, captured := newTestSupplyCollector(t,
+func TestSupply_MarketCapAndSupplyZero_SkipsSymbol(t *testing.T) {
+	c, cap := newTestSupplyCollector(t,
 		[]gen.ListCoingeckoMappingsRow{
 			{BinanceSymbol: "RUGUSDT", CoingeckoID: "rugcoin"},
 		},
@@ -120,7 +136,8 @@ func TestSupply_MarketCapZero_SkipsSymbol(t *testing.T) {
 		marketsHandler(t, `[{"id":"rugcoin","symbol":"rug","current_price":0,"market_cap":0,"circulating_supply":0}]`),
 	)
 	require.NoError(t, c.Run(context.Background()))
-	assert.Empty(t, *captured, "market_cap=0 → skip (division-by-zero guard)")
+	assert.Empty(t, cap.cache, "all 0 → noise row, skip")
+	assert.Empty(t, cap.lhRows)
 }
 
 func TestSupply_EmptyMappings_Error(t *testing.T) {
@@ -128,9 +145,8 @@ func TestSupply_EmptyMappings_Error(t *testing.T) {
 	require.Error(t, c.Run(context.Background()))
 }
 
-func TestSupply_BatchEndpointFails_PartialDataNoError(t *testing.T) {
-	// Single batch fails entirely → markets map empty → returns specific error.
-	c, captured := newTestSupplyCollector(t,
+func TestSupply_BatchEndpointFails_NoCacheWrites(t *testing.T) {
+	c, cap := newTestSupplyCollector(t,
 		[]gen.ListCoingeckoMappingsRow{
 			{BinanceSymbol: "BTCUSDT", CoingeckoID: "bitcoin"},
 		},
@@ -142,12 +158,12 @@ func TestSupply_BatchEndpointFails_PartialDataNoError(t *testing.T) {
 	err := c.Run(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "0 markets")
-	assert.Empty(t, *captured)
+	assert.Empty(t, cap.cache)
+	assert.Empty(t, cap.lhRows)
 }
 
-func TestSupply_CoinGeckoMissingForOneSymbol_SkipsRow(t *testing.T) {
-	// /coins/markets returns only bitcoin; ETH mapping has no market data → skip.
-	c, captured := newTestSupplyCollector(t,
+func TestSupply_CoinGeckoMissingForOneSymbol_PartialCache(t *testing.T) {
+	c, cap := newTestSupplyCollector(t,
 		[]gen.ListCoingeckoMappingsRow{
 			{BinanceSymbol: "BTCUSDT", CoingeckoID: "bitcoin"},
 			{BinanceSymbol: "ETHUSDT", CoingeckoID: "ethereum"},
@@ -159,6 +175,6 @@ func TestSupply_CoinGeckoMissingForOneSymbol_SkipsRow(t *testing.T) {
 		marketsHandler(t, `[{"id":"bitcoin","symbol":"btc","current_price":80000,"market_cap":1576000000000,"circulating_supply":19700000}]`),
 	)
 	require.NoError(t, c.Run(context.Background()))
-	require.Len(t, *captured, 1)
-	assert.Equal(t, "BTCUSDT", (*captured)[0].Symbol)
+	require.Len(t, cap.cache, 1)
+	assert.Equal(t, "BTCUSDT", cap.cache[0].BinanceSymbol)
 }

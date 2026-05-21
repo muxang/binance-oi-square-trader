@@ -38,9 +38,9 @@ type MarketResponse struct {
 }
 
 const (
-	// Cache key bumped to v3 in R.11.B1+ (added cmcap_usd_m column).
-	// Old :v2 cached blobs lack the new fields and would deserialize to 0.
-	marketCacheKey = "admin:market:full:v3"
+	// Cache key bumped to v4 in R.12.C (cmcap/mcap_ratio_pct now sourced from
+	// coingecko_market_cache full-market table — not watchlist-only lh).
+	marketCacheKey = "admin:market:full:v4"
 	marketCacheTTL = 2 * time.Minute
 )
 
@@ -107,6 +107,11 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 		case "price_24h_pct":  iv, jv = items[i].Price24hPct, items[j].Price24hPct
 		case "square":         iv, jv = float64(items[i].SquareMentions), float64(items[j].SquareMentions)
 		case "square_24h_pct": iv, jv = items[i].Square24hPct, items[j].Square24hPct
+		// R.11.B1+ sort keys (mu 2026-05-21 request)
+		case "cmcap_usd":      iv, jv = items[i].CMcapUsdM, items[j].CMcapUsdM
+		case "acct_ls":        iv, jv = items[i].AcctLongShortRatio, items[j].AcctLongShortRatio
+		case "pos_ls":         iv, jv = items[i].PosLongShortRatio, items[j].PosLongShortRatio
+		case "mcap_pct":       iv, jv = items[i].MarketCapRatioPct, items[j].MarketCapRatioPct
 		default:               iv, jv = items[i].Oi1hPct, items[j].Oi1hPct
 		}
 		if asc {
@@ -170,19 +175,25 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			WHERE ts = (SELECT MAX(ts) FROM watchlist_snapshots)
 		),
 		op AS (SELECT DISTINCT symbol FROM trades WHERE status IN ('open','partial')),
-		-- Round R.11.B1: newest large_holder_ratios row per symbol.
-		-- R.11.B1+: circulating_supply added for 流动市值 column (lh × lp.price).
+		-- R.11.B1: newest large_holder_ratios row (watchlist-only) — supplies
+		-- 大户多空比 (acct/pos) for the subset that has it.
 		lh AS (
 			SELECT DISTINCT ON (symbol) symbol,
-			       account_long_short_ratio, position_long_short_ratio,
-			       market_cap_ratio_pct, circulating_supply
+			       account_long_short_ratio, position_long_short_ratio
 			FROM large_holder_ratios ORDER BY symbol, ts DESC
+		),
+		-- R.12.C: full-market market cap + supply, refreshed every 6h.
+		-- One row per binance_symbol (~527 mapped). Source for 流动市值 /
+		-- 市值占比 across the entire pool, not just watchlist.
+		cgm AS (
+			SELECT binance_symbol, circulating_supply, market_cap_usd
+			FROM coingecko_market_cache
 		)
 		SELECT
 			lo.symbol,
-			-- R.11.B1+: 流动市值 USD millions = circulating_supply × current_price.
-			-- Returns 0 if either piece is missing (mu sees "—" in UI).
-			COALESCE((lh.circulating_supply * lp.price / 1e6)::float8, 0),
+			-- R.12.C: 流动市值 = CoinGecko market_cap directly (more accurate than
+			-- supply × binance_price; CoinGecko aggregates from many exchanges).
+			COALESCE((cgm.market_cap_usd / 1e6)::float8, 0),
 			(lo.oi_value_usd / 1e6)::float8,
 			CASE WHEN h1.v>0 THEN ((lo.oi_value_usd-h1.v)/h1.v*100)::float8 ELSE 0 END,
 			CASE WHEN h24.v>0 THEN ((lo.oi_value_usd-h24.v)/h24.v*100)::float8 ELSE 0 END,
@@ -196,7 +207,11 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 			     ELSE 0 END,
 			COALESCE(lh.account_long_short_ratio::float8, 0),
 			COALESCE(lh.position_long_short_ratio::float8, 0),
-			COALESCE(lh.market_cap_ratio_pct::float8, 0),
+			-- R.12.C: 市值占比 = OI_USD / cache.market_cap × 100. Replaces the
+			-- watchlist-only lh.market_cap_ratio_pct path.
+			CASE WHEN cgm.market_cap_usd > 0 AND lo.oi_value_usd > 0
+			     THEN (lo.oi_value_usd / cgm.market_cap_usd * 100)::float8
+			     ELSE 0 END,
 			(wl.sym IS NOT NULL),
 			(op.symbol IS NOT NULL)
 		FROM lo
@@ -207,6 +222,7 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 		LEFT JOIN lp      ON lp.symbol      = lo.symbol
 		LEFT JOIN p24     ON p24.symbol     = lo.symbol
 		LEFT JOIN lh      ON lh.symbol      = lo.symbol
+		LEFT JOIN cgm     ON cgm.binance_symbol = lo.symbol
 		LEFT JOIN wl      ON wl.sym         = lo.symbol
 		LEFT JOIN op      ON op.symbol      = lo.symbol
 	`)
