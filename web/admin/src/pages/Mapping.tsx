@@ -22,7 +22,7 @@ export default function Mapping() {
   const [autoFixResult, setAutoFixResult] = useState<MappingAutoFixResponse | null>(null)
 
   const autoFixMut = useMutation({
-    mutationFn: () => autoFixMappings(30),
+    mutationFn: () => autoFixMappings(200),
     onSuccess: (res) => {
       setAutoFixResult(res)
       qc.invalidateQueries({ queryKey: ['coingecko-mapping'] })
@@ -69,7 +69,7 @@ export default function Mapping() {
           />
           <button
             onClick={() => {
-              if (confirm('扫描 OI/市值占比 > 30% 的 mapping, 用 CoinGecko /search 自动找市值最高的 canonical token. 确定继续?')) {
+              if (confirm('扫描 OI/市值占比 > 200% 的 mapping (几乎确定是 mis-map), 用 CoinGecko /search 自动找市值最高的 canonical token. 确定继续?')) {
                 setAutoFixResult(null)
                 autoFixMut.mutate()
               }

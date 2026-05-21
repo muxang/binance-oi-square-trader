@@ -166,20 +166,18 @@ type MappingAutoFixResponse struct {
 	Items     []MappingAutoFixRow `json:"items"`
 }
 
-// handleMappingAutoFix scans mappings with market_cap_ratio_pct above the
-// threshold (default 30%) and re-resolves each via CoinGecko /search — which
-// returns candidates ordered by market_cap desc, so the top symbol-equal
-// match is the canonical token (BounceBit beats bitboard for BB, etc).
+// handleMappingAutoFix scans mappings with OI/market_cap × 100 above the
+// threshold (default 200%) and re-resolves each via CoinGecko /search.
+// 30-100% can be legit (high-leverage micro-caps); >200% almost certainly
+// means wrong token mapped.
 //
-// Body (optional): {"threshold_pct": 30}
-// Default threshold 30% catches obvious mis-maps (real-world OI rarely >30%
-// of free float; >50% almost always means wrong token).
+// Body (optional): {"threshold_pct": 200}
 func (s *Server) handleMappingAutoFix(w http.ResponseWriter, r *http.Request) {
 	if s.cgCli == nil {
 		s.writeError(w, http.StatusInternalServerError, "coingecko client not configured")
 		return
 	}
-	threshold := 30.0
+	threshold := 200.0
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024))
 	if len(body) > 0 {
 		var req struct{ ThresholdPct float64 `json:"threshold_pct"` }

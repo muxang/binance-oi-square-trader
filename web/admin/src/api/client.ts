@@ -573,6 +573,6 @@ export interface MappingAutoFixResponse {
   fixed: number
   items: MappingAutoFixRow[]
 }
-export const autoFixMappings = (thresholdPct = 30): Promise<MappingAutoFixResponse> =>
+export const autoFixMappings = (thresholdPct = 200): Promise<MappingAutoFixResponse> =>
   api.post<MappingAutoFixResponse>('/coingecko-mapping/auto-fix',
     { threshold_pct: thresholdPct }).then(r => r.data)
