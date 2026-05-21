@@ -277,19 +277,23 @@ func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, err
 		}
 		lastErr = err
 		var he *HTTPError
-		if !errorsAs(err, &he) {
-			return nil, err // network / parse — not retriable
-		}
-		// Retry on 429 (rate limit) + 403 (per-IP block). Other 4xx fatal.
-		if he.HTTPCode != 429 && he.HTTPCode != 403 {
+		isHTTP := errorsAs(err, &he)
+		switch {
+		case !isHTTP:
+			// Network / SOCKS auth / DNS — retriable (proxy pool rotates IP).
+		case he.HTTPCode == 429 || he.HTTPCode == 403:
+			// Rate limit + per-IP block — retriable.
+		default:
+			// Other 4xx/5xx (5xx is rare for CoinGecko, 4xx like 401 invalid
+			// key won't recover from retry).
 			return nil, err
 		}
 		if attempt == maxAttempts {
 			break
 		}
-		// 429 → long wait (rate window reset); 403 → short wait (let proxy rotate).
+		// 429 → long wait (rate window reset); 403 / network → short (rotate IP).
 		wait := 3 * time.Second
-		if he.HTTPCode == 429 {
+		if isHTTP && he.HTTPCode == 429 {
 			wait = 65 * time.Second
 		}
 		select {
