@@ -383,7 +383,8 @@ export interface MarketData {
 
 export type MarketScope = 'all' | 'watchlist' | 'positions'
 export type MarketSort  = 'oi_1h_pct' | 'oi_24h_pct' | 'oi_usd' | 'price_24h_pct' | 'square' | 'square_24h_pct'
-  | 'cmcap_usd' | 'acct_ls' | 'pos_ls' | 'mcap_pct'  // R.11.B1+ (mu 2026-05-21)
+  | 'cmcap_usd' | 'acct_ls' | 'pos_ls' | 'mcap_pct'  // R.11.B1+
+  | 'symbol' | 'current_price'  // R.12 mu 2026-05-21: 全字段可排
 export type SortOrder   = 'asc' | 'desc'
 
 export interface MarketParams {

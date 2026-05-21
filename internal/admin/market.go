@@ -100,14 +100,21 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 	// Sort. Comparator returns "i should come before j" — desc uses >, asc uses <.
 	asc := order == "asc"
 	sort.Slice(items, func(i, j int) bool {
+		// Symbol is alphabetic — handled separately, no float comparison.
+		if sortBy == "symbol" {
+			if asc {
+				return items[i].Symbol < items[j].Symbol
+			}
+			return items[i].Symbol > items[j].Symbol
+		}
 		var iv, jv float64
 		switch sortBy {
 		case "oi_24h_pct":     iv, jv = items[i].Oi24hPct, items[j].Oi24hPct
 		case "oi_usd":         iv, jv = items[i].OiUsdM, items[j].OiUsdM
+		case "current_price":  iv, jv = items[i].CurrentPrice, items[j].CurrentPrice
 		case "price_24h_pct":  iv, jv = items[i].Price24hPct, items[j].Price24hPct
 		case "square":         iv, jv = float64(items[i].SquareMentions), float64(items[j].SquareMentions)
 		case "square_24h_pct": iv, jv = items[i].Square24hPct, items[j].Square24hPct
-		// R.11.B1+ sort keys (mu 2026-05-21 request)
 		case "cmcap_usd":      iv, jv = items[i].CMcapUsdM, items[j].CMcapUsdM
 		case "acct_ls":        iv, jv = items[i].AcctLongShortRatio, items[j].AcctLongShortRatio
 		case "pos_ls":         iv, jv = items[i].PosLongShortRatio, items[j].PosLongShortRatio

@@ -261,18 +261,18 @@ export default function Market() {
               <table className="w-full">
                 <thead className="border-b border-[#2d2d2d]">
                   <tr>
-                    <SortTH current={sortBy} order={order} onSort={handleSort}>Symbol</SortTH>
-                    <SortTH right current={sortBy} order={order} onSort={handleSort}>流动市值</SortTH>
+                    <SortTH sortKey="symbol"             current={sortBy} order={order} onSort={handleSort}>Symbol</SortTH>
+                    <SortTH right sortKey="cmcap_usd"     current={sortBy} order={order} onSort={handleSort}>流动市值</SortTH>
                     <SortTH right sortKey="oi_usd"        current={sortBy} order={order} onSort={handleSort}>OI (USD)</SortTH>
                     <SortTH right sortKey="oi_1h_pct"     current={sortBy} order={order} onSort={handleSort}>OI 1h%</SortTH>
                     <SortTH right sortKey="oi_24h_pct"    current={sortBy} order={order} onSort={handleSort}>OI 24h%</SortTH>
-                    <SortTH right current={sortBy} order={order} onSort={handleSort}>当前价</SortTH>
+                    <SortTH right sortKey="current_price" current={sortBy} order={order} onSort={handleSort}>当前价</SortTH>
                     <SortTH right sortKey="price_24h_pct" current={sortBy} order={order} onSort={handleSort}>24h涨跌</SortTH>
                     <SortTH right sortKey="square"        current={sortBy} order={order} onSort={handleSort}>Square提及</SortTH>
                     <SortTH right sortKey="square_24h_pct" current={sortBy} order={order} onSort={handleSort}>Square 24h%</SortTH>
-                    <SortTH right current={sortBy} order={order} onSort={handleSort}>账户多空</SortTH>
-                    <SortTH right current={sortBy} order={order} onSort={handleSort}>持仓多空</SortTH>
-                    <SortTH right current={sortBy} order={order} onSort={handleSort}>市值占比</SortTH>
+                    <SortTH right sortKey="acct_ls"       current={sortBy} order={order} onSort={handleSort}>账户多空</SortTH>
+                    <SortTH right sortKey="pos_ls"        current={sortBy} order={order} onSort={handleSort}>持仓多空</SortTH>
+                    <SortTH right sortKey="mcap_pct"      current={sortBy} order={order} onSort={handleSort}>市值占比</SortTH>
                     <SortTH current={sortBy} order={order} onSort={handleSort}>标记</SortTH>
                   </tr>
                 </thead>
