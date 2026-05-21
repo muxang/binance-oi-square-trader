@@ -259,27 +259,46 @@ func (c *Client) acquireRate(ctx context.Context) error {
 	return nil
 }
 
-// do performs one Demo-API GET with automatic 429 retry (CoinGecko Demo plan
-// rate-limits aggressively without an API key — observed 429 even at 5
-// calls/min unauthenticated). Single retry after 60s + a doubled wait.
-// Auth (when apiKey set) via x_cg_demo_api_key query param.
+// do performs one Demo-API GET with automatic transient-error retry.
+// Retries on 429 (rate limit) AND 403 ("Sorry, not able to access it right
+// now" — CoinGecko returns this when a specific IP is temporarily blocked,
+// distinct from rate limit). With proxy pool each retry samples a new IP,
+// so usually the next attempt succeeds.
+//
+// Strategy: 3 attempts total. 1st 429 → wait 65s; subsequent or 403 →
+// quick 3s retry (lets proxy rotate IP).
 func (c *Client) do(ctx context.Context, path string, q url.Values) ([]byte, error) {
-	body, err := c.doOnce(ctx, path, q)
-	if err == nil {
-		return body, nil
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		body, err := c.doOnce(ctx, path, q)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		var he *HTTPError
+		if !errorsAs(err, &he) {
+			return nil, err // network / parse — not retriable
+		}
+		// Retry on 429 (rate limit) + 403 (per-IP block). Other 4xx fatal.
+		if he.HTTPCode != 429 && he.HTTPCode != 403 {
+			return nil, err
+		}
+		if attempt == maxAttempts {
+			break
+		}
+		// 429 → long wait (rate window reset); 403 → short wait (let proxy rotate).
+		wait := 3 * time.Second
+		if he.HTTPCode == 429 {
+			wait = 65 * time.Second
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	var he *HTTPError
-	if !errorsAs(err, &he) || he.HTTPCode != 429 {
-		return nil, err
-	}
-	// 429: wait 60s + jittered, retry once. CoinGecko Demo rate window is per
-	// minute, so 65s buffer guarantees the count resets.
-	select {
-	case <-time.After(65 * time.Second):
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return c.doOnce(ctx, path, q)
+	return nil, lastErr
 }
 
 // errorsAs is a thin shim so we don't have to import "errors" just for As.
