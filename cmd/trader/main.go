@@ -214,6 +214,14 @@ func run() error {
 	if err := runner.Register(suppCol, "0 */6 * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register circulating_supply collector")
 	}
+	// One-shot startup kick so mu doesn't wait 6h for the next cron tick after
+	// a deploy. Async + non-fatal — failure just leaves data stale until
+	// the next scheduled tick.
+	go func() {
+		if err := suppCol.Run(ctx); err != nil {
+			log.Warn().Err(err).Msg("circulating_supply: startup one-shot run failed (cron will retry)")
+		}
+	}()
 	btcCol := collector.NewBTCRegimeCollector(client, rdb, log, collector.BTCRegimeConfig{})
 	if err := runner.Register(btcCol, "* * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register btc_regime collector")
