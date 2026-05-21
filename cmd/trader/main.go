@@ -201,7 +201,14 @@ func run() error {
 	// run once at startup if table is empty). Failures non-fatal — circulating-
 	// supply collector tolerates missing mappings (writes NULL market_cap_ratio).
 	// ref: references/external/coingecko.md
-	cgCli := coingecko.NewClient(os.Getenv("COINGECKO_DEMO_API_KEY"))
+	// CoinGecko Demo plan rate-limits per-IP. Route through binance ProxyPool
+	// so requests rotate IPs — bypasses 429 throttle without needing a paid key.
+	// proxyHTTP fn maps proxy.ProxyManager → coingecko.HTTPClientFn shape.
+	cgCli := coingecko.NewClient(os.Getenv("COINGECKO_DEMO_API_KEY")).WithProxyHTTP(
+		func(ctx context.Context) (*http.Client, error) {
+			hc, _, err := proxy.HTTPClient(ctx)
+			return hc, err
+		})
 	cgMapCol := collector.NewCoingeckoSymbolMapCollector(cgCli, pgPool, log)
 	cgMapCol.EnsureMappingPopulated(ctx)
 	if err := runner.Register(cgMapCol, "0 0,12 * * *"); err != nil {

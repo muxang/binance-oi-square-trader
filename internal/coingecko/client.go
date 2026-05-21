@@ -57,11 +57,24 @@ type MarketData struct {
 	CirculatingSupply float64 `json:"circulating_supply"`
 }
 
+// HTTPClientFn returns a per-request *http.Client. With a proxy pool the
+// returned client may rotate IPs per call — CoinGecko Demo throttle is
+// per-IP, so rotation effectively multiplies the rate ceiling.
+//
+// Signature mirrors binance.ProxyManager.HTTPClient minus the proxy label
+// (we don't need it for logging here). nil result means use the package-
+// internal direct http.Client.
+type HTTPClientFn func(ctx context.Context) (*http.Client, error)
+
 // Client is goroutine-safe; share one instance across all collectors.
 type Client struct {
-	baseURL string
-	apiKey  string // Demo key; empty = unauthenticated (slower rate, still works)
-	http    *http.Client
+	baseURL    string
+	apiKey     string // Demo key; empty = unauthenticated (slower rate, still works)
+	directHTTP *http.Client
+	// R.12 (2026-05-21 mu request): when set, every HTTP call goes through
+	// this factory — e.g. binance.ProxyPool — so requests rotate source IPs
+	// and bypass per-IP rate limits without relying on a paid API key.
+	proxyHTTP HTTPClientFn
 	// Demo plan throttles ~30 req/min burst; 2 collectors firing in parallel
 	// hit 429 within seconds. Internal serialiser caps to ~24 req/min global.
 	rateMu      sync.Mutex
@@ -76,13 +89,24 @@ type Client struct {
 // Internal rate limiter paces calls to ≥2500ms apart globally — Demo plan
 // 429 with burst, this serialiser avoids that even when symbol_map + supply
 // collectors run concurrently at startup.
+//
+// Use WithProxyHTTP to swap the per-call http.Client factory for proxy-pool
+// rotation.
 func NewClient(apiKey string) *Client {
 	return &Client{
 		baseURL:     DemoBaseURL,
 		apiKey:      apiKey,
-		http:        &http.Client{Timeout: 15 * time.Second},
+		directHTTP:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: 2500 * time.Millisecond,
 	}
+}
+
+// WithProxyHTTP wires a per-call http.Client factory (typically pulling from
+// a binance ProxyPool) so CoinGecko requests rotate IPs. Returns the client
+// itself for fluent setup.
+func (c *Client) WithProxyHTTP(fn HTTPClientFn) *Client {
+	c.proxyHTTP = fn
+	return c
 }
 
 // withCustomBase exists for tests; production callers use NewClient.
@@ -286,7 +310,18 @@ func (c *Client) doOnce(ctx context.Context, path string, q url.Values) ([]byte,
 		return nil, fmt.Errorf("build req: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
+	httpClient := c.directHTTP
+	if c.proxyHTTP != nil {
+		pc, perr := c.proxyHTTP(ctx)
+		if perr != nil {
+			// Proxy unavailable → fall back to direct. Logged at caller via err
+			// path eventually; non-fatal so Demo path still works.
+			httpClient = c.directHTTP
+		} else if pc != nil {
+			httpClient = pc
+		}
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http: %w", err)
 	}
