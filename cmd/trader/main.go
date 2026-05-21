@@ -214,10 +214,17 @@ func run() error {
 	if err := runner.Register(suppCol, "0 */6 * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register circulating_supply collector")
 	}
-	// One-shot startup kick so mu doesn't wait 6h for the next cron tick after
-	// a deploy. Async + non-fatal — failure just leaves data stale until
-	// the next scheduled tick.
+	// One-shot startup kick. Delays 30s so symbol_map collector's startup
+	// CoinGecko hits (5 calls in 12s) clear the Demo plan's per-minute rate
+	// window before supply collector adds its own 2-3 batch calls. Without
+	// the delay both collectors race the 30/min ceiling and the second one
+	// gets 429 across all batches.
 	go func() {
+		select {
+		case <-time.After(30 * time.Second):
+		case <-ctx.Done():
+			return
+		}
 		if err := suppCol.Run(ctx); err != nil {
 			log.Warn().Err(err).Msg("circulating_supply: startup one-shot run failed (cron will retry)")
 		}
