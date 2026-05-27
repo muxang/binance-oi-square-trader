@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type MarketSort, type SortOrder } from '../api/client'
 import { DataSourceContext } from '../context/DataSource'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
+import MarkPriceModal from '../components/MarkPriceModal'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -204,6 +205,7 @@ export default function Market() {
   const [page,     setPage]    = useState(1)
   const [size,     setSize]    = useState(50)
   const [selected, setSelected] = useState<string | null>(null)
+  const [markFor,  setMarkFor]  = useState<{ symbol: string; price: number } | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['market', scope, sortBy, order, search, page, size],
@@ -274,6 +276,7 @@ export default function Market() {
                     <SortTH right sortKey="pos_ls"        current={sortBy} order={order} onSort={handleSort}>持仓多空</SortTH>
                     <SortTH right sortKey="mcap_pct"      current={sortBy} order={order} onSort={handleSort}>市值占比</SortTH>
                     <SortTH current={sortBy} order={order} onSort={handleSort}>标记</SortTH>
+                    <SortTH current={sortBy} order={order} onSort={handleSort}>🔔</SortTH>
                   </tr>
                 </thead>
                 <tbody>
@@ -344,6 +347,12 @@ export default function Market() {
                               style={{ color: colors.normal, background: colors.normal + '22' }}>候选</span>
                           )}
                         </td>
+                        <td className="py-2 px-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setMarkFor({ symbol: item.symbol, price: item.current_price }) }}
+                            className="text-xs px-1.5 py-0.5 rounded bg-[#252525] text-gray-400 hover:text-white hover:bg-blue-800"
+                            title="标记目标价">🔔</button>
+                        </td>
                       </tr>
                     )
                   })}
@@ -368,6 +377,7 @@ export default function Market() {
       </div>
 
       {selected && <SymbolSidebar symbol={selected} onClose={() => setSelected(null)} />}
+      {markFor && <MarkPriceModal symbol={markFor.symbol} currentPrice={markFor.price} onClose={() => setMarkFor(null)} />}
     </div>
   )
 }

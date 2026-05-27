@@ -531,6 +531,12 @@ func run() error {
 		log.Fatal().Err(err).Msg("register daily_report collector")
 	}
 
+	// R.14: price-mark watcher — */1 polls active marks, flips on hit + 🟡 Feishu.
+	priceMarkCol := collector.NewPriceMarkCollector(pgPool, client, feishu, log, collector.PriceMarkConfig{})
+	if err := runner.Register(priceMarkCol, "* * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register price_mark collector")
+	}
+
 	// Phase 4 Round 7: orchestrated startup recovery. Order:
 	//  1. RecoverEnteringTrades (Round 2): clean stuck 'entering' via Binance lookup.
 	//  2. positionManager.SyncTick: immediate reconcile (no 1min wait).

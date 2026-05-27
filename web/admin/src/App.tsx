@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, NavLink, Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { fetchPriceMarks } from './api/client'
 import Dashboard from './pages/Dashboard'
 import Positions from './pages/Positions'
 import History from './pages/History'
@@ -9,6 +11,7 @@ import TradeDetail from './pages/TradeDetail'
 import Settings from './pages/Settings'
 import AuditLog from './pages/AuditLog'
 import Mapping from './pages/Mapping'
+import PriceMarks from './pages/PriceMarks'
 import { DataSourceProvider, useDataSource } from './context/DataSource'
 import type { DataSource } from './api/client'
 
@@ -46,14 +49,30 @@ const NAV_LINKS = [
   { to: '/square',    label: '🔥 Square 热点',  short: '🔥' },
   { to: '/market',    label: '🌐 市场扫描',     short: '🌐' },
   { to: '/mapping',   label: '🔗 符号映射',     short: '🔗' },
+  { to: '/marks',     label: '🔔 价格标记',     short: '🔔' },
   { to: '/settings',  label: '⚙️ 设置',         short: '⚙️' },
   { to: '/audit',     label: '📋 操作历史',     short: '🧾' },
 ]
+
+// R.14d: 全站价格标记触发横幅. 轮询 unacked_triggered, >0 时全站顶部红条提示,
+// 点击跳 /marks 确认。30s 刷新 (与 collector */1 节奏匹配)。
+function TriggeredBanner() {
+  const { data } = useQuery({ queryKey: ['price-marks'], queryFn: fetchPriceMarks, refetchInterval: 30_000 })
+  const n = data?.unacked_triggered ?? 0
+  if (n === 0) return null
+  return (
+    <Link to="/marks"
+      className="block bg-red-700 hover:bg-red-600 text-white text-sm font-semibold text-center py-1.5 animate-pulse">
+      🔔 {n} 个价格标记已触发 — 点击查看并确认 →
+    </Link>
+  )
+}
 
 function AppLayout() {
   return (
     <BrowserRouter basename="/admin">
       <div className="min-h-screen bg-[#141414] text-gray-100 flex flex-col">
+        <TriggeredBanner />
         {/* Top bar: data_source toggle */}
         <div className="h-8 bg-[#111] border-b border-[#2d2d2d] flex items-center px-3 sm:px-4">
           <DataSourceToggle />
@@ -106,6 +125,7 @@ function AppLayout() {
               <Route path="/square"    element={<Square />} />
               <Route path="/market"    element={<Market />} />
               <Route path="/mapping"   element={<Mapping />} />
+              <Route path="/marks"     element={<PriceMarks />} />
               <Route path="/settings"  element={<Settings />} />
               <Route path="/audit"     element={<AuditLog />} />
               <Route path="/trade/:id" element={<TradeDetail />} />

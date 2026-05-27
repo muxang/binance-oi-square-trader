@@ -90,13 +90,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/admin/coingecko-mapping/{symbol}", s.requireCsrf(s.handleMappingUpdate))
 	// R.13: batch-fix all mappings whose market_cap_ratio_pct > threshold via /search.
 	mux.HandleFunc("POST /api/admin/coingecko-mapping/auto-fix", s.requireCsrf(s.handleMappingAutoFix))
+	// R.14: price marks / alerts. List is public read; create/ack/delete CSRF-guarded.
+	mux.HandleFunc("GET /api/admin/price-marks", s.handlePriceMarksList)
+	mux.HandleFunc("POST /api/admin/price-marks", s.requireCsrf(s.handlePriceMarkCreate))
+	mux.HandleFunc("POST /api/admin/price-marks/{id}/ack", s.requireCsrf(s.handlePriceMarkAck))
+	mux.HandleFunc("DELETE /api/admin/price-marks/{id}", s.requireCsrf(s.handlePriceMarkDelete))
 	return s.cors(mux)
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

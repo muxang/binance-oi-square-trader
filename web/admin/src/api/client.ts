@@ -576,3 +576,42 @@ export interface MappingAutoFixResponse {
 export const autoFixMappings = (thresholdPct = 200): Promise<MappingAutoFixResponse> =>
   api.post<MappingAutoFixResponse>('/coingecko-mapping/auto-fix',
     { threshold_pct: thresholdPct }).then(r => r.data)
+
+// R.14: price marks / alerts
+export interface PriceMarkRow {
+  id: number
+  symbol: string
+  target_price: string
+  direction: 'above' | 'below'
+  note: string
+  status: 'active' | 'triggered'
+  acknowledged: boolean
+  current_price: string   // '' if unavailable
+  triggered_price: string // '' until triggered
+  triggered_at_ms: number // 0 until triggered
+  created_at_ms: number
+}
+export interface PriceMarkListResponse {
+  total: number
+  unacked_triggered: number
+  items: PriceMarkRow[]
+}
+export interface PriceMarkCreateReq {
+  symbol: string
+  target_price: string
+  direction: 'above' | 'below'
+  note?: string
+  current_price?: string
+}
+
+export const fetchPriceMarks = (): Promise<PriceMarkListResponse> =>
+  api.get<PriceMarkListResponse>('/price-marks').then(r => r.data)
+
+export const createPriceMark = (req: PriceMarkCreateReq): Promise<{ status: string; id: number }> =>
+  api.post<{ status: string; id: number }>('/price-marks', req).then(r => r.data)
+
+export const ackPriceMark = (id: number): Promise<{ status: string }> =>
+  api.post<{ status: string }>(`/price-marks/${id}/ack`, {}).then(r => r.data)
+
+export const deletePriceMark = (id: number): Promise<{ status: string }> =>
+  api.delete<{ status: string }>(`/price-marks/${id}`).then(r => r.data)
