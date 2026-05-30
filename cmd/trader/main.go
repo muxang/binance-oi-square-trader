@@ -572,6 +572,9 @@ func run() error {
 					HalfMarginUSDT: cfg.Position.MarginPerTradeHalf,
 					Leverage:       int32(cfg.Position.Leverage),
 				},
+				// R.17: short-circuit signals for symbols whose entry has been
+				// rejected by Binance (setMarginType/setLeverage 30min cooldown).
+				IsInEntryCooldown: executor.IsInCooldown,
 			},
 		},
 	)

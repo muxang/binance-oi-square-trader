@@ -51,6 +51,13 @@ type EngineConfig struct {
 	SignalWindow time.Duration // 默认 5 min (cron 评估窗口)
 	Filter       FilterConfig
 	Sizing       SizingConfig
+	// R.17: optional per-symbol entry-cooldown probe. Returns true when the
+	// symbol had a setMarginType/setLeverage failure in the last 30min, so
+	// EvaluateOne can short-circuit before sizing + InsertEnteringTrade.
+	// Without this hook the signal engine produces a doomed trade row every
+	// 5min for symbols that the account cannot trade (R.16 noise: 49 trades).
+	// Nil = legacy behavior (always evaluate).
+	IsInEntryCooldown func(symbol string) bool
 }
 
 func engineDefaults(cfg EngineConfig) EngineConfig {
@@ -120,6 +127,14 @@ func EvaluateOne(
 		SignalID: signal.ID,
 		Symbol:   signal.Symbol,
 		Decision: signal.Decision,
+	}
+
+	// R.17: short-circuit symbols whose entry has been rejected by Binance
+	// (setMarginType/setLeverage failure) in the last 30min. Bypasses filters,
+	// sizing, and InsertEnteringTrade so the trade table stays clean.
+	if cfg.IsInEntryCooldown != nil && cfg.IsInEntryCooldown(signal.Symbol) {
+		res.Outcome = "rejected_entry_cooldown"
+		return res, nil
 	}
 
 	filterRes, err := EvaluateGlobalFilters(ctx, signal.Symbol, now, deps, cfg.Filter)

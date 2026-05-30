@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -66,7 +67,18 @@ type Executor struct {
 	log      zerolog.Logger
 	nowFn    func() time.Time
 	notifier *notify.Feishu // Round 4 — optional 🟢 info on entry success
+	// R.17: per-symbol entry cooldown. set_margin_type / set_leverage failures
+	// indicate the symbol is unusable on the current account (testnet missing
+	// listing, mainnet KYC/leverage cap, etc.). Without this guard the signal
+	// engine ticks every 5min and the executor burns API quota retrying the
+	// same doomed entry indefinitely (R.16 found 49 such failed trades).
+	// Values are time.Time of last failure; IsInCooldown returns true within
+	// entryCooldownTTL. In-memory only (resets on restart by design — 30min
+	// is shorter than any realistic restart cadence).
+	entryCooldown sync.Map
 }
+
+const entryCooldownTTL = 30 * time.Minute
 
 // New creates an Executor. bc, db, and rdb must not be nil.
 func New(bc *binance.Client, db *gen.Queries, rdb *redis.Client, cfg Config, log zerolog.Logger) *Executor {
@@ -75,6 +87,30 @@ func New(bc *binance.Client, db *gen.Queries, rdb *redis.Client, cfg Config, log
 
 // SetNotifier wires Round 4 Feishu alerter (entry success / fail).
 func (e *Executor) SetNotifier(n *notify.Feishu) { e.notifier = n }
+
+// R.17: IsInCooldown reports whether the given symbol had a setMarginType /
+// setLeverage failure within entryCooldownTTL. Called by decision engine
+// before InsertEnteringTrade — cooldown'd symbols are rejected pre-DB so
+// the executor never gets re-fired with the same doomed entry.
+func (e *Executor) IsInCooldown(symbol string) bool {
+	v, ok := e.entryCooldown.Load(symbol)
+	if !ok {
+		return false
+	}
+	t, ok := v.(time.Time)
+	if !ok {
+		return false
+	}
+	if time.Since(t) >= entryCooldownTTL {
+		e.entryCooldown.Delete(symbol)
+		return false
+	}
+	return true
+}
+
+func (e *Executor) markEntryCooldown(symbol string) {
+	e.entryCooldown.Store(symbol, e.nowFn())
+}
 
 // Round 2.y: hot-reloadable threshold getters. Existing position 杠杆 binance-locked;
 // only NEW entries pick up changed Leverage on next SetLeverage call.
@@ -205,6 +241,7 @@ func (e *Executor) PlaceEntry(
 		metrics.OrderLatencySeconds.WithLabelValues("margin").Observe(e.nowFn().Sub(start).Seconds())
 		log.Error().Err(err).Msg("order.failed: set_margin_type")
 		e.markFailed(ctx, tradeID, "set_margin_type_failed")
+		e.markEntryCooldown(symbol)
 		metrics.OrdersTotal.WithLabelValues(symbol, "BUY", decision, "failed").Inc()
 		return
 	}
@@ -216,6 +253,7 @@ func (e *Executor) PlaceEntry(
 		metrics.OrderLatencySeconds.WithLabelValues("leverage").Observe(e.nowFn().Sub(start).Seconds())
 		log.Error().Err(err).Msg("order.failed: set_leverage")
 		e.markFailed(ctx, tradeID, "set_leverage_failed")
+		e.markEntryCooldown(symbol)
 		metrics.OrdersTotal.WithLabelValues(symbol, "BUY", decision, "failed").Inc()
 		return
 	}
