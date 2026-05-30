@@ -70,6 +70,8 @@ func (s *Server) Routes() http.Handler {
 	// ack endpoint is CSRF + audit + transactional (mu mobile flow).
 	mux.HandleFunc("GET /api/admin/halt-rca/unacknowledged", s.handleHaltRCAUnacknowledged)
 	mux.HandleFunc("POST /api/admin/halt-rca/{id}/ack", s.requireCsrf(s.handleHaltRCAAck))
+	// R.15: one-click batch ack — every unacked halt_rca → ignored.
+	mux.HandleFunc("POST /api/admin/halt-rca/ack-all", s.requireCsrf(s.handleHaltRCAAckAll))
 	// Phase 5.2 Round 1: CSRF token endpoint. Caddy basic auth at path matcher
 	// guards this in production; browser prompts on first call per session.
 	mux.HandleFunc("GET /api/admin/csrf-token", s.handleCsrfToken)

@@ -197,6 +197,10 @@ export const fetchHaltRCAUnack = (): Promise<HaltRCAUnackData> =>
 export const ackHaltRCA = (id: number, action: RcaAction, note?: string): Promise<{ ok: boolean }> =>
   api.post<{ ok: boolean }>(`/halt-rca/${id}/ack`, { confirm: true, action, note: note ?? '' }).then(r => r.data)
 
+// R.15: batch ack — flag every unacked halt_rca as ignored in one call.
+export const ackAllHaltRCA = (note?: string): Promise<{ ok: boolean; count: number; ids: number[] }> =>
+  api.post<{ ok: boolean; count: number; ids: number[] }>('/halt-rca/ack-all', { confirm: true, note: note ?? '' }).then(r => r.data)
+
 export interface CBEvent {
   id: number
   ts: string

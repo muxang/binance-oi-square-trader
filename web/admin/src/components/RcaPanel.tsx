@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import {
-  ackHaltRCA, fetchHaltRCAUnack, type HaltRCAEntry, type RcaAction,
+  ackAllHaltRCA, ackHaltRCA, fetchHaltRCAUnack, type HaltRCAEntry, type RcaAction,
 } from '../api/client'
 import { ConfirmModal, errorMessage } from './ConfirmModal'
 import { colors } from '../theme/colors'
@@ -101,6 +101,17 @@ export function RcaPanel() {
     },
   })
 
+  const ackAllMut = useMutation({
+    mutationFn: (note: string) => ackAllHaltRCA(note),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rca-unack'] })
+      qc.invalidateQueries({ queryKey: ['audit-log'] })
+    },
+  })
+
+  const [ackAllOpen, setAckAllOpen] = useState(false)
+  const [ackAllNote, setAckAllNote] = useState('')
+
   if (isLoading) return null
   if (!data || data.total === 0) return null
 
@@ -110,6 +121,13 @@ export function RcaPanel() {
         <h2 className="text-sm font-semibold text-gray-300">
           📋 待 ack 的 halt RCA <span className="text-xs text-gray-600 ml-1">({data.total})</span>
         </h2>
+        <button
+          onClick={() => { setAckAllNote(''); setAckAllOpen(true) }}
+          disabled={ackAllMut.isPending}
+          className="text-xs px-3 py-1.5 rounded bg-[#2d2d2d] text-gray-300 hover:bg-[#3d3d3d] disabled:opacity-50 min-h-[36px] sm:min-h-0"
+        >
+          ⚪ 一键全部忽略 ({data.total})
+        </button>
       </div>
       {ackMut.isError && (
         <div
@@ -117,6 +135,14 @@ export function RcaPanel() {
           style={{ background: colors.halt + '15', color: colors.halt }}
         >
           ack 失败: {errorMessage(ackMut.error)}
+        </div>
+      )}
+      {ackAllMut.isError && (
+        <div
+          className="text-xs mb-3 px-3 py-2 rounded"
+          style={{ background: colors.halt + '15', color: colors.halt }}
+        >
+          批量 ack 失败: {errorMessage(ackAllMut.error)}
         </div>
       )}
       <div className="space-y-3">
@@ -128,6 +154,31 @@ export function RcaPanel() {
           />
         ))}
       </div>
+
+      <ConfirmModal
+        open={ackAllOpen}
+        title={`一键忽略 ${data.total} 条未 ack RCA`}
+        tone="warning"
+        confirmLabel={`确认 ack ${data.total} 条`}
+        onCancel={() => setAckAllOpen(false)}
+        onConfirm={() => { ackAllMut.mutate(ackAllNote); setAckAllOpen(false) }}
+      >
+        <div className="text-xs space-y-2 mb-3">
+          <div className="text-gray-400">
+            将把当前所有 <b>{data.total}</b> 条未 ack 的 RCA 标为 <b>ignored</b>,
+            每条写一行 admin_audit_log(action_type=rca_ack, new_state.batch_ack=true)。
+          </div>
+          <div className="text-gray-500">
+            <b>不影响</b> 当前 halt 状态(用 Dashboard halt-reset 按钮单独清除)。
+          </div>
+        </div>
+        <label className="block text-xs text-gray-500 mb-1">备注 (可选,会附在每条 audit log 上):</label>
+        <input
+          type="text" value={ackAllNote} onChange={e => setAckAllNote(e.target.value)}
+          placeholder="e.g. 历史告警批量清理"
+          className="w-full px-3 py-1.5 text-sm rounded bg-[#0f0f0f] border border-[#3d3d3d] text-gray-200"
+        />
+      </ConfirmModal>
     </div>
   )
 }

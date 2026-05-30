@@ -160,3 +160,80 @@ func (s *Server) handleHaltRCAAck(w http.ResponseWriter, r *http.Request) {
 		"action": req.Action,
 	})
 }
+
+// R.15: batch-ack every unacknowledged halt_rca as "ignored".
+// One tx: UPDATE NOT acked → ignored, then one admin_audit_log row per
+// affected id (per-row audit keeps single-id history queries working).
+type HaltRCAAckAllRequest struct {
+	Confirm bool   `json:"confirm"`
+	Note    string `json:"note"`
+}
+
+func (s *Server) handleHaltRCAAckAll(w http.ResponseWriter, r *http.Request) {
+	var req HaltRCAAckAllRequest
+	if !s.decodeAndConfirm(w, r, &req.Confirm, &req, "confirm=true required") {
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.writeDB.Begin(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "db tx error")
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	rows, err := tx.Query(ctx, `
+		UPDATE halt_rca
+		SET mu_acknowledged = TRUE,
+		    mu_action = 'ignored',
+		    mu_acknowledged_at = NOW()
+		WHERE NOT mu_acknowledged
+		RETURNING id, halt_type
+	`)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "update error")
+		return
+	}
+	type affected struct {
+		id       int64
+		haltType string
+	}
+	var hits []affected
+	for rows.Next() {
+		var a affected
+		if err := rows.Scan(&a.id, &a.haltType); err != nil {
+			rows.Close()
+			s.writeError(w, http.StatusInternalServerError, "scan error")
+			return
+		}
+		hits = append(hits, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "rows error")
+		return
+	}
+
+	ids := make([]int64, 0, len(hits))
+	for _, a := range hits {
+		prev, _ := json.Marshal(map[string]any{"halt_type": a.haltType, "acked": false})
+		newSt, _ := json.Marshal(map[string]any{"action": "ignored", "acked": true, "batch_ack": true})
+		if err := s.insertAuditLogTx(ctx, tx, r, "rca_ack", "halt_rca", strconv.FormatInt(a.id, 10), prev, newSt, req.Note); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "audit error")
+			return
+		}
+		ids = append(ids, a.id)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "commit error")
+		return
+	}
+	s.log.Info().Int("count", len(ids)).Ints64("ids", ids).Msg("rca.ack_all")
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"count": len(ids),
+		"ids":   ids,
+	})
+}
