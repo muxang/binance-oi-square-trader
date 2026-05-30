@@ -100,7 +100,17 @@ type PositionManager struct {
 	// Pre-R.8: 1-tick = halt. Post-R.8: tick 1 mark candidate; tick 2 still
 	// missing = autoSyncOrphan (no halt).
 	pendingOrphans sync.Map // map[int64]time.Time (first detection ts)
+	// R.17 D1: per-symbol dedup for binance_only_unknown alerts. Without this
+	// a single external position floods halt_rca every minute (R.16 saw 400+
+	// rows for one DRIFTUSDT SHORT). Stores symbol → last alert time. SHORT
+	// positions reuse the same window so their warn log is also rate-limited.
+	binanceOnlyDedup sync.Map
 }
+
+// R.17 D1: dedup window for binance_only_unknown. Within this window, the same
+// symbol re-appearing on a subsequent tick logs at warn level but does NOT
+// trip a fresh halt or write a new halt_rca row.
+const binanceOnlyDedupWindow = 60 * time.Minute
 
 // SetNotifier wires the Round 4 Feishu alerter. Called from main.go.
 func (pm *PositionManager) SetNotifier(n *notify.Feishu) { pm.notifier = n }
@@ -355,9 +365,39 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 	// Round 4 binance_only_unknown: scan Binance positions for symbols not in
 	// our open-trades set. Means mu / another process opened a position outside
 	// the trader. Halt + RCA — do NOT auto-close (could be intentional).
+	//
+	// R.17 D1 refinements:
+	//   - SHORT positions: strategy is long-only, so any SHORT is external by
+	//     definition (manual hedge / residual). Log warn on first sight per
+	//     dedup window — do NOT trip halt, do NOT write halt_rca.
+	//   - LONG dedup: same symbol within binanceOnlyDedupWindow only halts
+	//     once (avoids the 400-row halt_rca flood seen in R.16).
 	unknown := 0
 	for _, pos := range positions {
 		if localSymbols[pos.Symbol] {
+			continue
+		}
+		dedupHit := false
+		if last, ok := pm.binanceOnlyDedup.Load(pos.Symbol); ok {
+			if t, ok := last.(time.Time); ok && now.Sub(t) < binanceOnlyDedupWindow {
+				dedupHit = true
+			}
+		}
+		if pos.PositionAmt.IsNegative() {
+			if !dedupHit {
+				pm.log.Warn().
+					Str("symbol", pos.Symbol).
+					Str("position_amt", pos.PositionAmt.String()).
+					Msg("position.binance_only_short_skipped (strategy long-only; not halting)")
+				pm.binanceOnlyDedup.Store(pos.Symbol, now)
+			}
+			continue
+		}
+		if dedupHit {
+			pm.log.Warn().
+				Str("symbol", pos.Symbol).
+				Str("position_amt", pos.PositionAmt.String()).
+				Msg("position.binance_only_unknown.deduped (within 60min)")
 			continue
 		}
 		pm.log.Error().Str("symbol", pos.Symbol).Str("position_amt", pos.PositionAmt.String()).
@@ -370,6 +410,7 @@ func (pm *PositionManager) SyncTick(ctx context.Context) {
 			"entry_price":  pos.EntryPrice.String(),
 			"detected_at":  now.Format(time.RFC3339),
 		}, pm.log)
+		pm.binanceOnlyDedup.Store(pos.Symbol, now)
 		unknown++
 	}
 

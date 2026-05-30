@@ -387,6 +387,43 @@ func TestSyncTick_BinanceOnlyUnknown_TripsHalt(t *testing.T) {
 	assert.Equal(t, "binance_only_unknown", fdeps.rcaInserted[0].HaltType)
 }
 
+// R.17 D1: SHORT positions on Binance are external by definition (strategy
+// is long-only). Reconciler must NOT trip halt or write halt_rca for them.
+func TestSyncTick_BinanceOnlyShort_DoesNotHalt(t *testing.T) {
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{ID: 31, Symbol: "BTCUSDT", Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs: pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true}},
+	}}
+	fbc := &fakeBinance{positions: []binance.PositionRisk{
+		{Symbol: "BTCUSDT", PositionAmt: decimal.NewFromFloat(0.006), MarkPrice: decimal.NewFromInt(80000)},
+		// External SHORT (R.16 DRIFTUSDT scenario): -2921 contracts, not ours.
+		{Symbol: "DRIFTUSDT", PositionAmt: decimal.NewFromInt(-2921), MarkPrice: decimal.NewFromFloat(0.0263), EntryPrice: decimal.NewFromFloat(0.0269)},
+	}}
+	pm := newTestPM(t, fdeps, fbc)
+	pm.SyncTick(context.Background())
+	assert.Empty(t, fdeps.rcaInserted, "SHORT external position must not write halt_rca")
+	assert.Empty(t, fdeps.haltsTripped, "SHORT external position must not trip halt")
+}
+
+// R.17 D1: same LONG binance_only symbol on consecutive ticks must dedup to
+// one halt within 60min. Pre-fix R.16 saw 400+ halt_rca rows for one symbol.
+func TestSyncTick_BinanceOnlyLong_DedupWithinWindow(t *testing.T) {
+	fdeps := &fakePositionDeps{openTrades: []gen.ListOpenTradesForSyncRow{
+		{ID: 32, Symbol: "BTCUSDT", Direction: "LONG", Margin: decimal.NewFromInt(50),
+			EntryTs: pgtype.Timestamptz{Time: time.Unix(1778499000, 0), Valid: true}},
+	}}
+	fbc := &fakeBinance{positions: []binance.PositionRisk{
+		{Symbol: "BTCUSDT", PositionAmt: decimal.NewFromFloat(0.006), MarkPrice: decimal.NewFromInt(80000)},
+		{Symbol: "ARBUSDT", PositionAmt: decimal.NewFromFloat(100), MarkPrice: decimal.NewFromFloat(1.5)},
+	}}
+	pm := newTestPM(t, fdeps, fbc)
+	pm.SyncTick(context.Background())
+	pm.SyncTick(context.Background())
+	pm.SyncTick(context.Background())
+	assert.Len(t, fdeps.rcaInserted, 1, "3 consecutive ticks with same ARBUSDT must dedup to 1 RCA")
+	assert.Len(t, fdeps.haltsTripped, 1, "halt should also dedup to 1 within 60min window")
+}
+
 // Round R.4 (F1): trail-fired orphan must also skip halt. Pre-fix, position_manager
 // only consulted disaster_stop algo status — trail-fired closes (mu 真盘 #66/#67/#59)
 // fell through to halt because disaster algo was still NEW/WORKING.
