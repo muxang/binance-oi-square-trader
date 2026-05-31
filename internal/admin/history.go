@@ -50,20 +50,20 @@ func (s *Server) handlePositionsHistory(w http.ResponseWriter, r *http.Request) 
 		pageSize = 20
 	}
 
-	dataSource := q.Get("data_source") // mainnet | testnet | all (default: mainnet)
-	if dataSource == "" { dataSource = "mainnet" }
+	dataSource := q.Get("data_source") // mainnet | testnet | all (default: testnet, R.18 D2)
+	if dataSource == "" { dataSource = "testnet" }
 
 	conds := []string{"t.status IN ('closed', 'failed')"}
 	args  := []any{}
 	n     := 1
 
 	switch dataSource {
-	case "testnet":
-		conds = append(conds, "t.data_source = 'testnet'")
+	case "mainnet":
+		conds = append(conds, "t.data_source = 'mainnet'")
 	case "all":
 		// no filter
 	default:
-		conds = append(conds, "t.data_source = 'mainnet'")
+		conds = append(conds, "t.data_source = 'testnet'")
 	}
 
 	if symbol != "" {

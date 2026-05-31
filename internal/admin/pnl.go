@@ -22,17 +22,17 @@ func timeRangeQuery(r *http.Request) (args []any, cond string) {
 		since = until.AddDate(0, -1, 0)
 	}
 
-	ds := r.URL.Query().Get("data_source") // mainnet | testnet | all
-	if ds == "" { ds = "mainnet" }
+	ds := r.URL.Query().Get("data_source") // mainnet | testnet | all (default: testnet, R.18 D2)
+	if ds == "" { ds = "testnet" }
 
 	var dsCond string
 	switch ds {
-	case "testnet":
-		dsCond = "data_source = 'testnet'"
+	case "mainnet":
+		dsCond = "data_source = 'mainnet'"
 	case "all":
 		dsCond = "TRUE"
 	default:
-		dsCond = "data_source = 'mainnet'"
+		dsCond = "data_source = 'testnet'"
 	}
 
 	if since.IsZero() {

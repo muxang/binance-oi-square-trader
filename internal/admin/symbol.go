@@ -69,7 +69,7 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 	hours, _   := strconv.Atoi(r.URL.Query().Get("hours"))
 	dataSource := r.URL.Query().Get("data_source") // mainnet | testnet | all
 	if hours <= 0 || hours > 168 { hours = 6 }
-	if dataSource == "" { dataSource = "mainnet" }
+	if dataSource == "" { dataSource = "testnet" } // R.18 D2: default aligned with DB DEFAULT
 
 	ctx := r.Context()
 
@@ -194,10 +194,10 @@ func (s *Server) handleSymbolDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Trade history
-	dsCond := "t.data_source = 'mainnet'"
+	// Trade history (R.18 D2: default testnet branch handled by upstream "" → "testnet" assignment)
+	dsCond := "t.data_source = 'testnet'"
 	if dataSource == "all" { dsCond = "TRUE" }
-	if dataSource == "testnet" { dsCond = "t.data_source = 'testnet'" }
+	if dataSource == "mainnet" { dsCond = "t.data_source = 'mainnet'" }
 
 	tradeRows, err := s.db.Query(ctx, `
 		SELECT t.id, t.entry_ts, t.exit_ts, t.entry_price, t.exit_price,
