@@ -96,6 +96,27 @@ func main() {
 		}
 	}()
 
+	// R.19: market cache warmer — keep admin:market:full:v4 warm so user
+	// clicks never hit the cold 7s SQL. computeMarket fans out 6 DISTINCT ON
+	// CTEs across 7 hypertable chunks; that's the irreducible cost. Refresh
+	// every 90s (TTL is 3min so one missed tick still serves a warm value).
+	go func() {
+		wctx := context.Background()
+		do := func() {
+			rctx, cancel := context.WithTimeout(wctx, 30*time.Second)
+			defer cancel()
+			if err := srv.RefreshMarketCache(rctx); err != nil {
+				log.Warn().Err(err).Msg("market warmer refresh failed")
+			}
+		}
+		do()
+		t := time.NewTicker(90 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			do()
+		}
+	}()
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit

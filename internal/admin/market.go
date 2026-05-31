@@ -41,7 +41,11 @@ const (
 	// Cache key bumped to v4 in R.12.C (cmcap/mcap_ratio_pct now sourced from
 	// coingecko_market_cache full-market table — not watchlist-only lh).
 	marketCacheKey = "admin:market:full:v4"
-	marketCacheTTL = 2 * time.Minute
+	// R.19: TTL extended 2min → 3min to provide a safety buffer over the 90s
+	// warmer cadence. Background goroutine (cmd/admin-api) refreshes the key
+	// every 90s so user clicks never hit a cold ~7s SQL (532 symbols, 7
+	// hypertable chunks per CTE × 6 CTEs).
+	marketCacheTTL = 3 * time.Minute
 )
 
 func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +139,27 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 	if end > total { end = total }
 
 	s.writeJSON(w, http.StatusOK, MarketResponse{Total: total, Items: items[start:end]})
+}
+
+// RefreshMarketCache runs computeMarket and writes the JSON into Redis under
+// marketCacheKey with marketCacheTTL. Public so cmd/admin-api can launch a
+// background warmer goroutine that keeps the hot-path cache warm.
+//
+// Returns nil on Redis-disabled (rdb=nil) and on serialization success.
+// Pgx errors are surfaced so caller can log.
+func (s *Server) RefreshMarketCache(ctx context.Context) error {
+	items, err := s.computeMarket(ctx)
+	if err != nil {
+		return fmt.Errorf("refresh market: %w", err)
+	}
+	if s.rdb == nil {
+		return nil
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return fmt.Errorf("marshal market: %w", err)
+	}
+	return s.rdb.Set(ctx, marketCacheKey, b, marketCacheTTL).Err()
 }
 
 // computeMarket runs the full market query (all USDⓈ-M symbols with OI data).
