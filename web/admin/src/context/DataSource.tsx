@@ -7,12 +7,12 @@ interface DataSourceCtx {
 }
 
 export const DataSourceContext = createContext<DataSourceCtx>({
-  dataSource: 'mainnet',
+  dataSource: 'testnet',
   setDataSource: () => {},
 })
 
 export function DataSourceProvider({ children }: { children: React.ReactNode }) {
-  const stored = (localStorage.getItem('data_source') ?? 'mainnet') as DataSource
+  const stored = (localStorage.getItem('data_source') ?? 'testnet') as DataSource
   const [dataSource, _setDataSource] = useState<DataSource>(stored)
 
   const setDataSource = (ds: DataSource) => {

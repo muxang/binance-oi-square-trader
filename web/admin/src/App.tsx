@@ -18,8 +18,9 @@ import type { DataSource } from './api/client'
 function DataSourceToggle() {
   const { dataSource, setDataSource } = useDataSource()
   const opts: { key: DataSource; label: string }[] = [
+    { key: 'testnet', label: '测试网' },
     { key: 'mainnet', label: '真盘' },
-    { key: 'all',     label: '含测试' },
+    { key: 'all',     label: '全部' },
   ]
   return (
     <div className="flex items-center gap-1 ml-auto mr-3">
