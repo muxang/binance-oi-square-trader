@@ -151,6 +151,9 @@ func (s *Server) handlePositionsOpen(w http.ResponseWriter, r *http.Request) {
 	if positions == nil {
 		positions = []OpenPosition{} // never return null
 	}
+	if recent == nil {
+		recent = []RecentClosedTrade{} // never return null (frontend reads .length)
+	}
 
 	s.writeJSON(w, http.StatusOK, PositionsOpenResponse{
 		Positions: positions,
