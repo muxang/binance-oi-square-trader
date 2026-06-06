@@ -337,33 +337,72 @@ func (e *Executor) PlaceEntry(
 	e.snapshotInitialOI(ctx, tradeID, symbol, log)
 }
 
-// waitFill polls until the order is FILLED or the deadline is exceeded.
-// RESULT mode returns FILLED immediately for market orders in the vast majority
-// of cases; the poll path handles the rare partial-fill edge case.
+// waitFill polls until the order is FILLED with a non-zero AvgPrice, or the
+// deadline is exceeded. RESULT mode returns FILLED immediately for market
+// orders in most cases, but the testnet response of POST /fapi/v1/order
+// (RESULT mode) is missing the `avgPrice` field entirely — executor would
+// otherwise write entry_price=0 and downstream stop/trail calculations panic
+// with "decimal division by 0" (R.22 BABYUSDT #272 / TAUSDT #276).
+//
+// Fix: re-poll via GET /fapi/v1/order (which DOES carry avgPrice) until both
+// status=FILLED AND AvgPrice > 0 are satisfied. Falls back to the position's
+// entryPrice on persistent zero (last-ditch safety so trader doesn't deadlock).
 func (e *Executor) waitFill(ctx context.Context, symbol string, initial binance.OrderResult, timeout time.Duration) (binance.OrderResult, error) {
-	if initial.Status == "FILLED" {
+	if initial.Status == "FILLED" && !initial.AvgPrice.IsZero() {
 		return initial, nil
 	}
 	deadline := e.nowFn().Add(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	var lastFilled binance.OrderResult
 	for {
 		select {
 		case <-ctx.Done():
 			return binance.OrderResult{}, ctx.Err()
 		case <-ticker.C:
 			if e.nowFn().After(deadline) {
-				return binance.OrderResult{}, fmt.Errorf("order %d not FILLED after %s", initial.OrderID, timeout)
+				// R.22 final fallback: if order is FILLED but every poll returned
+				// AvgPrice=0, ask Binance for the position's entryPrice directly.
+				// This avoids permanent loss of the entry — better an approximate
+				// price than no price at all.
+				if lastFilled.Status == "FILLED" {
+					if px, ok := e.positionEntryPriceFallback(ctx, symbol); ok {
+						lastFilled.AvgPrice = px
+						return lastFilled, nil
+					}
+				}
+				return binance.OrderResult{}, fmt.Errorf("order %d not FILLED with avgPrice after %s", initial.OrderID, timeout)
 			}
 			r, err := e.bc.GetOrder(ctx, symbol, initial.OrderID)
 			if err != nil {
 				continue // transient error — keep polling until deadline
 			}
 			if r.Status == "FILLED" {
-				return r, nil
+				lastFilled = r
+				if !r.AvgPrice.IsZero() {
+					return r, nil
+				}
+				// FILLED but avgPrice still 0 — keep polling, GET may take a few
+				// hundred ms to propagate the average. Falls through to ticker.
 			}
 		}
 	}
+}
+
+// positionEntryPriceFallback queries /fapi/v2/positionRisk for the symbol and
+// returns the position's entryPrice. Used as a last-ditch fallback when the
+// order's avgPrice never propagates within the timeout (R.22).
+func (e *Executor) positionEntryPriceFallback(ctx context.Context, symbol string) (decimal.Decimal, bool) {
+	positions, err := e.bc.GetPositionRisk(ctx, symbol)
+	if err != nil || len(positions) == 0 {
+		return decimal.Zero, false
+	}
+	for _, p := range positions {
+		if p.Symbol == symbol && !p.EntryPrice.IsZero() && !p.PositionAmt.IsZero() {
+			return p.EntryPrice, true
+		}
+	}
+	return decimal.Zero, false
 }
 
 // placeDisasterStop implements Steps 6-9: Algo Service STOP_MARKET at

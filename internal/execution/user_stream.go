@@ -171,15 +171,26 @@ func (us *UserStream) readLoop(ctx context.Context) error {
 }
 
 // dispatch parses the event envelope and routes to the right callback.
+//
+// R.22 fix: envelope `e` field stays json.RawMessage so heartbeat / numeric
+// event frames (which used to fail the whole message parse with "cannot
+// unmarshal number into Go struct field .e of type string") no longer block
+// the ORDER_TRADE_UPDATE that follows in the same WS connection. The string
+// extraction is best-effort — non-string `e` (number, null, missing) is
+// silently skipped, since those frames carry nothing actionable for trader.
 func (us *UserStream) dispatch(ctx context.Context, msg []byte) {
 	var env struct {
-		EventType string `json:"e"`
+		EventType json.RawMessage `json:"e"`
 	}
 	if err := json.Unmarshal(msg, &env); err != nil {
 		us.log.Warn().Err(err).Bytes("msg", trimMsg(msg)).Msg("user_stream: dispatch parse failed")
 		return
 	}
-	switch env.EventType {
+	var eventType string
+	if len(env.EventType) > 0 {
+		_ = json.Unmarshal(env.EventType, &eventType) // ignore — empty string = unknown event, just falls through
+	}
+	switch eventType {
 	case "ORDER_TRADE_UPDATE":
 		us.handleOrderUpdate(ctx, msg)
 	case "ACCOUNT_UPDATE":
@@ -191,9 +202,9 @@ func (us *UserStream) dispatch(ctx context.Context, msg []byte) {
 		// readLoop will return error on next read; outer Run reconnects.
 		_ = us.conn.Close()
 	default:
-		us.log.Debug().Str("event_type", env.EventType).Msg("user_stream: event ignored")
+		us.log.Debug().Str("event_type", eventType).Msg("user_stream: event ignored")
 	}
-	metrics.UserStreamEventsTotal.WithLabelValues(env.EventType).Inc()
+	metrics.UserStreamEventsTotal.WithLabelValues(eventType).Inc()
 }
 
 // orderUpdateMsg is the ORDER_TRADE_UPDATE 'o' field subset we care about.
