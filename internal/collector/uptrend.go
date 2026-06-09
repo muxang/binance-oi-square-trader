@@ -56,7 +56,9 @@ func NewUptrendCollector(c *binance.Client, rdb *redis.Client, log zerolog.Logge
 		cfg.Concurrency = 20
 	}
 	if cfg.KlinesLimit == 0 {
-		cfg.KlinesLimit = 60
+		// 100 gives EMA50 + 50 warmup iters AFTER dropping the incomplete bar
+		// (=99 closed). Still weight=1 per request (limit ≤ 100).
+		cfg.KlinesLimit = 100
 	}
 	if cfg.BTCSymbol == "" {
 		cfg.BTCSymbol = "BTCUSDT"
@@ -132,6 +134,7 @@ func (c *UptrendCollector) fetchBTC4hPct(ctx context.Context) (latestClose, pct4
 	if err != nil {
 		return 0, 0, err
 	}
+	bars = dropIncompleteBar(bars)
 	closes := closesAsFloats(bars)
 	if len(closes) < 5 {
 		return 0, 0, fmt.Errorf("btc bars=%d, need ≥5", len(closes))
@@ -160,6 +163,7 @@ func (c *UptrendCollector) scanConcurrent(ctx context.Context, ts []binance.Tick
 				c.log.Debug().Str("symbol", sym).Err(err).Msg("uptrend: klines fetch failed (skip)")
 				return nil
 			}
+			bars = dropIncompleteBar(bars)
 			closes, highs, lows, vols := ohlcvAsFloats(bars)
 			item, err := market.CheckUptrend(sym, closes, highs, lows, vols, btcPct4h)
 			if err != nil {
@@ -186,6 +190,21 @@ func (c *UptrendCollector) fetchKlines(ctx context.Context, symbol string) ([]bi
 		return nil, err
 	}
 	return binance.ParseKlines(body)
+}
+
+// dropIncompleteBar removes the last (in-progress) 1h kline returned by
+// /fapi/v1/klines. Binance includes the currently-open candle in its
+// response — its close evolves and volume is partial, which destabilizes
+// any indicator that reads the latest bar. Stripping it makes signals
+// stable for the full duration of an hour.
+//
+// ref: https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data
+// "The kline currently in progress is included in the returned data set."
+func dropIncompleteBar(bars []binance.KlineBar) []binance.KlineBar {
+	if len(bars) <= 1 {
+		return bars
+	}
+	return bars[:len(bars)-1]
 }
 
 func closesAsFloats(bars []binance.KlineBar) []float64 {
