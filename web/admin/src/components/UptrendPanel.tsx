@@ -3,20 +3,33 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchUptrend, type UptrendItem, type SignalType } from '../api/client'
 import SymbolLink from './SymbolLink'
 
-function pct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
-function num(v: number, d = 2) { return v.toFixed(d) }
-function fmtPrice(p: number) {
-  if (!p) return '—'
+// Defensive helpers: tolerate undefined/NaN/Infinity from stale cache or
+// schema-drift backend so the panel never crashes on render.
+function pct(v: number | undefined): string {
+  if (v == null || !isFinite(v)) return '—'
+  return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'
+}
+function num(v: number | undefined, d = 2): string {
+  if (v == null || !isFinite(v)) return '—'
+  return v.toFixed(d)
+}
+function fmtPrice(p: number | undefined): string {
+  if (p == null || !isFinite(p) || p === 0) return '—'
   if (p >= 1000) return p.toLocaleString('en-US', { maximumFractionDigits: 2 })
   if (p >= 1)    return p.toFixed(4)
   if (p >= 0.01) return p.toFixed(6)
   return p.toFixed(8)
 }
-function fmtVol(v: number) {
+function fmtVol(v: number | undefined): string {
+  if (v == null || !isFinite(v)) return '—'
   if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
   if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
   if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K'
   return v.toFixed(0)
+}
+function ratio(a: number | undefined, b: number | undefined, d = 3): string {
+  if (a == null || b == null || !isFinite(a) || !isFinite(b) || b === 0) return '—'
+  return (a / b).toFixed(d)
 }
 
 const ok   = 'text-green-400'
@@ -185,7 +198,7 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
                     {/* 4h MTF — color: 4h close > 4h EMA20 */}
                     <td className={`py-2 px-2 text-right tabular-nums ${it.cond_mtf_close4h_above_ema20 ? ok : bad}`}
                         title={`4h close ${fmtPrice(it.close_4h)} ${it.cond_mtf_close4h_above_ema20 ? '>' : '≤'} 4h EMA20 ${fmtPrice(it.ema20_4h)}`}>
-                      {it.ema20_4h > 0 ? (it.close_4h / it.ema20_4h).toFixed(3) + '×' : '—'}
+                      {it.ema20_4h > 0 ? ratio(it.close_4h, it.ema20_4h) + '×' : '—'}
                     </td>
                     {/* High20 — color: close > High20 * 1.002 (breakout high) */}
                     <td className={`py-2 px-2 text-right tabular-nums ${it.cond_breakout_high ? ok : dim}`}
