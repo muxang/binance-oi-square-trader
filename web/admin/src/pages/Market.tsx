@@ -5,6 +5,7 @@ import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type
 import { DataSourceContext } from '../context/DataSource'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 import MarkPriceModal from '../components/MarkPriceModal'
+import UptrendPanel from '../components/UptrendPanel'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -197,7 +198,10 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
   )
 }
 
+type ViewMode = 'market' | 'uptrend'  // R.23: uptrend discovery tab
+
 export default function Market() {
+  const [view,     setView]    = useState<ViewMode>('market')
   const [scope,    setScope]   = useState<MarketScope>('all')
   const [sortBy,   setSortBy]  = useState<MarketSort>('oi_1h_pct')
   const [order,    setOrder]   = useState<SortOrder>('desc')
@@ -233,18 +237,31 @@ export default function Market() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-base font-semibold text-gray-200">市场扫描</h1>
           <div className="flex items-center gap-2">
-            <div className="flex gap-1 text-xs">
-              {(['all','watchlist','positions'] as MarketScope[]).map(s => (
-                <button key={s} onClick={() => { setScope(s); setPage(1) }}
-                  className={`px-2 py-1 rounded ${scope === s ? 'bg-blue-700 text-white' : 'bg-[#252525] text-gray-400 hover:text-white'}`}>
-                  {s === 'all' ? '全市场' : s === 'watchlist' ? '候选池' : '持仓'}
+            <div className="flex gap-1 text-xs border border-[#3d3d3d] rounded p-0.5">
+              {(['market','uptrend'] as ViewMode[]).map(v => (
+                <button key={v} onClick={() => setView(v)}
+                  className={`px-2 py-1 rounded ${view === v ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-white'}`}>
+                  {v === 'market' ? 'OI/Square' : '🚀 上涨趋势'}
                 </button>
               ))}
             </div>
-            {data && <span className="text-xs text-gray-600">{data.total} symbols · 30s刷新</span>}
+            {view === 'market' && (
+              <div className="flex gap-1 text-xs">
+                {(['all','watchlist','positions'] as MarketScope[]).map(s => (
+                  <button key={s} onClick={() => { setScope(s); setPage(1) }}
+                    className={`px-2 py-1 rounded ${scope === s ? 'bg-blue-700 text-white' : 'bg-[#252525] text-gray-400 hover:text-white'}`}>
+                    {s === 'all' ? '全市场' : s === 'watchlist' ? '候选池' : '持仓'}
+                  </button>
+                ))}
+              </div>
+            )}
+            {view === 'market' && data && <span className="text-xs text-gray-600">{data.total} symbols · 30s刷新</span>}
           </div>
         </div>
 
+        {view === 'uptrend' && <UptrendPanel onSelect={setSelected} />}
+
+        {view === 'market' && (<>
         <div className="flex gap-2 flex-wrap items-center">
           <input className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 w-28 focus:outline-none"
             placeholder="Symbol..." value={search}
@@ -374,6 +391,7 @@ export default function Market() {
             </>
           )}
         </div>
+        </>)}
       </div>
 
       {selected && <SymbolSidebar symbol={selected} onClose={() => setSelected(null)} />}

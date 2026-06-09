@@ -27,10 +27,10 @@ import (
 	"trader/internal/binance"
 	"trader/internal/coingecko"
 	"trader/internal/collector"
-	"trader/internal/notify"
 	"trader/internal/config"
 	"trader/internal/decision"
 	"trader/internal/execution"
+	"trader/internal/notify"
 	"trader/internal/pkg/logger"
 	"trader/internal/pkg/metrics"
 	"trader/internal/pkg/ratelimit"
@@ -253,6 +253,13 @@ func run() error {
 	})
 	if err := runner.Register(klinesCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register klines collector")
+	}
+	// R.23: uptrend discovery scan — top-200 USDⓈ-M perps, 6-rule trend filter,
+	// result cached in Redis for admin-api hot reads. Pure observability — no
+	// signal/decision integration yet (waits for observation-period validation).
+	uptrendCol := collector.NewUptrendCollector(client, rdb, log, collector.UptrendCollectorConfig{})
+	if err := runner.Register(uptrendCol, "*/2 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register uptrend collector")
 	}
 	symbolService := binance.NewSymbolService(client, log)
 	log.Info().Msg("symbol service ready")

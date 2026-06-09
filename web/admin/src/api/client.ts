@@ -411,6 +411,51 @@ export const fetchMarket = (p: MarketParams = {}): Promise<MarketData> => {
   return api.get<MarketData>('/market', { params }).then(r => r.data)
 }
 
+// ---- R.23 Uptrend Discovery ----
+
+export interface UptrendItem {
+  symbol: string
+  close: number
+  ema20: number
+  ema50: number
+  highest20: number
+  volume: number
+  volume_ma20: number
+  vol_ratio: number
+  rsi14: number
+  adx14: number
+  pct_4h: number
+  btc_pct_4h: number
+  rel_strength: number
+  cond_ema_stack: boolean
+  cond_breakout: boolean
+  cond_vol_surge: boolean
+  cond_rsi: boolean
+  cond_adx: boolean
+  cond_rel_strength: boolean
+  pass: boolean
+}
+
+export interface UptrendData {
+  total: number    // total symbols evaluated
+  passing: number  // count satisfying all 6 conditions
+  items: UptrendItem[]
+}
+
+export interface UptrendParams {
+  passing?: boolean   // default true; pass false to include partial matches
+  search?: string
+  limit?: number      // default 50
+}
+
+export const fetchUptrend = (p: UptrendParams = {}): Promise<UptrendData> => {
+  const params: Record<string, string> = {}
+  if (p.passing === false) params.passing = '0'
+  if (p.search)            params.search  = p.search
+  if (p.limit)             params.limit   = String(p.limit)
+  return api.get<UptrendData>('/market/uptrend', { params }).then(r => r.data)
+}
+
 // ---- Square ----
 
 export interface SquareTrendingItem {

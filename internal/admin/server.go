@@ -15,10 +15,13 @@ import (
 // Server holds shared dependencies for all admin-api handlers.
 //
 // db      → read-only pool (max_conns=5, SET default_transaction_read_only=on).
-//           Used by every GET endpoint.
+//
+//	Used by every GET endpoint.
+//
 // writeDB → writable pool (max_conns=2). Used only by Round R.1 Part 2+
-//           write endpoints (manual halt reset; future: manual close, etc.).
-//           Kept separate so write bugs can't starve reads.
+//
+//	write endpoints (manual halt reset; future: manual close, etc.).
+//	Kept separate so write bugs can't starve reads.
 type Server struct {
 	db            *pgxpool.Pool
 	writeDB       *pgxpool.Pool
@@ -56,6 +59,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/pnl/by_exit_reason", s.handlePnlByExitReason)
 	mux.HandleFunc("GET /api/admin/pnl/stats", s.handlePnlStats)
 	mux.HandleFunc("GET /api/admin/market", s.handleMarket)
+	// R.23: uptrend discovery list — 6-rule trend filter populated by
+	// trader-side UptrendCollector → Redis (admin:market:uptrend:v1).
+	mux.HandleFunc("GET /api/admin/market/uptrend", s.handleUptrend)
 	mux.HandleFunc("GET /api/admin/square/trending", s.handleSquareTrending)
 	mux.HandleFunc("GET /api/admin/watchlist", s.handleWatchlist)
 	mux.HandleFunc("GET /api/admin/symbol/{symbol}", s.handleSymbolDetail)
