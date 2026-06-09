@@ -3,8 +3,12 @@
 // and writes the snapshot to Redis for admin-api hot-path reads.
 //
 // Cost per cycle:  1 × ticker/24hr (weight 40) + (N+1) × klines (weight 1).
-// At N=200 cron '*/2 * * * *' ≈ 120 weight/min — well under the 2400/min
+// At N=200 cron '*/5 * * * *' ≈ 48 weight/min — well under the 2400/min
 // IP-shared futures market-data ceiling.
+//
+// Cadence note: indicators only change on new 1h candle close. 5min cron
+// gives ~12 retries per hour against transient API errors without wasting
+// the 30 redundant scans/hour the previous */2 cadence produced.
 //
 // ref: references/binance/urls.md §「24hr Ticker」 / 「Kline / Candlestick」
 package collector
@@ -30,7 +34,9 @@ import (
 
 const (
 	uptrendRedisKey = "admin:market:uptrend:v1"
-	uptrendRedisTTL = 5 * time.Minute
+	// TTL 12min vs cron 5min: gives 1 missed scan worth of headroom before the
+	// frontend sees an empty cache (handleUptrend returns [] on cache miss).
+	uptrendRedisTTL = 12 * time.Minute
 )
 
 type UptrendCollectorConfig struct {

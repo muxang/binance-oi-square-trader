@@ -257,8 +257,13 @@ func run() error {
 	// R.23: uptrend discovery scan — top-200 USDⓈ-M perps, 6-rule trend filter,
 	// result cached in Redis for admin-api hot reads. Pure observability — no
 	// signal/decision integration yet (waits for observation-period validation).
+	//
+	// Cadence: 5min. After dropping the incomplete bar, all 6 indicators only
+	// change when a NEW 1h candle closes (i.e. every hour). 5min scan gives
+	// ~12 chances per hour to recover from a transient Binance API / proxy
+	// blip without wasting 30 redundant scans/hour the way */2 did.
 	uptrendCol := collector.NewUptrendCollector(client, rdb, log, collector.UptrendCollectorConfig{})
-	if err := runner.Register(uptrendCol, "*/2 * * * *"); err != nil {
+	if err := runner.Register(uptrendCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register uptrend collector")
 	}
 	symbolService := binance.NewSymbolService(client, log)
