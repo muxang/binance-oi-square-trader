@@ -1,7 +1,18 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchUptrend, type UptrendItem } from '../api/client'
 import SymbolLink from './SymbolLink'
+
+// Count how many of the 6 conditions a symbol satisfies. Used in showAll mode
+// to sort 6/6 first, 5/6, 4/6 ... so "almost passing" candidates surface to the top.
+function passCount(it: UptrendItem): number {
+  return (it.cond_ema_stack    ? 1 : 0) +
+         (it.cond_breakout     ? 1 : 0) +
+         (it.cond_vol_surge    ? 1 : 0) +
+         (it.cond_rsi          ? 1 : 0) +
+         (it.cond_adx          ? 1 : 0) +
+         (it.cond_rel_strength ? 1 : 0)
+}
 
 function pct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
 function num(v: number, d = 2) { return v.toFixed(d) }
@@ -33,6 +44,15 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
     refetchInterval: 60_000,
     placeholderData: (prev) => prev,
   })
+
+  // showAll mode: re-sort by pass-count desc so 6/6 → 5/6 → 4/6 ... cluster from the top.
+  // Stable sort preserves backend's rel_strength desc order within the same pass-count tier.
+  // showAll=false: backend already returns only pass=6 items sorted by rel_strength — no re-sort.
+  const items = useMemo(() => {
+    if (!data) return []
+    if (!showAll) return data.items
+    return [...data.items].sort((a, b) => passCount(b) - passCount(a))
+  }, [data, showAll])
 
   return (
     <div className="space-y-3">
@@ -89,18 +109,29 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((it: UptrendItem) => {
+              {items.map((it: UptrendItem) => {
                 // Split cond_ema_stack into its two sub-conditions for cell-level color:
                 //   EMA20 cell green if close > EMA20
                 //   EMA50 cell green if EMA20 > EMA50
                 const emaStackPart1 = it.close > it.ema20
                 const emaStackPart2 = it.ema20 > it.ema50
+                const cnt = passCount(it)
                 return (
                   <tr key={it.symbol}
                       className="border-b border-[#252525] last:border-b-0 hover:bg-[#252525] cursor-pointer"
                       onClick={() => onSelect?.(it.symbol)}>
                     <td className="py-2 px-2 text-xs font-mono text-gray-200">
-                      {it.pass && <span className="text-green-500 mr-1">●</span>}
+                      {it.pass
+                        ? <span className="text-green-500 mr-1.5" title="6/6 全部通过">●</span>
+                        : <span
+                            className={`mr-1.5 text-[10px] tabular-nums font-semibold ${
+                              cnt >= 5 ? 'text-yellow-400'
+                              : cnt >= 3 ? 'text-orange-500'
+                              : 'text-gray-600'
+                            }`}
+                            title={`${cnt}/6 条件通过`}
+                          >{cnt}/6</span>
+                      }
                       <SymbolLink symbol={it.symbol} />
                     </td>
                     <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-200 font-semibold">
