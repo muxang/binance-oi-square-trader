@@ -1,15 +1,11 @@
-import { useState, useContext } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import dayjs from 'dayjs'
-import { fetchMarket, fetchSymbolDetail, type MarketItem, type MarketScope, type MarketSort, type SortOrder } from '../api/client'
-import { DataSourceContext } from '../context/DataSource'
-import { colors, pnlColor, pnlPrefix } from '../theme/colors'
+import { fetchMarket, type MarketItem, type MarketScope, type MarketSort, type SortOrder } from '../api/client'
+import { colors, pnlColor } from '../theme/colors'
 import MarkPriceModal from '../components/MarkPriceModal'
 import UptrendPanel from '../components/UptrendPanel'
 import SymbolLink from '../components/SymbolLink'
-import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts'
+import SymbolSidebar from '../components/SymbolSidebar'
 
 function pct(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%' }
 function fmtOi(m: number) { return m >= 1000 ? (m / 1000).toFixed(1) + 'B' : m.toFixed(1) + 'M' }
@@ -46,160 +42,6 @@ function SortTH({
   )
 }
 
-function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => void }) {
-  const { dataSource } = useContext(DataSourceContext)
-  const { data, isLoading } = useQuery({
-    queryKey: ['symbol-detail', symbol, dataSource],
-    queryFn: () => fetchSymbolDetail(symbol, 24, dataSource),
-  })
-  // Dark-theme tooltip: override recharts default black text.
-  const ttStyle = { background: '#252525', border: '1px solid #3d3d3d', fontSize: 11, color: '#e5e7eb' }
-  const ttLabelStyle = { color: '#e5e7eb' }
-  const ttItemStyle  = { color: '#e5e7eb' }
-
-  return (
-    <div className="w-80 bg-[#1a1a1a] border-l border-[#2d2d2d] flex flex-col shrink-0">
-      <div className="flex items-center justify-between p-4 border-b border-[#2d2d2d]">
-        <div>
-          <div className="font-mono font-bold text-white">
-            <SymbolLink symbol={symbol} />
-          </div>
-          {data && (
-            <div className="text-xs mt-0.5">
-              <span className="text-gray-400">{fmtPrice(data.current_price)}</span>
-              <span className="ml-2" style={{ color: pnlColor(data.price_24h_pct) }}>
-                {pct(data.price_24h_pct)}
-              </span>
-            </div>
-          )}
-        </div>
-        <button onClick={onClose} className="text-gray-500 hover:text-white text-lg px-2">✕</button>
-      </div>
-
-      {isLoading && <div className="p-4 text-gray-500 text-xs">加载中...</div>}
-
-      {data && (
-        <div className="flex-1 overflow-y-auto space-y-4 p-3">
-          {data.oi_series.length > 0 && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">OI (24h, USD M)</div>
-              <ResponsiveContainer width="100%" height={100}>
-                <LineChart data={data.oi_series}>
-                  <XAxis dataKey="ts_ms" hide />
-                  <YAxis hide domain={['auto','auto']} />
-                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
-                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
-                    formatter={(v: number) => [v.toFixed(2) + 'M', 'OI']} />
-                  <Line type="monotone" dataKey="oi_usd_m" stroke="#4096ff" dot={false} strokeWidth={1.5} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {data.price_series.length > 0 && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">价格 (24h, 15m K)</div>
-              <ResponsiveContainer width="100%" height={100}>
-                <LineChart data={data.price_series}>
-                  <XAxis dataKey="ts_ms" hide />
-                  <YAxis hide domain={['auto','auto']} />
-                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
-                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
-                    formatter={(v: number) => [fmtPrice(v), '价格']} />
-                  <Line type="monotone" dataKey="close" stroke="#52c41a" dot={false} strokeWidth={1.5} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {data.square_series.length > 0 && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">Square 话题热度 (24h 累计新帖)</div>
-              <ResponsiveContainer width="100%" height={80}>
-                <LineChart data={data.square_series}>
-                  <XAxis dataKey="ts_ms" hide />
-                  <YAxis hide domain={[0, 'auto']} />
-                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
-                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
-                    formatter={(v: number) => [v.toLocaleString(), '累计新帖']} />
-                  <Line type="monotone" dataKey="mentions" stroke="#fa8c16" dot={false} strokeWidth={1.5} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* R.11.B3: 大户多空比 trends (双线 acct + pos) */}
-          {data.ratios_series.some(p => p.acct_ratio > 0 || p.pos_ratio > 0) && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">大户多空比 (24h, &lt;1 空头主导 / &gt;1 多头主导)</div>
-              <ResponsiveContainer width="100%" height={100}>
-                <LineChart data={data.ratios_series}>
-                  <XAxis dataKey="ts_ms" hide />
-                  <YAxis hide domain={['auto','auto']} />
-                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
-                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
-                    formatter={(v: number, name: string) => [v > 0 ? v.toFixed(3) : '—', name === 'acct_ratio' ? '账户多空' : '持仓多空']} />
-                  <Line type="monotone" dataKey="acct_ratio" stroke="#4096ff" dot={false} strokeWidth={1.5} connectNulls />
-                  <Line type="monotone" dataKey="pos_ratio"  stroke="#fa8c16" dot={false} strokeWidth={1.5} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* R.11.B3: 持仓市值占比 trends (≥50% 黄线警示阈值 by contract-monitor.js) */}
-          {data.ratios_series.some(p => p.mcap_pct > 0) && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">持仓市值占比 (24h, ≥50% 高风险)</div>
-              <ResponsiveContainer width="100%" height={80}>
-                <LineChart data={data.ratios_series}>
-                  <XAxis dataKey="ts_ms" hide />
-                  <YAxis hide domain={[0, 'auto']} />
-                  <Tooltip contentStyle={ttStyle} labelStyle={ttLabelStyle} itemStyle={ttItemStyle}
-                    labelFormatter={(v) => dayjs(v).format('MM-DD HH:mm')}
-                    formatter={(v: number) => [v > 0 ? v.toFixed(2) + '%' : '—', '市值占比']} />
-                  <Line type="monotone" dataKey="mcap_pct" stroke="#f5a623" dot={false} strokeWidth={1.5} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {data.square_posts.length > 0 && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">Square 帖子 (24h, {data.square_posts.length})</div>
-              <div className="space-y-1.5">
-                {data.square_posts.slice(0, 5).map((p, i) => (
-                  <div key={i} className="bg-[#252525] rounded p-2 text-xs">
-                    <div className="text-gray-400 truncate">{p.title || p.content?.slice(0, 60) || '—'}</div>
-                    <div className="text-gray-600 mt-0.5">{dayjs(p.ts_ms).format('HH:mm')} · 👁 {p.views}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {data.trades.length > 0 && (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">历史交易 ({data.trades.length})</div>
-              {data.trades.map(t => (
-                <div key={t.trade_id} className="flex justify-between text-xs py-1 border-b border-[#252525]">
-                  <span className="text-gray-500">{t.exit_ts_ms ? dayjs(t.exit_ts_ms).format('MM-DD') : '开仓中'}</span>
-                  <span className="font-mono text-gray-400">{t.exit_reason || t.status}</span>
-                  <span style={{ color: pnlColor(t.realized_pnl) }}>
-                    {pnlPrefix(t.realized_pnl)}{t.realized_pnl.toFixed(2)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {data.trades.length === 0 && data.square_posts.length === 0 && data.oi_series.length === 0 && (
-            <div className="text-gray-600 text-xs">暂无数据</div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 type ViewMode = 'market' | 'uptrend'  // R.23: uptrend discovery tab
 
@@ -399,7 +241,18 @@ export default function Market() {
         </>)}
       </div>
 
-      {selected && <SymbolSidebar symbol={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <SymbolSidebar
+          symbol={selected}
+          onClose={() => setSelected(null)}
+          onJumpToMarket={(sym) => {
+            setView('market')
+            setSearch(sym)
+            setPage(1)
+            setSelected(null)
+          }}
+        />
+      )}
       {markFor && <MarkPriceModal symbol={markFor.symbol} currentPrice={markFor.price} onClose={() => setMarkFor(null)} />}
     </div>
   )

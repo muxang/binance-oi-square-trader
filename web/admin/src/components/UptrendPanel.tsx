@@ -118,7 +118,8 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
                 const cnt = passCount(it)
                 return (
                   <tr key={it.symbol}
-                      className="border-b border-[#252525] last:border-b-0 hover:bg-[#252525] cursor-pointer"
+                      className="group border-b border-[#252525] last:border-b-0 hover:bg-[#252525] cursor-pointer"
+                      title="点击行打开 OI/Square 详情侧栏"
                       onClick={() => onSelect?.(it.symbol)}>
                     <td className="py-2 px-2 text-xs font-mono text-gray-200">
                       {it.pass
@@ -175,7 +176,7 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
             <tfoot>
               <tr className="text-[10px] text-gray-600 border-t border-[#2d2d2d]">
                 <td colSpan={10} className="py-1.5 px-2">
-                  鼠标悬停每个数值格可看完整阈值说明 · 行点击打开 symbol 详情 · 点 symbol 文字跳币安永续页
+                  💡 行点击打开 OI/Square 详情侧栏(含大户多空 / 市值占比 / 24h 趋势) · symbol 文字 → 币安永续 · 悬停数值格看完整阈值对比
                 </td>
               </tr>
             </tfoot>
