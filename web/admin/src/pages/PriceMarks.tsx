@@ -8,6 +8,7 @@ import {
   fetchPriceMarks, createPriceMark, ackPriceMark, deletePriceMark,
   type PriceMarkRow,
 } from '../api/client'
+import SymbolLink from '../components/SymbolLink'
 
 export default function PriceMarks() {
   const qc = useQueryClient()
@@ -136,7 +137,9 @@ function Row({ m, onAck, onDel, busy }: {
   const unacked = m.status === 'triggered' && !m.acknowledged
   return (
     <tr className={`border-b border-[#252525] hover:bg-[#252525] ${unacked ? 'bg-red-950/40' : ''}`}>
-      <td className="py-2 px-3 font-mono text-white">{m.symbol}</td>
+      <td className="py-2 px-3 font-mono text-white">
+        <SymbolLink symbol={m.symbol} />
+      </td>
       <td className="py-2 px-3">
         <span className={m.direction === 'above' ? 'text-green-400' : 'text-red-400'}>
           {m.direction === 'above' ? '↑ 突破' : '↓ 跌破'}

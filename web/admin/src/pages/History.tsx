@@ -8,6 +8,7 @@ import {
   type HistoryParams,
 } from '../api/client'
 import { pnlColor, pnlPrefix } from '../theme/colors'
+import SymbolLink from '../components/SymbolLink'
 
 // ---- helpers ----
 
@@ -60,7 +61,9 @@ function HistoryRow({ item, onClick }: { item: HistoryItem; onClick: () => void 
       onClick={onClick}
       className="border-b border-[#252525] hover:bg-[#252525] cursor-pointer transition-colors"
     >
-      <td className="py-2 px-2 font-mono text-sm text-white font-semibold">{item.symbol}</td>
+      <td className="py-2 px-2 font-mono text-sm text-white font-semibold">
+        <SymbolLink symbol={item.symbol} />
+      </td>
       <td className="py-2 px-2 text-xs text-gray-400">{item.direction}</td>
       <td className="py-2 px-2 text-xs text-gray-500 tabular-nums">
         {item.entry_ts_ms ? dayjs(item.entry_ts_ms).format('MM-DD HH:mm') : '—'}

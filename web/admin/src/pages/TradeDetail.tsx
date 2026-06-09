@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { fetchTradeDetail, manualCloseTrade } from '../api/client'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 import { ConfirmModal, errorMessage } from '../components/ConfirmModal'
+import SymbolLink from '../components/SymbolLink'
 
 function fmtP(v?: number | null, d = 4): string {
   if (v == null) return '—'
@@ -256,7 +257,9 @@ export default function TradeDetail() {
           className="text-xs text-gray-500 hover:text-white px-2 py-1 rounded bg-[#252525]">
           ← 返回
         </button>
-        <span className="font-mono text-lg text-white font-bold">{d.symbol}</span>
+        <span className="font-mono text-lg text-white font-bold">
+          <SymbolLink symbol={d.symbol} />
+        </span>
         <span className="text-xs px-2 py-0.5 rounded font-mono"
           style={{ color: sc, background: sc + '22' }}>{statusZh}</span>
         <span className="text-xs text-gray-600">#{d.trade_id} · {d.data_source === 'mainnet' ? '真盘' : '测试网'}</span>

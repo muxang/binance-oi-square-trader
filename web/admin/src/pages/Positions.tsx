@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import { fetchPositionsOpen, type OpenPosition, type RecentClosedTrade } from '../api/client'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
+import SymbolLink from '../components/SymbolLink'
 
 // Extended type — backend now returns signal fields
 type OpenPositionExt = OpenPosition & {
@@ -60,7 +61,9 @@ function PositionRow({ p, onClick }: { p: OpenPositionExt; onClick: () => void }
       onClick={onClick}
       className="border-b border-[#252525] hover:bg-[#252525] cursor-pointer transition-colors"
     >
-      <td className="py-2.5 px-3 font-mono text-sm text-white font-semibold">{p.symbol}</td>
+      <td className="py-2.5 px-3 font-mono text-sm text-white font-semibold">
+        <SymbolLink symbol={p.symbol} />
+      </td>
       <td className="py-2.5 px-3 text-xs text-gray-400">{p.direction}</td>
       <td className="py-2.5 px-3 text-xs text-gray-400 tabular-nums">
         {p.entry_ts_ms ? dayjs(p.entry_ts_ms).format('MM-DD HH:mm') : '—'}
@@ -103,7 +106,9 @@ function PositionRow({ p, onClick }: { p: OpenPositionExt; onClick: () => void }
 function RecentRow({ t }: { t: RecentClosedTrade }) {
   return (
     <tr className="border-b border-[#252525]">
-      <td className="py-2 px-3 font-mono text-sm text-gray-400">{t.symbol}</td>
+      <td className="py-2 px-3 font-mono text-sm text-gray-400">
+        <SymbolLink symbol={t.symbol} />
+      </td>
       <td className="py-2 px-3 text-xs text-gray-500">
         {t.exit_ts_ms ? dayjs(t.exit_ts_ms).format('MM-DD HH:mm') : '—'}
       </td>

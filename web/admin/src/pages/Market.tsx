@@ -6,6 +6,7 @@ import { DataSourceContext } from '../context/DataSource'
 import { colors, pnlColor, pnlPrefix } from '../theme/colors'
 import MarkPriceModal from '../components/MarkPriceModal'
 import UptrendPanel from '../components/UptrendPanel'
+import SymbolLink from '../components/SymbolLink'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -60,7 +61,9 @@ function SymbolSidebar({ symbol, onClose }: { symbol: string; onClose: () => voi
     <div className="w-80 bg-[#1a1a1a] border-l border-[#2d2d2d] flex flex-col shrink-0">
       <div className="flex items-center justify-between p-4 border-b border-[#2d2d2d]">
         <div>
-          <div className="font-mono font-bold text-white">{symbol}</div>
+          <div className="font-mono font-bold text-white">
+            <SymbolLink symbol={symbol} />
+          </div>
           {data && (
             <div className="text-xs mt-0.5">
               <span className="text-gray-400">{fmtPrice(data.current_price)}</span>
@@ -304,7 +307,9 @@ export default function Market() {
                       <tr key={item.symbol}
                         onClick={() => setSelected(selected === item.symbol ? null : item.symbol)}
                         className={`border-b border-[#252525] cursor-pointer transition-colors ${selected === item.symbol ? 'bg-[#1e2a3a]' : 'hover:bg-[#252525]'}`}>
-                        <td className="py-2 px-2 font-mono text-sm text-white font-semibold">{item.symbol}</td>
+                        <td className="py-2 px-2 font-mono text-sm text-white font-semibold">
+                          <SymbolLink symbol={item.symbol} />
+                        </td>
                         {/* R.11.B1+: 流动市值 = circulating_supply × current_price */}
                         <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-400">
                           {item.cmcap_usd_m > 0 ? fmtOi(item.cmcap_usd_m) : '—'}

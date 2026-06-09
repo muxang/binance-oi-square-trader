@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import dayjs from 'dayjs'
 import { fetchSquareTrending } from '../api/client'
+import SymbolLink from '../components/SymbolLink'
 
 const TH = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
   <th className={`py-2 px-3 text-xs font-medium text-gray-500 ${right ? 'text-right' : 'text-left'}`}>
@@ -79,7 +80,9 @@ export default function Square() {
                   <tr key={item.symbol}
                     className="border-b border-[#252525] hover:bg-[#252525] transition-colors">
                     <td className="py-2 px-3 text-xs text-gray-600 tabular-nums w-10">{idx + 1}</td>
-                    <td className="py-2 px-3 font-mono text-sm text-white font-semibold">{item.symbol}</td>
+                    <td className="py-2 px-3 font-mono text-sm text-white font-semibold">
+                      <SymbolLink symbol={item.symbol} />
+                    </td>
                     <td className="py-2 px-3 text-xs text-right tabular-nums text-gray-300 font-semibold">
                       {item.mentions.toLocaleString()}
                     </td>

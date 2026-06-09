@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchUptrend, type UptrendItem } from '../api/client'
+import SymbolLink from './SymbolLink'
 
 function pct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
 function num(v: number, d = 2) { return v.toFixed(d) }
@@ -87,7 +88,7 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
                     onClick={() => onSelect?.(it.symbol)}>
                   <td className="py-2 px-2 text-xs font-mono text-gray-200">
                     {it.pass && <span className="text-green-500 mr-1">●</span>}
-                    {it.symbol}
+                    <SymbolLink symbol={it.symbol} />
                   </td>
                   <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-300">{fmtPrice(it.close)}</td>
                   <td className={`py-2 px-2 text-xs text-right tabular-nums font-semibold ${it.pct_4h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
