@@ -411,29 +411,74 @@ export const fetchMarket = (p: MarketParams = {}): Promise<MarketData> => {
   return api.get<MarketData>('/market', { params }).then(r => r.data)
 }
 
-// ---- R.23 Uptrend Discovery ----
+// ---- R.24 Uptrend Discovery (composite: baseTrend AND relStrength AND (breakout OR pullback)) ----
+
+export type SignalType = 'BREAKOUT' | 'PULLBACK' | 'BREAKOUT_AND_PULLBACK' | 'NONE'
 
 export interface UptrendItem {
   symbol: string
+
+  // 1h snapshot
   close: number
+  low: number
+  volume: number          // quote volume (USDT) when available
+  volume_ma20: number     // SMA of PREVIOUS 20 bars (excludes current)
+  highest20: number       // max(high) over PREVIOUS 20 bars
+
+  // 1h indicators
   ema20: number
+  ema20_3bars_ago: number
   ema50: number
-  highest20: number
-  volume: number
-  volume_ma20: number
-  vol_ratio: number
   rsi14: number
   adx14: number
-  pct_4h: number
+  plus_di14: number
+  minus_di14: number
+
+  // 4h snapshot + indicator
+  close_4h: number
+  ema20_4h: number
+
+  // 4h relative strength
+  pct_4h: number          // (latest 4h close − open) / open, decimal
   btc_pct_4h: number
-  rel_strength: number
-  cond_ema_stack: boolean
-  cond_breakout: boolean
-  cond_vol_surge: boolean
-  cond_rsi: boolean
-  cond_adx: boolean
+  rel_strength: number    // pct_4h − btc_pct_4h, decimal
+
+  // Derived ratios
+  breakout_ratio: number  // close / highest20
+  vol_ratio: number       // volume / volume_ma20
+  close_to_ema20: number
+  close_to_ema50: number
+
+  // baseTrend sub-conditions
+  cond_close_above_ema50: boolean
+  cond_ema20_above_ema50: boolean
+  cond_ema20_rising: boolean
+  cond_mtf_close4h_above_ema20: boolean
+  cond_base_trend: boolean
+
+  // relStrength
   cond_rel_strength: boolean
+
+  // breakoutSignal sub-conditions
+  cond_breakout_high: boolean
+  cond_breakout_vol: boolean
+  cond_breakout_rsi: boolean
+  cond_breakout_adx: boolean
+  cond_breakout_di_plus: boolean
+  cond_breakout: boolean
+
+  // pullbackSignal sub-conditions (RSI band split)
+  cond_pullback_close: boolean
+  cond_pullback_low: boolean
+  cond_pullback_above_ema50: boolean
+  cond_pullback_rsi_min: boolean
+  cond_pullback_rsi_max: boolean
+  cond_pullback_vol: boolean
+  cond_pullback: boolean
+
   pass: boolean
+  signal_type: SignalType
+  trigger_time: string    // RFC3339
 }
 
 export interface UptrendData {

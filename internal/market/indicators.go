@@ -104,18 +104,29 @@ func RSI(closes []float64, period int) (float64, error) {
 	return 100 - 100/(1+avgGain/avgLoss), nil
 }
 
-// ADX (Wilder). ATR / +DM / -DM smoothed with RMA;
-// DX = 100·|+DI − −DI| / (+DI + −DI); ADX = RMA(DX). Requires ≥ 2·period+1 bars.
+// ADX (Wilder). Convenience wrapper around DMI when only the trend strength
+// is needed. Returns the same value DMI would, ignoring +DI / −DI.
 func ADX(highs, lows, closes []float64, period int) (float64, error) {
+	adx, _, _, err := DMI(highs, lows, closes, period)
+	return adx, err
+}
+
+// DMI returns the full Wilder Directional Movement Index triple at the latest
+// bar: (ADX, +DI, −DI). ADX = RMA(DX, period); +DI / −DI are the most recent
+// smoothed values (100 · smoothed±DM / ATR). +DI > −DI ⇒ uptrend direction.
+//
+// ATR / +DM / −DM smoothed with RMA;
+// DX = 100·|+DI − −DI| / (+DI + −DI); ADX = RMA(DX). Requires ≥ 2·period+1 bars.
+func DMI(highs, lows, closes []float64, period int) (adx, plusDI, minusDI float64, err error) {
 	if period <= 0 {
-		return 0, ErrInvalidPeriod
+		return 0, 0, 0, ErrInvalidPeriod
 	}
 	n := len(highs)
 	if n != len(lows) || n != len(closes) {
-		return 0, errors.New("indicators: high/low/close length mismatch")
+		return 0, 0, 0, errors.New("indicators: high/low/close length mismatch")
 	}
 	if n < 2*period+1 {
-		return 0, ErrInsufficientData
+		return 0, 0, 0, ErrInsufficientData
 	}
 	tr := make([]float64, n-1)
 	plusDM := make([]float64, n-1)
@@ -148,14 +159,14 @@ func ADX(highs, lows, closes []float64, period int) (float64, error) {
 			dxSeries = append(dxSeries, 0)
 			return
 		}
-		plusDI := 100 * plusS / atr
-		minusDI := 100 * minusS / atr
-		sum := plusDI + minusDI
+		pDI := 100 * plusS / atr
+		mDI := 100 * minusS / atr
+		sum := pDI + mDI
 		if sum == 0 {
 			dxSeries = append(dxSeries, 0)
 			return
 		}
-		dxSeries = append(dxSeries, 100*math.Abs(plusDI-minusDI)/sum)
+		dxSeries = append(dxSeries, 100*math.Abs(pDI-mDI)/sum)
 	}
 	appendDX()
 	for i := period; i < len(tr); i++ {
@@ -165,9 +176,14 @@ func ADX(highs, lows, closes []float64, period int) (float64, error) {
 		appendDX()
 	}
 	if len(dxSeries) < period {
-		return 0, ErrInsufficientData
+		return 0, 0, 0, ErrInsufficientData
 	}
-	return RMA(dxSeries, period)
+	if atr > 0 {
+		plusDI = 100 * plusS / atr
+		minusDI = 100 * minusS / atr
+	}
+	adx, err = RMA(dxSeries, period)
+	return adx, plusDI, minusDI, err
 }
 
 func Highest(values []float64, period int) (float64, error) {

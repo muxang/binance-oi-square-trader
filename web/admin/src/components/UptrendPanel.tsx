@@ -1,18 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchUptrend, type UptrendItem } from '../api/client'
+import { fetchUptrend, type UptrendItem, type SignalType } from '../api/client'
 import SymbolLink from './SymbolLink'
-
-// Count how many of the 6 conditions a symbol satisfies. Used in showAll mode
-// to sort 6/6 first, 5/6, 4/6 ... so "almost passing" candidates surface to the top.
-function passCount(it: UptrendItem): number {
-  return (it.cond_ema_stack    ? 1 : 0) +
-         (it.cond_breakout     ? 1 : 0) +
-         (it.cond_vol_surge    ? 1 : 0) +
-         (it.cond_rsi          ? 1 : 0) +
-         (it.cond_adx          ? 1 : 0) +
-         (it.cond_rel_strength ? 1 : 0)
-}
 
 function pct(v: number) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' }
 function num(v: number, d = 2) { return v.toFixed(d) }
@@ -23,11 +12,41 @@ function fmtPrice(p: number) {
   if (p >= 0.01) return p.toFixed(6)
   return p.toFixed(8)
 }
+function fmtVol(v: number) {
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B'
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M'
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K'
+  return v.toFixed(0)
+}
 
-// pass/fail tailwind utility — green if condition met, red if violated. Used per cell
-// so a glance at the row reveals exactly which condition(s) failed.
-const ok  = 'text-green-400'
-const bad = 'text-red-400'
+const ok   = 'text-green-400'
+const bad  = 'text-red-400'
+const warn = 'text-yellow-400'
+const dim  = 'text-gray-500'
+
+// 3-group pass count: baseTrend / relStrength / entrySignal (= breakout OR pullback)
+function groupCount(it: UptrendItem): number {
+  const entry = it.cond_breakout || it.cond_pullback
+  return (it.cond_base_trend ? 1 : 0) +
+         (it.cond_rel_strength ? 1 : 0) +
+         (entry ? 1 : 0)
+}
+
+const signalCfg: Record<SignalType, { label: string; cls: string }> = {
+  BREAKOUT:              { label: '突破',      cls: 'bg-blue-700/40   text-blue-300   border-blue-600/50' },
+  PULLBACK:              { label: '回踩',      cls: 'bg-orange-700/40 text-orange-300 border-orange-600/50' },
+  BREAKOUT_AND_PULLBACK: { label: '突破+回踩', cls: 'bg-purple-700/40 text-purple-300 border-purple-600/50' },
+  NONE:                  { label: '—',         cls: 'bg-[#252525]     text-gray-600   border-[#3d3d3d]' },
+}
+
+function SignalBadge({ type }: { type: SignalType }) {
+  const c = signalCfg[type]
+  return (
+    <span className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold whitespace-nowrap ${c.cls}`}>
+      {c.label}
+    </span>
+  )
+}
 
 export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) => void }) {
   const [search, setSearch] = useState('')
@@ -45,13 +64,17 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
     placeholderData: (prev) => prev,
   })
 
-  // showAll mode: re-sort by pass-count desc so 6/6 → 5/6 → 4/6 ... cluster from the top.
-  // Stable sort preserves backend's rel_strength desc order within the same pass-count tier.
-  // showAll=false: backend already returns only pass=6 items sorted by rel_strength — no re-sort.
+  // showAll mode sort: pass true first, then group-count desc, then rel_strength desc.
+  // showAll=false (only passing): backend's rel_strength desc preserved.
   const items = useMemo(() => {
     if (!data) return []
     if (!showAll) return data.items
-    return [...data.items].sort((a, b) => passCount(b) - passCount(a))
+    return [...data.items].sort((a, b) => {
+      if (a.pass !== b.pass) return a.pass ? -1 : 1
+      const ga = groupCount(a), gb = groupCount(b)
+      if (ga !== gb) return gb - ga
+      return b.rel_strength - a.rel_strength
+    })
   }, [data, showAll])
 
   return (
@@ -78,95 +101,124 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
         )}
       </div>
 
-      <div className="text-[11px] text-gray-500 px-1">
-        阈值: close &gt; EMA20 &gt; EMA50 · close &gt; High20 · Vol &gt; 1.5× · RSI &gt; 55 · ADX &gt; 20 · 4h &gt; BTC 4h
-        <span className="ml-2">·</span>
-        <span className="ml-2"><span className={ok}>绿</span> = 满足</span>
-        <span className="ml-2"><span className={bad}>红</span> = 未满足</span>
+      <div className="text-[11px] text-gray-500 px-1 leading-relaxed">
+        信号 = <b className="text-gray-300">baseTrend</b> &amp; <b className="text-gray-300">relStrength</b> &amp; (<b className="text-blue-400">breakout</b> OR <b className="text-orange-400">pullback</b>)
+        <br/>
+        <span className="text-gray-600">
+          baseTrend: close&gt;EMA50 &amp; EMA20&gt;EMA50 &amp; EMA20↗ &amp; 4h close&gt;4h EMA20 ·
+          relStrength: token 4h &gt;= BTC 4h − 0.5pp ·
+          <span className="text-blue-500"> breakout</span>: close&gt;High20×1.002, vol&gt;1.5×MA, RSI&gt;55, ADX&gt;20, +DI&gt;−DI ·
+          <span className="text-orange-500"> pullback</span>: 0.98EMA20≤close, low≤1.01EMA20, close&gt;EMA50, 45&lt;RSI&lt;70, vol≤1.3×MA
+        </span>
       </div>
 
       <div className="bg-[#1f1f1f] border border-[#2d2d2d] rounded-lg overflow-x-auto">
         {isLoading && <div className="p-8 text-gray-500 text-sm text-center">加载中...</div>}
-        {data && data.items.length === 0 && !isLoading && (
+        {data && items.length === 0 && !isLoading && (
           <div className="p-8 text-gray-500 text-sm text-center">
-            {showAll ? '暂无评估数据(扫描尚未运行)' : '当前 0 个 symbol 通过 6 条件 — 全市场偏弱'}
+            {showAll ? '暂无评估数据(扫描尚未运行)' : '当前 0 个 symbol 通过 — 全市场偏弱或回调'}
           </div>
         )}
-        {data && data.items.length > 0 && (
-          <table className="w-full">
+        {data && items.length > 0 && (
+          <table className="w-full text-xs">
             <thead className="border-b border-[#2d2d2d]">
-              <tr className="text-xs text-gray-500">
-                <th className="text-left  py-2 px-2 font-medium">Symbol</th>
+              <tr className="text-gray-500">
+                <th className="text-left  py-2 px-2 font-medium">Symbol / 信号</th>
                 <th className="text-right py-2 px-2 font-medium" title="最新已收盘 1h close">价格</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 1a: close > EMA20">EMA20</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 1b: EMA20 > EMA50">EMA50</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 2: close > 前 20 根已收盘 high">High20</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 3: volume / volume_ma20 > 1.5">Vol×</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 4: RSI14 > 55(Wilder 平滑)">RSI14</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 5: ADX14 > 20(Wilder 平滑)">ADX14</th>
-                <th className="text-right py-2 px-2 font-medium" title="过去 4h 涨跌幅">4h%</th>
-                <th className="text-right py-2 px-2 font-medium" title="条件 6: 4h% &gt; BTC 4h%">vs BTC</th>
+                <th className="text-right py-2 px-2 font-medium" title="EMA20 (1h)">EMA20</th>
+                <th className="text-right py-2 px-2 font-medium" title="EMA50 (1h),绿=close&gt;EMA50">EMA50</th>
+                <th className="text-right py-2 px-2 font-medium" title="EMA20 3根前,绿=斜率向上">EMA20[3]</th>
+                <th className="text-right py-2 px-2 font-medium" title="4h close / 4h EMA20,绿=站上">4h Cl/EMA</th>
+                <th className="text-right py-2 px-2 font-medium" title="前20根 1h 最高,绿=close>High20×1.002">High20</th>
+                <th className="text-right py-2 px-2 font-medium" title="vol/MA20(前20根均量,优先 quoteVolume)">Vol×</th>
+                <th className="text-right py-2 px-2 font-medium">RSI14</th>
+                <th className="text-right py-2 px-2 font-medium">ADX14</th>
+                <th className="text-right py-2 px-2 font-medium" title="+DI vs −DI 方向">±DI</th>
+                <th className="text-right py-2 px-2 font-medium" title="(latest 4h close − open) / open">4h%</th>
+                <th className="text-right py-2 px-2 font-medium" title="token 4h − BTC 4h,绿=≥−0.5pp">vs BTC</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it: UptrendItem) => {
-                // Split cond_ema_stack into its two sub-conditions for cell-level color:
-                //   EMA20 cell green if close > EMA20
-                //   EMA50 cell green if EMA20 > EMA50
-                const emaStackPart1 = it.close > it.ema20
-                const emaStackPart2 = it.ema20 > it.ema50
-                const cnt = passCount(it)
+                const gc = groupCount(it)
+                // Per-cell color independent: each color reflects ONE condition.
+                const rsiOK = it.cond_breakout_rsi ||
+                  (it.cond_pullback_rsi_min && it.cond_pullback_rsi_max)
+                const volColor = it.cond_breakout_vol ? ok
+                  : it.cond_pullback_vol ? warn
+                  : bad
                 return (
                   <tr key={it.symbol}
                       className="group border-b border-[#252525] last:border-b-0 hover:bg-[#252525] cursor-pointer"
                       title="点击行打开 OI/Square 详情侧栏"
                       onClick={() => onSelect?.(it.symbol)}>
-                    <td className="py-2 px-2 text-xs font-mono text-gray-200">
+                    {/* Symbol + status + signal_type badge */}
+                    <td className="py-2 px-2 font-mono text-gray-200 whitespace-nowrap">
                       {it.pass
-                        ? <span className="text-green-500 mr-1.5" title="6/6 全部通过">●</span>
-                        : <span
-                            className={`mr-1.5 text-[10px] tabular-nums font-semibold ${
-                              cnt >= 5 ? 'text-yellow-400'
-                              : cnt >= 3 ? 'text-orange-500'
-                              : 'text-gray-600'
-                            }`}
-                            title={`${cnt}/6 条件通过`}
-                          >{cnt}/6</span>
+                        ? <span className="text-green-500 mr-1.5" title="3/3 通过 → 触发提醒">●</span>
+                        : <span className={`mr-1.5 text-[10px] tabular-nums font-semibold ${
+                            gc >= 2 ? warn : gc === 1 ? 'text-orange-500' : 'text-gray-600'
+                          }`} title={`${gc}/3 组通过 (baseTrend / relStrength / entry)`}>{gc}/3</span>
                       }
                       <SymbolLink symbol={it.symbol} />
+                      <span className="ml-1.5"><SignalBadge type={it.signal_type} /></span>
                     </td>
-                    <td className="py-2 px-2 text-xs text-right tabular-nums text-gray-200 font-semibold">
+                    {/* 价格 */}
+                    <td className="py-2 px-2 text-right tabular-nums text-gray-200 font-semibold">
                       {fmtPrice(it.close)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${emaStackPart1 ? ok : bad}`}
-                        title={emaStackPart1 ? `close ${fmtPrice(it.close)} > EMA20 ${fmtPrice(it.ema20)}` : `close ${fmtPrice(it.close)} ≤ EMA20 ${fmtPrice(it.ema20)} — 未达多头排列`}>
+                    {/* EMA20 — color: EMA20 > EMA50 (baseTrend) */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_ema20_above_ema50 ? ok : bad}`}
+                        title={`EMA20 ${fmtPrice(it.ema20)} ${it.cond_ema20_above_ema50 ? '>' : '≤'} EMA50 ${fmtPrice(it.ema50)}`}>
                       {fmtPrice(it.ema20)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${emaStackPart2 ? ok : bad}`}
-                        title={emaStackPart2 ? `EMA20 > EMA50` : `EMA20 ${fmtPrice(it.ema20)} ≤ EMA50 ${fmtPrice(it.ema50)} — 多头未排列`}>
+                    {/* EMA50 — color: close > EMA50 (baseTrend critical) */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_close_above_ema50 ? ok : bad}`}
+                        title={`close ${fmtPrice(it.close)} ${it.cond_close_above_ema50 ? '>' : '≤'} EMA50 ${fmtPrice(it.ema50)}`}>
                       {fmtPrice(it.ema50)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${it.cond_breakout ? ok : bad}`}
-                        title={it.cond_breakout ? `close > 前 20 根 high (${fmtPrice(it.highest20)})` : `close ${fmtPrice(it.close)} ≤ High20 ${fmtPrice(it.highest20)} — 未突破`}>
+                    {/* EMA20[3] — color: ema20 > ema20[3] (slope rising) */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_ema20_rising ? ok : bad}`}
+                        title={`EMA20 ${it.cond_ema20_rising ? '↗ 上升' : '↘ 未升'} vs 3 bars ago = ${fmtPrice(it.ema20_3bars_ago)}`}>
+                      {fmtPrice(it.ema20_3bars_ago)} {it.cond_ema20_rising ? '↗' : '↘'}
+                    </td>
+                    {/* 4h MTF — color: 4h close > 4h EMA20 */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_mtf_close4h_above_ema20 ? ok : bad}`}
+                        title={`4h close ${fmtPrice(it.close_4h)} ${it.cond_mtf_close4h_above_ema20 ? '>' : '≤'} 4h EMA20 ${fmtPrice(it.ema20_4h)}`}>
+                      {it.ema20_4h > 0 ? (it.close_4h / it.ema20_4h).toFixed(3) + '×' : '—'}
+                    </td>
+                    {/* High20 — color: close > High20 * 1.002 (breakout high) */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_breakout_high ? ok : dim}`}
+                        title={`close/High20 = ${num(it.breakout_ratio, 4)} ${it.cond_breakout_high ? '> 1.002 ✓ (突破)' : '≤ 1.002 (未突破)'}`}>
                       {fmtPrice(it.highest20)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${it.cond_vol_surge ? ok : bad}`}
-                        title={`成交量 ${it.volume.toLocaleString('en-US', {maximumFractionDigits: 0})} / 20根MA ${it.volume_ma20.toLocaleString('en-US', {maximumFractionDigits: 0})} = ${num(it.vol_ratio, 2)}× (需 > 1.5)`}>
+                    {/* Vol× — green if breakout vol, yellow if pullback vol, red if neither */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${volColor}`}
+                        title={`vol ${fmtVol(it.volume)} / MA20 ${fmtVol(it.volume_ma20)} = ${num(it.vol_ratio, 2)}× · breakout >1.5 / pullback ≤1.3`}>
                       {num(it.vol_ratio, 2)}×
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${it.cond_rsi ? ok : bad}`}
-                        title={`RSI14 ${num(it.rsi14, 2)} ${it.cond_rsi ? '> 55 ✓' : '≤ 55 ✗'}`}>
+                    {/* RSI14 — green if either signal's RSI condition met */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${rsiOK ? ok : bad}`}
+                        title={`RSI14 ${num(it.rsi14, 2)} · breakout>55 ${it.cond_breakout_rsi?'✓':'✗'} · pullback 45-70 ${(it.cond_pullback_rsi_min && it.cond_pullback_rsi_max)?'✓':'✗'}`}>
                       {num(it.rsi14, 1)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${it.cond_adx ? ok : bad}`}
-                        title={`ADX14 ${num(it.adx14, 2)} ${it.cond_adx ? '> 20 ✓ (有趋势)' : '≤ 20 ✗ (震荡市)'}`}>
+                    {/* ADX14 — green if >20 (breakout requirement only) */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_breakout_adx ? ok : dim}`}
+                        title={`ADX14 ${num(it.adx14, 2)} ${it.cond_breakout_adx ? '> 20 (有趋势,breakout 需要)' : '≤ 20 (震荡市,breakout 不满足;pullback 不要求)'}`}>
                       {num(it.adx14, 1)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums font-semibold ${it.pct_4h >= 0 ? ok : bad}`}>
+                    {/* ±DI — green if +DI > -DI */}
+                    <td className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${it.cond_breakout_di_plus ? ok : bad}`}
+                        title={`+DI ${num(it.plus_di14, 2)} ${it.cond_breakout_di_plus ? '>' : '≤'} −DI ${num(it.minus_di14, 2)}`}>
+                      {it.cond_breakout_di_plus ? '▲' : '▼'}{num(it.plus_di14, 0)}|{num(it.minus_di14, 0)}
+                    </td>
+                    {/* 4h% — pct_4h direction */}
+                    <td className={`py-2 px-2 text-right tabular-nums font-semibold ${it.pct_4h >= 0 ? ok : bad}`}>
                       {pct(it.pct_4h)}
                     </td>
-                    <td className={`py-2 px-2 text-xs text-right tabular-nums ${it.cond_rel_strength ? ok : bad}`}
-                        title={it.cond_rel_strength ? `领先 BTC ${pct(it.rel_strength)}` : `落后 BTC ${pct(it.rel_strength)} — 相对强度不足`}>
+                    {/* vs BTC — green if rel_strength >= -0.005 */}
+                    <td className={`py-2 px-2 text-right tabular-nums ${it.cond_rel_strength ? ok : bad}`}
+                        title={`token 4h ${pct(it.pct_4h)} − BTC 4h ${pct(it.btc_pct_4h)} = ${pct(it.rel_strength)} (需 ≥ −0.5pp)`}>
                       {pct(it.rel_strength)}
                     </td>
                   </tr>
@@ -175,8 +227,8 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
             </tbody>
             <tfoot>
               <tr className="text-[10px] text-gray-600 border-t border-[#2d2d2d]">
-                <td colSpan={10} className="py-1.5 px-2">
-                  💡 行点击打开 OI/Square 详情侧栏(含大户多空 / 市值占比 / 24h 趋势) · symbol 文字 → 币安永续 · 悬停数值格看完整阈值对比
+                <td colSpan={13} className="py-1.5 px-2">
+                  💡 行点击 → OI/Square 详情侧栏 · symbol 文字 → 币安永续 · 悬停每格看完整阈值对比 · 调试模式按组通过数排序
                 </td>
               </tr>
             </tfoot>
