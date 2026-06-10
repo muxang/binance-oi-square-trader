@@ -254,6 +254,12 @@ func run() error {
 	if err := runner.Register(klinesCol, "*/5 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register klines collector")
 	}
+	// R.25: Binance Alpha token list — hourly fetch → Redis. Frontend SymbolLink
+	// reads the set to show "α" badge on Alpha-listed symbols.
+	alphaCol := collector.NewAlphaCollector(proxy, rdb, log)
+	if err := runner.Register(alphaCol, "0 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register alpha collector")
+	}
 	// R.23: uptrend discovery scan — top-200 USDⓈ-M perps, 6-rule trend filter,
 	// result cached in Redis for admin-api hot reads. Pure observability — no
 	// signal/decision integration yet (waits for observation-period validation).

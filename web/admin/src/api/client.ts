@@ -411,6 +411,15 @@ export const fetchMarket = (p: MarketParams = {}): Promise<MarketData> => {
   return api.get<MarketData>('/market', { params }).then(r => r.data)
 }
 
+// ---- R.25 Binance Alpha symbols ----
+
+export interface AlphaSymbolsResponse {
+  symbols: string[]
+}
+
+export const fetchAlphaSymbols = (): Promise<AlphaSymbolsResponse> =>
+  api.get<AlphaSymbolsResponse>('/alpha-symbols').then(r => r.data)
+
 // ---- R.24 Uptrend Discovery (composite: baseTrend AND relStrength AND (breakout OR pullback)) ----
 
 export type SignalType = 'BREAKOUT' | 'PULLBACK' | 'BREAKOUT_AND_PULLBACK' | 'NONE'
