@@ -260,6 +260,14 @@ func run() error {
 	if err := runner.Register(alphaCol, "0 * * * *"); err != nil {
 		log.Fatal().Err(err).Msg("register alpha collector")
 	}
+	// Startup kick — cron is hourly; run once shortly after boot so the admin
+	// UI has Alpha data without waiting for the next hour boundary.
+	go func() {
+		time.Sleep(20 * time.Second)
+		if err := alphaCol.Run(ctx); err != nil {
+			log.Warn().Err(err).Msg("alpha startup kick failed (will retry on next cron)")
+		}
+	}()
 	// R.23: uptrend discovery scan — top-200 USDⓈ-M perps, 6-rule trend filter,
 	// result cached in Redis for admin-api hot reads. Pure observability — no
 	// signal/decision integration yet (waits for observation-period validation).
