@@ -32,6 +32,9 @@ type fakeAlgoDeps struct {
 	qtyDecremented []gen.DecrementPositionQtyParams
 	tpCleared      []gen.ClearTPAlgoIDParams
 	dailyPartial   []gen.UpdateDailyPnlPartialParams
+	// R.26 -2013 fallback artifacts
+	trailCleared    []int64
+	disasterCleared []int64
 }
 
 func (f *fakeAlgoDeps) ListOpenTradesWithAlgo(_ context.Context) ([]gen.ListOpenTradesWithAlgoRow, error) {
@@ -65,10 +68,20 @@ func (f *fakeAlgoDeps) UpdateDailyPnlPartial(_ context.Context, arg gen.UpdateDa
 	f.dailyPartial = append(f.dailyPartial, arg)
 	return nil
 }
+func (f *fakeAlgoDeps) ClearTrailAlgoID(_ context.Context, id int64) error {
+	f.trailCleared = append(f.trailCleared, id)
+	return nil
+}
+func (f *fakeAlgoDeps) ClearDisasterStopOrderID(_ context.Context, id int64) error {
+	f.disasterCleared = append(f.disasterCleared, id)
+	return nil
+}
 
 type fakeAlgoQuerier struct {
-	resp map[int64]binance.AlgoOrderQuery
-	err  map[int64]error
+	resp        map[int64]binance.AlgoOrderQuery
+	err         map[int64]error
+	positions   map[string][]binance.PositionRisk
+	positionErr error
 }
 
 func (f *fakeAlgoQuerier) QueryAlgoOrder(_ context.Context, algoID int64) (binance.AlgoOrderQuery, error) {
@@ -76,6 +89,14 @@ func (f *fakeAlgoQuerier) QueryAlgoOrder(_ context.Context, algoID int64) (binan
 		return binance.AlgoOrderQuery{}, e
 	}
 	return f.resp[algoID], nil
+}
+
+// R.26: stub for the position-diff reconcile path used by reconcileTPGone.
+func (f *fakeAlgoQuerier) GetPositionRisk(_ context.Context, symbol string) ([]binance.PositionRisk, error) {
+	if f.positionErr != nil {
+		return nil, f.positionErr
+	}
+	return f.positions[symbol], nil
 }
 
 func newTestAR(deps *fakeAlgoDeps, bc *fakeAlgoQuerier) *AlgoReconciler {
@@ -549,4 +570,154 @@ func TestReconcileTick_TPMetric_Incremented(t *testing.T) {
 	ar.ReconcileTick(context.Background())
 	after := testutil.ToFloat64(metrics.TPFilledTotal.WithLabelValues("METRICSYM", "tp1"))
 	assert.Equal(t, 1.0, after-before, "TPFilledTotal incremented on TP1 partial close")
+}
+
+// --- R.26: -2013 "Order does not exist" fallback ---
+
+// mkTPRowWithStopPx is like mkAlgoRowWithTPs but also sets initial_take_profit_1/2
+// so the R.26 -2013 fallback has a synthetic fill price to use.
+func mkTPRowWithStopPx(id int64, symbol string, entry, qty, tp1Px, tp2Px float64, tp1ID, tp2ID string) gen.ListOpenTradesWithAlgoRow {
+	r := mkAlgoRowWithTPs(id, symbol, entry, qty, tp1ID, tp2ID)
+	if tp1Px > 0 {
+		r.InitialTakeProfit1 = decimal.NullDecimal{Decimal: decimal.NewFromFloat(tp1Px), Valid: true}
+	}
+	if tp2Px > 0 {
+		r.InitialTakeProfit2 = decimal.NullDecimal{Decimal: decimal.NewFromFloat(tp2Px), Valid: true}
+	}
+	return r
+}
+
+// errNotFound matches Binance -2013 error shape produced by binance.Client.
+var errNotFound = &binance.APIError{HTTPCode: 400, BizCode: -2013, Message: "Order does not exist."}
+
+// Scenario mirrors IDUSDT #294: TP1 was placed for 20% × DB qty, fired, Binance
+// position dropped, but the algo query returns -2013. The R.26 fallback must:
+//   1. read positionRisk to learn current Binance qty
+//   2. compute fill_qty = db_qty − binance_qty
+//   3. use trades.initial_take_profit_1 as the synthetic fill price
+//   4. call partialClose → writes exit row + decrements DB qty + clears algo_id
+func TestReconcileTick_TP1_Gone2013_ReconcilesFromPositionDiff(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		// entry 0.026, DB qty 4443, TP1 stop 0.03124 (entry × 1.20 say), algo 9700.
+		mkTPRowWithStopPx(294, "IDUSDT", 0.026, 4443, 0.03124, 0, "9700", ""),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9700: errNotFound},
+		positions: map[string][]binance.PositionRisk{
+			"IDUSDT": {{Symbol: "IDUSDT", PositionAmt: decimal.NewFromInt(3555)}}, // dropped by 888
+		},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	require.Len(t, deps.exits, 1, "must write 1 exit row from position diff")
+	got := deps.exits[0]
+	assert.Equal(t, "tp1", got.Type)
+	assert.True(t, got.Qty.Equal(decimal.NewFromInt(888)), "fill_qty = db(4443) − binance(3555) = 888, got %s", got.Qty.String())
+	assert.True(t, got.Price.Equal(decimal.NewFromFloat(0.03124)), "uses stored stop price as synthetic fill price")
+	// pnl = (0.03124 − 0.026) × 888 = 4.65312
+	wantPnl := decimal.NewFromFloat(0.03124).Sub(decimal.NewFromFloat(0.026)).Mul(decimal.NewFromInt(888))
+	assert.True(t, got.Pnl.Equal(wantPnl), "pnl=%s want=%s", got.Pnl.String(), wantPnl.String())
+
+	require.Len(t, deps.qtyDecremented, 1)
+	assert.True(t, deps.qtyDecremented[0].Delta.Equal(decimal.NewFromInt(888)))
+	require.Len(t, deps.tpCleared, 1)
+	assert.Equal(t, int64(294), deps.tpCleared[0].ID)
+	assert.Equal(t, "tp1", deps.tpCleared[0].Type)
+}
+
+// -2013 with no position diff = either cancelled or we're racing the fire moment.
+// Clear algo_id (so we stop polling), don't write exit row.
+func TestReconcileTick_TP1_Gone2013_NoPositionDiff_ClearsOnly(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkTPRowWithStopPx(295, "FOOUSDT", 1.0, 100, 1.1, 0, "9701", ""),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9701: errNotFound},
+		positions: map[string][]binance.PositionRisk{
+			"FOOUSDT": {{Symbol: "FOOUSDT", PositionAmt: decimal.NewFromInt(100)}}, // unchanged
+		},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.exits, "no exit row when position unchanged")
+	assert.Empty(t, deps.qtyDecremented, "no qty decrement when position unchanged")
+	require.Len(t, deps.tpCleared, 1, "still clears algo_id to stop polling")
+	assert.Equal(t, "tp1", deps.tpCleared[0].Type)
+}
+
+// -2013 with missing stop price = can't compute pnl. Clear algo_id only.
+func TestReconcileTick_TP1_Gone2013_MissingStopPx_ClearsOnly(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		// tp1Px=0 → InitialTakeProfit1 is Null in the row
+		mkTPRowWithStopPx(296, "BARUSDT", 1.0, 100, 0, 0, "9702", ""),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9702: errNotFound},
+		positions: map[string][]binance.PositionRisk{
+			"BARUSDT": {{Symbol: "BARUSDT", PositionAmt: decimal.NewFromInt(80)}},
+		},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.exits, "no exit row without stop price (would have garbage pnl)")
+	require.Len(t, deps.tpCleared, 1, "still clears algo_id to stop the -2013 polling loop")
+}
+
+// Trail -2013 must NOT auto-close (fire price unknown). Just clear trail algo_id;
+// orphan_sync (R.8) handles position state.
+func TestReconcileTick_Trail_Gone2013_ClearsTrailOnly(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(297, "BAZUSDT", 1.0, 100, "", "9800", 1),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9800: errNotFound},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.exits, "trail -2013 doesn't write exit row (price unknown)")
+	assert.Empty(t, deps.closed, "trade not closed by reconciler — orphan_sync handles")
+	require.Len(t, deps.trailCleared, 1)
+	assert.Equal(t, int64(297), deps.trailCleared[0])
+}
+
+// Disaster -2013 same shape as trail: clear, defer to orphan_sync.
+func TestReconcileTick_Disaster_Gone2013_ClearsDisasterOnly(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRow(298, "QUXUSDT", 1.0, 100, 10, "9900"),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9900: errNotFound},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.exits)
+	assert.Empty(t, deps.closed)
+	require.Len(t, deps.disasterCleared, 1)
+	assert.Equal(t, int64(298), deps.disasterCleared[0])
+}
+
+// HasFinishedTPForTrade halt-suppression: -2013 on TP query means "treat as
+// filled" so position_manager skips the drift_halt for that tick. Without this,
+// every fired TP on testnet triggered a 30-45min drift_halt loop.
+func TestHasFinishedTPForTrade_Gone2013_ReturnsTrue(t *testing.T) {
+	deps := &fakeAlgoDeps{}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9999: errNotFound},
+	}
+	ar := newTestAR(deps, bc)
+	assert.True(t, ar.HasFinishedTPForTrade(context.Background(), "9999", ""))
+}
+
+func TestHasFinishedTPForTrade_GenericError_ReturnsFalse(t *testing.T) {
+	deps := &fakeAlgoDeps{}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{8888: assert.AnError},
+	}
+	ar := newTestAR(deps, bc)
+	assert.False(t, ar.HasFinishedTPForTrade(context.Background(), "8888", ""))
 }

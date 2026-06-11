@@ -646,6 +646,8 @@ SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.trail_stage,
        t.binance_tp1_algo_id,
        t.binance_tp2_algo_id,
+       t.initial_take_profit_1,
+       t.initial_take_profit_2,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -671,6 +673,8 @@ type ListOpenTradesWithAlgoRow struct {
 	TrailStage                 int16
 	BinanceTP1AlgoID           pgtype.Text
 	BinanceTP2AlgoID           pgtype.Text
+	InitialTakeProfit1         decimal.NullDecimal // R.26: synthetic fill price for -2013 fallback
+	InitialTakeProfit2         decimal.NullDecimal
 	CurrentQty                 pgtype.Numeric
 }
 
@@ -688,7 +692,9 @@ func (q *Queries) ListOpenTradesWithAlgo(ctx context.Context) ([]ListOpenTradesW
 		var i ListOpenTradesWithAlgoRow
 		if err := rows.Scan(&i.ID, &i.Symbol, &i.EntryTs, &i.EntryPrice, &i.Margin, &i.Leverage,
 			&i.BinanceDisasterStopOrderID, &i.BinanceTrailAlgoID, &i.TrailStage,
-			&i.BinanceTP1AlgoID, &i.BinanceTP2AlgoID, &i.CurrentQty); err != nil {
+			&i.BinanceTP1AlgoID, &i.BinanceTP2AlgoID,
+			&i.InitialTakeProfit1, &i.InitialTakeProfit2,
+			&i.CurrentQty); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -730,6 +736,26 @@ type ClearTPAlgoIDParams struct {
 
 func (q *Queries) ClearTPAlgoID(ctx context.Context, arg ClearTPAlgoIDParams) error {
 	_, err := q.db.Exec(ctx, clearTPAlgoID, arg.ID, arg.Type)
+	return err
+}
+
+const clearTrailAlgoID = `-- name: ClearTrailAlgoID :exec
+UPDATE trades SET binance_trail_algo_id = NULL WHERE id = $1
+`
+
+// R.26: clear trail algo_id when polling returns -2013.
+func (q *Queries) ClearTrailAlgoID(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, clearTrailAlgoID, id)
+	return err
+}
+
+const clearDisasterStopOrderID = `-- name: ClearDisasterStopOrderID :exec
+UPDATE trades SET binance_disaster_stop_order_id = NULL WHERE id = $1
+`
+
+// R.26: clear disaster stop order_id when polling returns -2013.
+func (q *Queries) ClearDisasterStopOrderID(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, clearDisasterStopOrderID, id)
 	return err
 }
 

@@ -27,6 +27,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -56,11 +57,35 @@ type AlgoReconcilerDeps interface {
 	DecrementPositionQty(ctx context.Context, arg gen.DecrementPositionQtyParams) error
 	ClearTPAlgoID(ctx context.Context, arg gen.ClearTPAlgoIDParams) error
 	UpdateDailyPnlPartial(ctx context.Context, arg gen.UpdateDailyPnlPartialParams) error
+	// R.26: -2013 fallback — clear full-close algo ids without writing exit row.
+	ClearTrailAlgoID(ctx context.Context, id int64) error
+	ClearDisasterStopOrderID(ctx context.Context, id int64) error
 }
 
 // AlgoQuerier is the minimal binance surface.
+// R.26: GetPositionRisk added so the -2013 ("Order does not exist") fallback
+// can read the true post-fire Binance position and reconstruct partial close.
 type AlgoQuerier interface {
 	QueryAlgoOrder(ctx context.Context, algoID int64) (binance.AlgoOrderQuery, error)
+	GetPositionRisk(ctx context.Context, symbol string) ([]binance.PositionRisk, error)
+}
+
+// algoStatusGone is a synthetic status used internally by R.26 when Binance
+// returns -2011/-2013 "Order does not exist". Per references/binance/urls.md
+// the policy is "当成已撤销/已成交" — on testnet every fired TP returns -2013
+// shortly after placement, so callers downstream must reconcile from the
+// actual position diff instead of from the (unqueryable) algo order.
+const algoStatusGone = "GONE"
+
+// isOrderNotFoundErr matches Binance -2011 (Order would immediately match) and
+// -2013 (Order does not exist) — both mean the order is no longer locatable
+// by ID. Per references/binance/urls.md §「特殊错误处理」.
+func isOrderNotFoundErr(err error) bool {
+	var apiErr *binance.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.BizCode == -2011 || apiErr.BizCode == -2013
 }
 
 // AlgoReconciler runs the 1min poll loop + auto-close logic.
@@ -195,9 +220,18 @@ func trailExitReasonForStage(stage int16) string {
 // pollOneFull queries one algo and on FINISHED runs the full-close pipeline
 // using the running currentQty (which may already be decremented by TPs this tick).
 // Returns true if the trade was closed.
+//
+// R.26 GONE handling (-2013): does NOT auto-close (we don't know fill price for
+// trail which ratchets). Instead clears the algo_id so the next tick doesn't
+// keep hitting -2013 — orphan_sync (R.8) reconciles the position state cleanly.
 func (ar *AlgoReconciler) pollOneFull(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, algoIDStr, exitReason, kind string, runningQty decimal.Decimal) bool {
 	q, ok := ar.queryAlgo(ctx, r.ID, r.Symbol, algoIDStr, kind, exitReason)
 	if !ok {
+		return false
+	}
+	if q.AlgoStatus == algoStatusGone {
+		l := ar.logFor(r.ID, r.Symbol, q.AlgoID, kind, exitReason)
+		ar.clearFullAlgoOnGone(ctx, r, kind, l)
 		return false
 	}
 	if q.AlgoStatus != "FINISHED" {
@@ -210,16 +244,136 @@ func (ar *AlgoReconciler) pollOneFull(ctx context.Context, r gen.ListOpenTradesW
 // pollOnePartial queries a TP algo and on FINISHED runs the partial-close pipeline.
 // Returns (sold_qty, true) on successful partial close. Caller decrements its
 // running currentQty by sold_qty for the subsequent full-close polls.
+//
+// R.26 GONE handling (-2013): the TP probably fired but the order ID is now
+// unqueryable. Read Binance positionRisk for the actual current qty, derive
+// fill_qty = db_qty − binance_qty, build a synthetic AlgoOrderQuery with the
+// stored stop price (trades.initial_take_profit_N), and run the same partialClose
+// path. Result: correct exit row + DB decrement + algo_id clear, exactly as
+// if FINISHED had been observed.
 func (ar *AlgoReconciler) pollOnePartial(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, algoIDStr, exitReason string) (decimal.Decimal, bool) {
 	q, ok := ar.queryAlgo(ctx, r.ID, r.Symbol, algoIDStr, "tp", exitReason)
 	if !ok {
 		return decimal.Zero, false
+	}
+	if q.AlgoStatus == algoStatusGone {
+		l := ar.logFor(r.ID, r.Symbol, q.AlgoID, "tp", exitReason)
+		return ar.reconcileTPGone(ctx, r, exitReason, l)
 	}
 	if q.AlgoStatus != "FINISHED" {
 		return decimal.Zero, false
 	}
 	l := ar.logFor(r.ID, r.Symbol, q.AlgoID, "tp", exitReason)
 	return ar.partialClose(ctx, r, q, exitReason, l)
+}
+
+// reconcileTPGone synthesizes a partial close when the TP algo returned -2013.
+// Reads positionRisk for the real Binance qty, computes fill_qty from the diff,
+// uses the configured trades.initial_take_profit_N as fill price (close to actual
+// since TAKE_PROFIT_MARKET fires at market once trigger hits — slip < 0.1%),
+// and calls partialClose. Idempotent via InsertTradeExitIdempotent.
+func (ar *AlgoReconciler) reconcileTPGone(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, exitReason string, log zerolog.Logger) (decimal.Decimal, bool) {
+	var stopPx decimal.Decimal
+	switch exitReason {
+	case ExitReasonTP1:
+		if r.InitialTakeProfit1.Valid {
+			stopPx = r.InitialTakeProfit1.Decimal
+		}
+	case ExitReasonTP2:
+		if r.InitialTakeProfit2.Valid {
+			stopPx = r.InitialTakeProfit2.Decimal
+		}
+	}
+	if stopPx.IsZero() {
+		// Without the configured stop price we can't compute pnl. Clear the
+		// algo_id so we stop polling; orphan_sync will eventually reconcile.
+		log.Warn().Msg("tp.gone: stored stop price missing, clearing algo_id only")
+		if err := ar.db.ClearTPAlgoID(ctx, gen.ClearTPAlgoIDParams{ID: r.ID, Type: exitReason}); err != nil {
+			log.Warn().Err(err).Msg("tp.gone: ClearTPAlgoID failed")
+		}
+		return decimal.Zero, false
+	}
+	positions, err := ar.bc.GetPositionRisk(ctx, r.Symbol)
+	if err != nil {
+		log.Warn().Err(err).Msg("tp.gone: positionRisk fetch failed (next tick retries)")
+		return decimal.Zero, false
+	}
+	var posAmt decimal.Decimal
+	for _, p := range positions {
+		if p.Symbol == r.Symbol {
+			posAmt = p.PositionAmt.Abs()
+			break
+		}
+	}
+	dbQty := decimalFromPgNumeric(r.CurrentQty)
+	fillQty := dbQty.Sub(posAmt)
+	if fillQty.LessThanOrEqual(decimal.Zero) {
+		// No position diff. Could be: (a) algo was cancelled before firing,
+		// (b) we're racing the very moment of fill. Clear algo_id and let
+		// next tick re-evaluate; if the race resolves, DB will catch up.
+		log.Info().Str("db_qty", dbQty.String()).Str("binance_qty", posAmt.String()).
+			Msg("tp.gone: no position diff, clearing algo_id (treating as cancelled)")
+		if err := ar.db.ClearTPAlgoID(ctx, gen.ClearTPAlgoIDParams{ID: r.ID, Type: exitReason}); err != nil {
+			log.Warn().Err(err).Msg("tp.gone: ClearTPAlgoID failed")
+		}
+		return decimal.Zero, false
+	}
+	log.Info().
+		Str("db_qty", dbQty.String()).
+		Str("binance_qty", posAmt.String()).
+		Str("fill_qty", fillQty.String()).
+		Str("stop_price", stopPx.String()).
+		Msg("tp.gone: reconciling from position diff")
+	synthQ := binance.AlgoOrderQuery{
+		AlgoID:       toInt64(r.BinanceTP1AlgoID, r.BinanceTP2AlgoID, exitReason),
+		AlgoStatus:   "FINISHED",
+		Quantity:     fillQty,
+		TriggerPrice: stopPx,
+		// ActualPrice / ActualOrderID empty: partialClose uses TriggerPrice
+		// as closePrice; fees=0 (sumAlgoFees skips on empty actualOrderID).
+	}
+	metrics.AlgoPollingRunsTotal.WithLabelValues("gone_reconciled").Inc()
+	return ar.partialClose(ctx, r, synthQ, exitReason, log)
+}
+
+// clearFullAlgoOnGone clears the disaster_stop or trail algo_id when its query
+// returns -2013. We don't reconstruct an exit row here because trail's actual
+// fire price is unknown (it ratchets) and disaster_stop fire is rare; instead
+// leave the position state to orphan_sync (R.8) which has its own reconcile
+// path and uses current mark price.
+func (ar *AlgoReconciler) clearFullAlgoOnGone(ctx context.Context, r gen.ListOpenTradesWithAlgoRow, kind string, log zerolog.Logger) {
+	// kind is "disaster" or "trail" — both clear via the same UpdateTradeClosed
+	// shape would be wrong (it closes the trade). Use targeted column updates.
+	switch kind {
+	case "trail":
+		if err := ar.db.ClearTrailAlgoID(ctx, r.ID); err != nil {
+			log.Warn().Err(err).Msg("trail.gone: ClearTrailAlgoID failed")
+			return
+		}
+	case "disaster":
+		if err := ar.db.ClearDisasterStopOrderID(ctx, r.ID); err != nil {
+			log.Warn().Err(err).Msg("disaster.gone: ClearDisasterStopOrderID failed")
+			return
+		}
+	}
+	metrics.AlgoPollingRunsTotal.WithLabelValues("gone_full_cleared").Inc()
+	log.Info().Msg("algo.gone: cleared full-close algo_id, deferring to orphan_sync")
+}
+
+// toInt64 returns the int64 representation of whichever TP algo string is
+// non-empty, matching exitReason. Used to fill synthQ.AlgoID for logging.
+func toInt64(tp1, tp2 pgtype.Text, exitReason string) int64 {
+	var s string
+	if exitReason == ExitReasonTP1 && tp1.Valid {
+		s = tp1.String
+	} else if exitReason == ExitReasonTP2 && tp2.Valid {
+		s = tp2.String
+	}
+	if s == "" {
+		return 0
+	}
+	v, _ := strconv.ParseInt(s, 10, 64)
+	return v
 }
 
 // queryAlgo wraps QueryAlgoOrder + CANCELED/EXPIRED handling shared by both poll variants.
@@ -236,6 +390,18 @@ func (ar *AlgoReconciler) queryAlgo(ctx context.Context, tradeID int64, symbol, 
 	l := ar.logFor(tradeID, symbol, algoID, kind, exitReason)
 	q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
 	if err != nil {
+		// R.26: Binance -2011/-2013 = order not found. Per references/binance/urls.md
+		// §「特殊错误处理」: 当成已撤销/已成交. Testnet returns -2013 ~1min after
+		// every fired TP placement, despite the partial close actually executing
+		// on the underlying position. We surface a synthetic GONE status so the
+		// caller can pivot to position-diff reconciliation (see pollOnePartial /
+		// pollOneFull GONE paths). Real -2013 on never-existed IDs also lands
+		// here — those callers also benefit from clearing the algo_id below.
+		if isOrderNotFoundErr(err) {
+			l.Info().Msg("algo.polling: -2013 order not found, surfacing GONE for position-diff reconcile")
+			metrics.AlgoPollingRunsTotal.WithLabelValues("gone").Inc()
+			return binance.AlgoOrderQuery{AlgoID: algoID, AlgoStatus: algoStatusGone}, true
+		}
 		l.Warn().Err(err).Msg("algo.polling: query failed (will retry next tick)")
 		return binance.AlgoOrderQuery{}, false
 	}
@@ -321,6 +487,15 @@ func (ar *AlgoReconciler) HasFinishedTPForTrade(ctx context.Context, tp1AlgoIDSt
 		}
 		q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
 		if err != nil {
+			// R.26: -2011/-2013 = order gone. Per references this means
+			// canceled OR filled — for halt-suppression purposes, treat as
+			// "TP fired, skip the drift halt this tick". algo_reconciler's
+			// next tick will resolve via reconcileTPGone (writes the correct
+			// exit row + decrement DB qty + clear algo_id). Without this,
+			// every testnet TP fire triggers a 30-45 minute drift_halt loop.
+			if isOrderNotFoundErr(err) {
+				return true
+			}
 			continue
 		}
 		if q.AlgoStatus == "FINISHED" {

@@ -260,6 +260,9 @@ ORDER BY t.entry_ts ASC;
 -- v0.2 Gap 1 + Round 1.x + Round 2: rows algo_reconciler iterates each 1min tick.
 -- Returns ALL 4 algo IDs so the reconciler can poll each independently:
 --   disaster_stop / trail / tp1 / tp2.
+-- R.26: + initial_take_profit_{1,2} so the -2013 ("Order does not exist") fallback
+-- can use the configured TP stop price as the synthetic fill price when
+-- reconciling from positionRisk diff.
 -- Filter: status='open' AND has at least one algo armed.
 SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.binance_disaster_stop_order_id,
@@ -267,6 +270,8 @@ SELECT t.id, t.symbol, t.entry_ts, t.entry_price, t.margin, t.leverage,
        t.trail_stage,
        t.binance_tp1_algo_id,
        t.binance_tp2_algo_id,
+       t.initial_take_profit_1,
+       t.initial_take_profit_2,
        ps.current_qty
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
@@ -293,6 +298,22 @@ WHERE id = $1;
 UPDATE trades
 SET binance_tp1_algo_id = CASE WHEN $2 = 'tp1' THEN NULL ELSE binance_tp1_algo_id END,
     binance_tp2_algo_id = CASE WHEN $2 = 'tp2' THEN NULL ELSE binance_tp2_algo_id END
+WHERE id = $1;
+
+-- name: ClearTrailAlgoID :exec
+-- R.26: invoked when algo_polling sees -2013 for the trail algo. We don't
+-- reconstruct an exit row (trail's actual fire price is unknown since the
+-- stop ratchets), just null the column so polling stops; orphan_sync (R.8)
+-- handles the position state.
+UPDATE trades
+SET binance_trail_algo_id = NULL
+WHERE id = $1;
+
+-- name: ClearDisasterStopOrderID :exec
+-- R.26: same as ClearTrailAlgoID but for the disaster stop. orphan_sync covers
+-- the position reconcile downstream.
+UPDATE trades
+SET binance_disaster_stop_order_id = NULL
 WHERE id = $1;
 
 -- name: DecrementPositionQty :exec
