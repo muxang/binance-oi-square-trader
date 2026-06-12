@@ -13,7 +13,9 @@
 //      Without:        executes the UPDATE inside a tx, prints final state.
 //
 // Usage (inside the trader container so env + proxy reach Binance + PG):
-//   /app/algo-rescue-ids <trade_id> [--dry-run]
+//   /app/algo-rescue-ids [--dry-run] <trade_id>
+//
+// Note: Go's flag package needs flags BEFORE positional args.
 package main
 
 import (
@@ -25,6 +27,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -125,19 +128,23 @@ func main() {
 		}
 	}
 	envelope.Orders = orders
+	fmt.Printf("\nParsed %d open algo orders total from Binance\n", len(envelope.Orders))
 
-	// 4. filter to symbol + SELL + reduceOnly + NEW/WORKING
+	// 4. filter to symbol + SELL + reduceOnly + NEW/WORKING (case-insensitive
+	// to tolerate testnet returning lowercase variants).
 	var (
 		disasters, trails, tps []rawAlgo
 	)
 	for _, a := range envelope.Orders {
-		if a.Symbol != symbol || a.Side != "SELL" || !a.ReduceOnly {
+		if !strings.EqualFold(a.Symbol, symbol) ||
+			!strings.EqualFold(a.Side, "SELL") || !a.ReduceOnly {
 			continue
 		}
-		if a.Status != "NEW" && a.Status != "WORKING" {
+		if !strings.EqualFold(a.Status, "NEW") &&
+			!strings.EqualFold(a.Status, "WORKING") {
 			continue
 		}
-		switch a.Type {
+		switch strings.ToUpper(a.Type) {
 		case "STOP_MARKET":
 			disasters = append(disasters, a)
 		case "TRAILING_STOP_MARKET":
