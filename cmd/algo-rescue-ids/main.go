@@ -115,9 +115,16 @@ func main() {
 	var envelope struct {
 		Orders []rawAlgo `json:"orders"`
 	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		log.Fatal().Err(err).RawJSON("body", body).Msg("parse envelope")
+	var orders []rawAlgo
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Orders != nil {
+		orders = envelope.Orders
+	} else {
+		// Bare-array variant (matches binance.ListOpenAlgoOrders fallback).
+		if err := json.Unmarshal(body, &orders); err != nil {
+			log.Fatal().Err(err).Msg("parse bare array")
+		}
 	}
+	envelope.Orders = orders
 
 	// 4. filter to symbol + SELL + reduceOnly + NEW/WORKING
 	var (
