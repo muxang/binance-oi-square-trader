@@ -64,6 +64,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/market/uptrend", s.handleUptrend)
 	// R.25: Binance Alpha symbol set — list of USDT perps whose base is on Alpha.
 	mux.HandleFunc("GET /api/admin/alpha-symbols", s.handleAlphaSymbols)
+	// R.28: uptrend favorites — user-curated watchlist (Redis-backed).
+	mux.HandleFunc("GET /api/admin/uptrend/favorites", s.handleUptrendFavoritesList)
+	mux.HandleFunc("POST /api/admin/uptrend/favorites", s.requireCsrf(s.handleUptrendFavoriteAdd))
+	mux.HandleFunc("DELETE /api/admin/uptrend/favorites/{symbol}", s.requireCsrf(s.handleUptrendFavoriteRemove))
 	mux.HandleFunc("GET /api/admin/square/trending", s.handleSquareTrending)
 	mux.HandleFunc("GET /api/admin/watchlist", s.handleWatchlist)
 	mux.HandleFunc("GET /api/admin/symbol/{symbol}", s.handleSymbolDetail)

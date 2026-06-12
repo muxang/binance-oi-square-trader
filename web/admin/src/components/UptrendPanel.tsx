@@ -1,7 +1,13 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchUptrend, type UptrendItem, type SignalType } from '../api/client'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  fetchUptrend,
+  fetchUptrendFavorites, addUptrendFavorite, removeUptrendFavorite,
+  type UptrendItem, type SignalType,
+} from '../api/client'
 import SymbolLink from './SymbolLink'
+
+type ViewFilter = 'pass' | 'all' | 'favorites'
 
 // Defensive helpers: tolerate undefined/NaN/Infinity from stale cache or
 // schema-drift backend so the panel never crashes on render.
@@ -63,32 +69,62 @@ function SignalBadge({ type }: { type: SignalType }) {
 
 export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) => void }) {
   const [search, setSearch] = useState('')
-  const [showAll, setShowAll] = useState(false)
+  const [view, setView] = useState<ViewFilter>('pass')
   const [limit, setLimit] = useState(50)
+  const qc = useQueryClient()
 
+  // Favorites view always fetches the full evaluated set (passing=false) so
+  // a favorited but-not-currently-passing symbol still shows up. Other views
+  // honor the user's pass/all toggle.
+  const wantAll = view !== 'pass'
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['uptrend', search, showAll, limit],
+    queryKey: ['uptrend', search, wantAll, limit, view],
     queryFn: () => fetchUptrend({
-      passing: !showAll,
+      passing: !wantAll,
       search: search || undefined,
-      limit,
+      // In favorites view we don't paginate — backend cap is 500, sufficient.
+      limit: view === 'favorites' ? 500 : limit,
     }),
     refetchInterval: 60_000,
     placeholderData: (prev) => prev,
   })
 
-  // showAll mode sort: pass true first, then group-count desc, then rel_strength desc.
-  // showAll=false (only passing): backend's rel_strength desc preserved.
+  // R.28: favorites — Redis-backed user watchlist, one HTTP call across the
+  // tree (deduped by React Query).
+  const { data: favData } = useQuery({
+    queryKey: ['uptrend-favorites'],
+    queryFn: fetchUptrendFavorites,
+    staleTime: 30_000,
+  })
+  const favSet = useMemo(() => new Set(favData?.symbols ?? []), [favData])
+
+  const addFav = useMutation({
+    mutationFn: (sym: string) => addUptrendFavorite(sym),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['uptrend-favorites'] }),
+  })
+  const removeFav = useMutation({
+    mutationFn: (sym: string) => removeUptrendFavorite(sym),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['uptrend-favorites'] }),
+  })
+
+  // View-aware sort:
+  //   pass:       backend's rel_strength desc preserved
+  //   all:        pass true first, then group-count desc, then rel_strength
+  //   favorites:  filter to favSet, then same as 'all' ordering
   const items = useMemo(() => {
     if (!data) return []
-    if (!showAll) return data.items
-    return [...data.items].sort((a, b) => {
+    let arr = data.items
+    if (view === 'favorites') {
+      arr = arr.filter(it => favSet.has(it.symbol))
+    }
+    if (view === 'pass') return arr
+    return [...arr].sort((a, b) => {
       if (a.pass !== b.pass) return a.pass ? -1 : 1
       const ga = groupCount(a), gb = groupCount(b)
       if (ga !== gb) return gb - ga
       return b.rel_strength - a.rel_strength
     })
-  }, [data, showAll])
+  }, [data, view, favSet])
 
   return (
     <div className="space-y-3">
@@ -96,20 +132,27 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
         <input className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 w-28 focus:outline-none"
           placeholder="Symbol..." value={search}
           onChange={e => setSearch(e.target.value.toUpperCase())} />
-        <label className="flex items-center gap-1 text-xs text-gray-400 cursor-pointer">
-          <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)}
-            className="accent-blue-600" />
-          显示未通过(调试)
-        </label>
-        <select value={limit} onChange={e => setLimit(Number(e.target.value))}
-          className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 focus:outline-none ml-auto">
-          <option value={50}>50</option>
-          <option value={100}>100</option>
-          <option value={200}>200</option>
-        </select>
+        <div className="flex gap-1 text-xs border border-[#3d3d3d] rounded p-0.5">
+          {(['pass','all','favorites'] as ViewFilter[]).map(v => (
+            <button key={v} onClick={() => setView(v)}
+              className={`px-2 py-1 rounded ${view === v ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-white'}`}>
+              {v === 'pass' ? '通过' : v === 'all' ? '全部(调试)' : `★ 自选${favSet.size ? ` (${favSet.size})` : ''}`}
+            </button>
+          ))}
+        </div>
+        {view !== 'favorites' && (
+          <select value={limit} onChange={e => setLimit(Number(e.target.value))}
+            className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 focus:outline-none ml-auto">
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+          </select>
+        )}
         {data && (
-          <span className="text-xs text-gray-500">
-            {data.passing}/{data.total} 通过 · {isFetching ? '刷新中' : '60s 刷新'}
+          <span className={`text-xs text-gray-500 ${view === 'favorites' ? 'ml-auto' : ''}`}>
+            {view === 'favorites'
+              ? `${items.length}/${favSet.size} 显示中 · ${isFetching ? '刷新中' : '60s 刷新'}`
+              : `${data.passing}/${data.total} 通过 · ${isFetching ? '刷新中' : '60s 刷新'}`}
           </span>
         )}
       </div>
@@ -129,7 +172,13 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
         {isLoading && <div className="p-8 text-gray-500 text-sm text-center">加载中...</div>}
         {data && items.length === 0 && !isLoading && (
           <div className="p-8 text-gray-500 text-sm text-center">
-            {showAll ? '暂无评估数据(扫描尚未运行)' : '当前 0 个 symbol 通过 — 全市场偏弱或回调'}
+            {view === 'favorites'
+              ? (favSet.size === 0
+                  ? '还没有自选 symbol — 在「通过」或「全部」视图中点 ☆ 添加'
+                  : '自选 symbol 暂未出现在当前扫描结果中(可能数据缺失)')
+              : view === 'all'
+                ? '暂无评估数据(扫描尚未运行)'
+                : '当前 0 个 symbol 通过 — 全市场偏弱或回调'}
           </div>
         )}
         {data && items.length > 0 && (
@@ -165,7 +214,7 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
                       className="group border-b border-[#252525] last:border-b-0 hover:bg-[#252525] cursor-pointer"
                       title="点击行打开 OI/Square 详情侧栏"
                       onClick={() => onSelect?.(it.symbol)}>
-                    {/* Symbol + status + signal_type badge */}
+                    {/* Symbol + status + ★ favorite + signal_type badge */}
                     <td className="py-2 px-2 font-mono text-gray-200 whitespace-nowrap">
                       {it.pass
                         ? <span className="text-green-500 mr-1.5" title="3/3 通过 → 触发提醒">●</span>
@@ -173,6 +222,19 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
                             gc >= 2 ? warn : gc === 1 ? 'text-orange-500' : 'text-gray-600'
                           }`} title={`${gc}/3 组通过 (baseTrend / relStrength / entry)`}>{gc}/3</span>
                       }
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (favSet.has(it.symbol)) removeFav.mutate(it.symbol)
+                          else                       addFav.mutate(it.symbol)
+                        }}
+                        title={favSet.has(it.symbol) ? '取消自选' : '加入自选(长期跟踪)'}
+                        className={`mr-1 text-sm transition-colors ${
+                          favSet.has(it.symbol)
+                            ? 'text-yellow-400 hover:text-yellow-300'
+                            : 'text-gray-600 hover:text-yellow-400'
+                        }`}
+                      >{favSet.has(it.symbol) ? '★' : '☆'}</button>
                       <SymbolLink symbol={it.symbol} />
                       <span className="ml-1.5"><SignalBadge type={it.signal_type} /></span>
                     </td>
