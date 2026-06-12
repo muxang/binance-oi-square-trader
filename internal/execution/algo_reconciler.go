@@ -65,9 +65,15 @@ type AlgoReconcilerDeps interface {
 // AlgoQuerier is the minimal binance surface.
 // R.26: GetPositionRisk added so the -2013 ("Order does not exist") fallback
 // can read the true post-fire Binance position and reconstruct partial close.
+// R.27: ListOpenAlgoOrders added to second-confirm -2013 — testnet's single-
+// algo GET query is broken (always returns -2013 on freshly placed algos),
+// but the batch list endpoint reliably returns NEW/WORKING. Without this
+// confirmation R.26 was clearing still-active algo_ids and tearing down all
+// stop protection.
 type AlgoQuerier interface {
 	QueryAlgoOrder(ctx context.Context, algoID int64) (binance.AlgoOrderQuery, error)
 	GetPositionRisk(ctx context.Context, symbol string) ([]binance.PositionRisk, error)
+	ListOpenAlgoOrders(ctx context.Context) ([]binance.AlgoOpenOrder, error)
 }
 
 // algoStatusGone is a synthetic status used internally by R.26 when Binance
@@ -86,6 +92,23 @@ func isOrderNotFoundErr(err error) bool {
 		return false
 	}
 	return apiErr.BizCode == -2011 || apiErr.BizCode == -2013
+}
+
+// isAlgoStillOpen returns (true, nil) if the algoID appears in the batch
+// open-algo list. R.27: used to disambiguate testnet's broken single-algo
+// GET (returns -2013 even for NEW algos) from real "order is gone" cases.
+// Returns (false, err) on list endpoint error so callers can skip and retry.
+func (ar *AlgoReconciler) isAlgoStillOpen(ctx context.Context, algoID int64) (bool, error) {
+	algos, err := ar.bc.ListOpenAlgoOrders(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, a := range algos {
+		if a.AlgoID == algoID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // AlgoReconciler runs the 1min poll loop + auto-close logic.
@@ -390,15 +413,29 @@ func (ar *AlgoReconciler) queryAlgo(ctx context.Context, tradeID int64, symbol, 
 	l := ar.logFor(tradeID, symbol, algoID, kind, exitReason)
 	q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
 	if err != nil {
-		// R.26: Binance -2011/-2013 = order not found. Per references/binance/urls.md
-		// §「特殊错误处理」: 当成已撤销/已成交. Testnet returns -2013 ~1min after
-		// every fired TP placement, despite the partial close actually executing
-		// on the underlying position. We surface a synthetic GONE status so the
-		// caller can pivot to position-diff reconciliation (see pollOnePartial /
-		// pollOneFull GONE paths). Real -2013 on never-existed IDs also lands
-		// here — those callers also benefit from clearing the algo_id below.
+		// R.26 + R.27: Binance -2011/-2013 single-algo query "Order does not
+		// exist" is UNRELIABLE on testnet — every freshly placed algo returns
+		// -2013 on per-id GET while still being NEW/WORKING in the batch list.
+		// Trusting -2013 directly (R.26 original) tore down all stop protection
+		// 1min after entry (mu real bug: COAIUSDT #300 + FIDAUSDT #298).
+		//
+		// R.27 fix: second-confirm via ListOpenAlgoOrders (batch endpoint works).
+		// If the algoID is still in the open list → false positive, treat as
+		// WORKING and skip this tick (algo still protecting). If absent → truly
+		// gone (FINISHED/CANCELED post-fire), pivot to position-diff reconcile.
 		if isOrderNotFoundErr(err) {
-			l.Info().Msg("algo.polling: -2013 order not found, surfacing GONE for position-diff reconcile")
+			stillOpen, listErr := ar.isAlgoStillOpen(ctx, algoID)
+			if listErr != nil {
+				l.Warn().Err(listErr).Msg("algo.polling: -2013 then ListOpenAlgoOrders failed, skip tick (will retry)")
+				metrics.AlgoPollingRunsTotal.WithLabelValues("list_err").Inc()
+				return binance.AlgoOrderQuery{}, false
+			}
+			if stillOpen {
+				l.Info().Msg("algo.polling: -2013 false positive (algo present in batch list), skip tick")
+				metrics.AlgoPollingRunsTotal.WithLabelValues("gone_false_positive").Inc()
+				return binance.AlgoOrderQuery{}, false
+			}
+			l.Info().Msg("algo.polling: -2013 confirmed gone (absent from batch list), pivoting to position-diff reconcile")
 			metrics.AlgoPollingRunsTotal.WithLabelValues("gone").Inc()
 			return binance.AlgoOrderQuery{AlgoID: algoID, AlgoStatus: algoStatusGone}, true
 		}
@@ -487,14 +524,22 @@ func (ar *AlgoReconciler) HasFinishedTPForTrade(ctx context.Context, tp1AlgoIDSt
 		}
 		q, err := ar.bc.QueryAlgoOrder(ctx, algoID)
 		if err != nil {
-			// R.26: -2011/-2013 = order gone. Per references this means
-			// canceled OR filled — for halt-suppression purposes, treat as
-			// "TP fired, skip the drift halt this tick". algo_reconciler's
-			// next tick will resolve via reconcileTPGone (writes the correct
-			// exit row + decrement DB qty + clear algo_id). Without this,
-			// every testnet TP fire triggers a 30-45 minute drift_halt loop.
+			// R.26 + R.27: -2011/-2013 needs batch-list confirmation. If the
+			// algo still appears in the open list it's a testnet false positive
+			// (algo healthy) — don't suppress the halt. If absent → truly
+			// finished/canceled → suppress this tick (algo_reconciler next tick
+			// resolves via reconcileTPGone). Without batch confirmation R.26
+			// suppressed every drift halt as "TP fired" even when the algo was
+			// still active, masking real drift events.
 			if isOrderNotFoundErr(err) {
-				return true
+				stillOpen, listErr := ar.isAlgoStillOpen(ctx, algoID)
+				if listErr != nil {
+					continue // can't tell — don't suppress halt on this id
+				}
+				if !stillOpen {
+					return true // truly gone, treat as filled, skip halt
+				}
+				continue // algo healthy in batch list, no suppression
 			}
 			continue
 		}

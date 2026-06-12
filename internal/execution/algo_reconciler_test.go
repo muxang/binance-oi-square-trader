@@ -82,6 +82,12 @@ type fakeAlgoQuerier struct {
 	err         map[int64]error
 	positions   map[string][]binance.PositionRisk
 	positionErr error
+	// R.27: batch-list endpoint used to disambiguate testnet's broken
+	// single-algo GET. Map of algoID → present (existence indicates "still
+	// NEW/WORKING on Binance"). listErr forces failure for the safety-default
+	// test path.
+	openAlgos map[int64]binance.AlgoOpenOrder
+	listErr   error
 }
 
 func (f *fakeAlgoQuerier) QueryAlgoOrder(_ context.Context, algoID int64) (binance.AlgoOrderQuery, error) {
@@ -97,6 +103,19 @@ func (f *fakeAlgoQuerier) GetPositionRisk(_ context.Context, symbol string) ([]b
 		return nil, f.positionErr
 	}
 	return f.positions[symbol], nil
+}
+
+// R.27: batch endpoint to second-confirm -2013. Empty map = nothing open
+// (i.e. the queried algo is truly gone), matching most legacy R.26 tests.
+func (f *fakeAlgoQuerier) ListOpenAlgoOrders(_ context.Context) ([]binance.AlgoOpenOrder, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	out := make([]binance.AlgoOpenOrder, 0, len(f.openAlgos))
+	for _, a := range f.openAlgos {
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 func newTestAR(deps *fakeAlgoDeps, bc *fakeAlgoQuerier) *AlgoReconciler {
@@ -720,4 +739,101 @@ func TestHasFinishedTPForTrade_GenericError_ReturnsFalse(t *testing.T) {
 	}
 	ar := newTestAR(deps, bc)
 	assert.False(t, ar.HasFinishedTPForTrade(context.Background(), "8888", ""))
+}
+
+// --- R.27: -2013 false-positive (algo healthy in batch list) ---
+
+// Reproduces COAIUSDT #300: testnet returns -2013 for the per-id GET 1min after
+// placement, but ListOpenAlgoOrders shows the algo is still NEW. Reconciler MUST
+// skip and NOT clear the algo_id — clearing would tear down stop protection.
+func TestReconcileTick_TP1_Gone2013_StillInBatchList_DoesNotClear(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkTPRowWithStopPx(310, "COAIUSDT", 0.34, 369, 0.3749, 0, "9710", ""),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9710: errNotFound},
+		// Algo IS in the batch list — still healthy on Binance.
+		openAlgos: map[int64]binance.AlgoOpenOrder{
+			9710: {AlgoID: 9710, Symbol: "COAIUSDT", Status: "NEW", Side: "SELL", ReduceOnly: true},
+		},
+		positions: map[string][]binance.PositionRisk{
+			"COAIUSDT": {{Symbol: "COAIUSDT", PositionAmt: decimal.NewFromInt(369)}},
+		},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.exits, "no exit row when algo healthy")
+	assert.Empty(t, deps.qtyDecremented, "no qty decrement when algo healthy")
+	assert.Empty(t, deps.tpCleared, "must NOT clear algo_id when it's still NEW in batch list")
+}
+
+// Trail/disaster false-positive: same logic — must not clear.
+func TestReconcileTick_Trail_Gone2013_StillInBatchList_DoesNotClear(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRowWithTrail(311, "COAIUSDT", 0.34, 369, "", "9810", 1),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9810: errNotFound},
+		openAlgos: map[int64]binance.AlgoOpenOrder{
+			9810: {AlgoID: 9810, Symbol: "COAIUSDT", Status: "NEW"},
+		},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.trailCleared, "must NOT clear trail algo_id when healthy in batch")
+	assert.Empty(t, deps.exits)
+	assert.Empty(t, deps.closed)
+}
+
+// Disaster -2013 false-positive: same.
+func TestReconcileTick_Disaster_Gone2013_StillInBatchList_DoesNotClear(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkAlgoRow(312, "COAIUSDT", 0.34, 369, 5, "9910"),
+	}}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{9910: errNotFound},
+		openAlgos: map[int64]binance.AlgoOpenOrder{
+			9910: {AlgoID: 9910, Symbol: "COAIUSDT", Status: "NEW"},
+		},
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.disasterCleared, "must NOT clear disaster_stop when healthy in batch")
+	assert.Empty(t, deps.closed)
+}
+
+// Batch endpoint itself fails → safety default: don't clear, don't reconcile.
+// Next tick retries; algo remains DB-tracked.
+func TestReconcileTick_TP1_Gone2013_ListErrFail_SkipsTick(t *testing.T) {
+	deps := &fakeAlgoDeps{openTrades: []gen.ListOpenTradesWithAlgoRow{
+		mkTPRowWithStopPx(313, "FOOUSDT", 1.0, 100, 1.1, 0, "9720", ""),
+	}}
+	bc := &fakeAlgoQuerier{
+		err:     map[int64]error{9720: errNotFound},
+		listErr: assert.AnError,
+	}
+	ar := newTestAR(deps, bc)
+	ar.ReconcileTick(context.Background())
+
+	assert.Empty(t, deps.exits, "list endpoint error → no reconcile")
+	assert.Empty(t, deps.tpCleared, "list endpoint error → don't clear (safety default)")
+}
+
+// HasFinishedTPForTrade with -2013 + algo healthy in batch: must NOT suppress
+// halt (returning true would mask real drift). Returns false so position_manager
+// proceeds with its drift evaluation.
+func TestHasFinishedTPForTrade_Gone2013_StillInBatchList_ReturnsFalse(t *testing.T) {
+	deps := &fakeAlgoDeps{}
+	bc := &fakeAlgoQuerier{
+		err: map[int64]error{7777: errNotFound},
+		openAlgos: map[int64]binance.AlgoOpenOrder{
+			7777: {AlgoID: 7777, Status: "NEW"},
+		},
+	}
+	ar := newTestAR(deps, bc)
+	assert.False(t, ar.HasFinishedTPForTrade(context.Background(), "7777", ""),
+		"algo healthy in batch → don't suppress halt")
 }
