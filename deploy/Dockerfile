@@ -15,6 +15,7 @@ COPY . .
 
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/trader ./cmd/trader && \
+    go build -trimpath -ldflags="-s -w" -o /out/algo-rescue-ids ./cmd/algo-rescue-ids && \
     go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 
 # =============================================================================
@@ -33,6 +34,7 @@ RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
 
 WORKDIR /app
 COPY --from=builder /out/trader /app/trader
+COPY --from=builder /out/algo-rescue-ids /app/algo-rescue-ids
 COPY --from=builder /src/internal/storage/postgres/migrations /app/migrations
 COPY --from=builder /go/bin/migrate /app/migrate
 
