@@ -87,6 +87,11 @@ func (s *Server) handleMarket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// R.30: overlay live prices from MarketStream's Redis writes onto the cached
+	// PG-sourced items. Cache stays "OI/Square as of last warmer", but current_price
+	// + price_24h_pct become 0-1s fresh per request. One MGET handles all symbols.
+	s.overlayLivePrices(ctx, all)
+
 	// Filter
 	items := make([]MarketItem, 0, len(all))
 	for i := range all {
@@ -297,4 +302,38 @@ func (s *Server) computeMarket(ctx context.Context) ([]MarketItem, error) {
 		})
 	}
 	return items, nil
+}
+
+// overlayLivePrices upgrades current_price + price_24h_pct from the WSS-fed
+// Redis keys (latest_price:<sym>, price_24h_pct:<sym>) onto items the SQL
+// returned with 5-15min stale klines values. Single MGET handles all symbols.
+//
+// R.30: sourced from execution.MarketStream subscribing to !ticker@arr.
+// TTL on the source keys is 30s; if the stream is disconnected, MGET returns
+// nil for those slots and we keep the PG/cached value (graceful degradation).
+func (s *Server) overlayLivePrices(ctx context.Context, items []MarketItem) {
+	if s.rdb == nil || len(items) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(items)*2)
+	for _, it := range items {
+		keys = append(keys, "latest_price:"+it.Symbol)
+		keys = append(keys, "price_24h_pct:"+it.Symbol)
+	}
+	vals, err := s.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return
+	}
+	for i := range items {
+		if p, ok := vals[i*2].(string); ok && p != "" {
+			if f, err := strconv.ParseFloat(p, 64); err == nil && f > 0 {
+				items[i].CurrentPrice = f
+			}
+		}
+		if p, ok := vals[i*2+1].(string); ok && p != "" {
+			if f, err := strconv.ParseFloat(p, 64); err == nil {
+				items[i].Price24hPct = f
+			}
+		}
+	}
 }
