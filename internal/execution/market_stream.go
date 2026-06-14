@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -63,8 +64,9 @@ type MarketStream struct {
 	rdb *redis.Client
 	log zerolog.Logger
 
-	mu   sync.Mutex
-	conn *websocket.Conn
+	mu           sync.Mutex
+	conn         *websocket.Conn
+	sampleLogged atomic.Bool // one-shot diagnostic: prints first parsed batch shape
 }
 
 func NewMarketStream(bc *binance.Client, rdb *redis.Client, log zerolog.Logger) *MarketStream {
@@ -137,19 +139,32 @@ func (ms *MarketStream) dispatch(ctx context.Context, msg []byte) {
 
 	// !ticker@arr pushes a bare JSON array.
 	var events []tickerEvent
-	if err := json.Unmarshal(msg, &events); err != nil {
+	parseErr := json.Unmarshal(msg, &events)
+	if parseErr != nil || len(events) == 0 {
 		// Combined-stream variant wraps in { stream, data }.
 		var envelope struct {
 			Data []tickerEvent `json:"data"`
 		}
 		if err2 := json.Unmarshal(msg, &envelope); err2 != nil {
-			ms.log.Debug().Err(err).Msg("market_stream: parse failed")
+			ms.log.Warn().Err(parseErr).AnErr("err2", err2).
+				Bytes("msg_head", trimMsg(msg)).
+				Msg("market_stream: parse failed both formats")
 			return
 		}
 		events = envelope.Data
 	}
 	if len(events) == 0 {
+		ms.log.Warn().Bytes("msg_head", trimMsg(msg)).Msg("market_stream: zero events parsed (check field tags)")
 		return
+	}
+	// One-shot sample log for first batch — confirms format.
+	if ms.sampleLogged.CompareAndSwap(false, true) {
+		ms.log.Info().Int("events", len(events)).
+			Str("first_symbol", events[0].Symbol).
+			Str("first_close", events[0].ClosePrice).
+			Str("first_24h_pct", events[0].PriceChangePct).
+			Bytes("first_msg_head", trimMsg(msg)).
+			Msg("market_stream: first batch parsed")
 	}
 
 	pipe := ms.rdb.Pipeline()
