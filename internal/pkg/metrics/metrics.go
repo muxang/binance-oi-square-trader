@@ -490,6 +490,24 @@ var (
 		},
 		[]string{"result"},
 	)
+
+	// R.30: market data WS stream (!ticker@arr → Redis latest_price + price_24h_pct).
+	MarketStreamConnected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "trader_market_stream_connected",
+		Help: "1 if market data WS stream (!ticker@arr) is currently connected, 0 otherwise.",
+	})
+	MarketStreamReconnectTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "trader_market_stream_reconnect_total",
+		Help: "Market data WS session ended with error (next iteration reconnects).",
+	})
+	MarketStreamMessagesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "trader_market_stream_messages_total",
+		Help: "Total !ticker@arr WS messages received from Binance.",
+	})
+	MarketStreamSymbolsUpdated = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "trader_market_stream_symbols_updated_total",
+		Help: "Total per-symbol ticker updates written to Redis (latest_price + price_24h_pct).",
+	})
 )
 
 func init() {
@@ -513,5 +531,7 @@ func init() {
 		UserStreamKeepaliveErrors, UserStreamEventsTotal,
 		OrphanAlgoTickTotal, OrphanAlgoCancelled, OrphanAlgoCancelFailures,
 		ConfigReloadTotal,
+		MarketStreamConnected, MarketStreamReconnectTotal,
+		MarketStreamMessagesTotal, MarketStreamSymbolsUpdated,
 	)
 }

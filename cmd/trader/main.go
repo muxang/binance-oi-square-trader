@@ -635,6 +635,18 @@ func run() error {
 	}()
 	log.Info().Str("ws_base", client.WSBase()).Msg("user_stream ready (Round 4 WS wakeup signal)")
 
+	// R.30: market data WS stream — !ticker@arr → Redis latest_price + price_24h_pct
+	// Replaces 5min REST polling for market scan display. Indicators / ATR /
+	// SIGFAIL still read PG klines (5m cron unchanged); only the "what number
+	// do we display as current_price" path is upgraded to sub-second.
+	marketStream := execution.NewMarketStream(client, rdb, log)
+	go func() {
+		if err := marketStream.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error().Err(err).Msg("market_stream: Run exited unexpectedly")
+		}
+	}()
+	log.Info().Str("ws_base", client.WSBase()).Msg("market_stream ready (R.30 !ticker@arr)")
+
 	// 9. HTTP server with /health backed by real ping closures.
 	deps := handlers.HealthDeps{
 		PingPG:    pgPool.Ping,
