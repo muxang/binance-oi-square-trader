@@ -46,15 +46,36 @@ const (
 )
 
 // tickerEvent matches the per-symbol fields we use from !ticker@arr.
-// The stream pushes a JSON array of these per message; full event has more
-// fields (volume, weighted price, ...) but we ignore them.
+//
+// IMPORTANT — Go json case-insensitive collision trap:
+//   The stream uses fields whose names differ only in case (e/E, p/P, q/Q, etc.).
+//   Go's encoding/json falls back to case-insensitive matching when no exact
+//   match is found. Without DECLARING both halves of each pair, the wrong
+//   value lands on the wrong field (e.g. event time `E` (number) gets stuffed
+//   into a `e`-tagged string field → "cannot unmarshal number into string").
+//
+//   Defense: declare BOTH casings of every pair we care about, so the exact
+//   matcher always wins. Fields we don't use are tagged with `-` if needed,
+//   or left as ignored unused fields (Go json discards unknown fields).
 //
 // ref: https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Individual-Symbol-Ticker-Streams
 type tickerEvent struct {
-	EventType      string `json:"e"` // always "24hrTicker"
-	Symbol         string `json:"s"`
-	ClosePrice     string `json:"c"` // last price
-	PriceChangePct string `json:"P"` // 24h price change percent
+	// e/E: type/time — declared both halves so the exact matcher binds each
+	// and Go's case-insensitive fallback never collides with our real fields.
+	EventTypeLower string `json:"e"` // "24hrTicker"
+	EventTimeMs    int64  `json:"E"` // event time ms
+
+	Symbol      string `json:"s"`
+	SymbolUpper string `json:"S"` // unused, declared to absorb the upper-case key
+
+	PriceChangeDec string `json:"p"` // 24h price change (decimal) — unused
+	PriceChangePct string `json:"P"` // 24h price change percent — used
+
+	QuoteVolume string `json:"q"` // unused
+	LastTradeQ  string `json:"Q"` // unused
+
+	ClosePrice string `json:"c"` // last price — used
+	CloseTime  int64  `json:"C"` // unused (event close time)
 }
 
 // MarketStream owns the WS lifecycle. One stream per trader process suffices —
