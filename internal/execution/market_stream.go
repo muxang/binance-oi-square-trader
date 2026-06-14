@@ -175,7 +175,6 @@ func (ms *MarketStream) dispatch(ctx context.Context, msg []byte) {
 		events = envelope.Data
 	}
 	if len(events) == 0 {
-		ms.log.Warn().Bytes("msg_head", trimMsg(msg)).Msg("market_stream: zero events parsed (check field tags)")
 		return
 	}
 	// One-shot sample log for first batch — confirms format.
