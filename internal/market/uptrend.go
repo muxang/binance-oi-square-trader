@@ -75,6 +75,13 @@ type UptrendItem struct {
 	Pass        bool      `json:"pass"`        // finalSignal
 	SignalType  string    `json:"signal_type"` // BREAKOUT | PULLBACK | BREAKOUT_AND_PULLBACK | NONE
 	TriggerTime time.Time `json:"trigger_time"`
+
+	// R.29: appearance tracking. Populated by collector after CheckUptrend
+	// returns (CheckUptrend itself is stateless math; collector owns the
+	// historical zset). Pre-R.29 cached items will deserialize these as
+	// zero values; frontend tolerates that.
+	IsNewThisHour bool `json:"is_new_this_hour"` // pass=true this hour AND not in previous hour
+	PassCount7d   int  `json:"pass_count_7d"`    // distinct hours symbol passed in trailing 7d (incl. this hour)
 }
 
 // Thresholds — hardcoded per R.24 user spec.

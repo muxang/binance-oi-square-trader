@@ -237,6 +237,20 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
                       >{favSet.has(it.symbol) ? '★' : '☆'}</button>
                       <SymbolLink symbol={it.symbol} />
                       <span className="ml-1.5"><SignalBadge type={it.signal_type} /></span>
+                      {/* R.29 NEW: passing this hour AND wasn't in previous hour */}
+                      {it.is_new_this_hour && (
+                        <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-cyan-700/40 text-cyan-300 border border-cyan-600/50 rounded animate-pulse"
+                              title="本小时新出现的通过 — 上一小时未通过 finalSignal">
+                          NEW
+                        </span>
+                      )}
+                      {/* R.29 7d count: distinct hours pass=true in last 7 days */}
+                      {it.pass_count_7d > 1 && (
+                        <span className="ml-1 px-1.5 py-0.5 text-[9px] tabular-nums bg-purple-700/30 text-purple-300 border border-purple-600/40 rounded"
+                              title={`过去 7 天内 ${it.pass_count_7d} 个不同小时通过过 finalSignal`}>
+                          7d×{it.pass_count_7d}
+                        </span>
+                      )}
                     </td>
                     {/* 价格 */}
                     <td className="py-2 px-2 text-right tabular-nums text-gray-200 font-semibold">

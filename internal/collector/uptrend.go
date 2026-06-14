@@ -36,6 +36,13 @@ import (
 const (
 	uptrendRedisKey = "admin:market:uptrend:v1"
 	uptrendRedisTTL = 12 * time.Minute
+
+	// R.29 appearance tracking: one ZSET per symbol; score=hour-bucket Unix
+	// seconds, member=same string. ZADD is idempotent across multiple scans
+	// in the same hour (member dedup), so the ZSET ends up storing exactly
+	// one entry per hour the symbol passed finalSignal.
+	uptrendPassHoursKeyPrefix = "admin:uptrend:pass_hours:"
+	uptrendPassHistoryTTL     = 14 * 24 * time.Hour // wider than the 7d window for safety
 )
 
 type UptrendCollectorConfig struct {
@@ -101,6 +108,11 @@ func (c *UptrendCollector) Run(ctx context.Context) error {
 	items := c.scanConcurrent(ctx, tickers, btcPct4h)
 	sort.Slice(items, func(i, j int) bool { return items[i].RelStrength > items[j].RelStrength })
 
+	// R.29: record passes + enrich each item with IsNewThisHour / PassCount7d.
+	// Pipelined: 1 round-trip for adds, 1 for counts. Cost is negligible vs
+	// the ~200 kline fetches that dominate scan latency.
+	c.recordPassAndEnrich(ctx, items)
+
 	if c.rdb == nil {
 		return nil
 	}
@@ -120,6 +132,69 @@ func (c *UptrendCollector) Run(ctx context.Context) error {
 	c.log.Info().Int("evaluated", len(items)).Int("passing", passing).
 		Float64("btc_4h_pct", btcPct4h).Msg("uptrend: scan complete")
 	return nil
+}
+
+// recordPassAndEnrich is R.29's appearance-tracking pass.
+//
+//	Step A: for each passing symbol, ZADD this-hour to its history zset and
+//	        bump the TTL so cleanup is automatic. ZADD is idempotent on
+//	        member, so the multiple 5min scans within one hour collapse to
+//	        a single entry.
+//	Step B: pipeline ZCOUNT(last 7d) for every item → PassCount7d.
+//	        For passing items also ZCOUNT(previous hour) → IsNewThisHour iff
+//	        the previous-hour count is zero.
+//
+// Errors are non-fatal: a Redis blip just leaves the new R.29 fields at zero
+// for this tick; the cached UptrendItem still has all the indicator data.
+func (c *UptrendCollector) recordPassAndEnrich(ctx context.Context, items []market.UptrendItem) {
+	if c.rdb == nil || len(items) == 0 {
+		return
+	}
+	hourNow := timez.NowUTC().Truncate(time.Hour).Unix()
+	sevenDaysAgo := hourNow - 7*24*3600
+	prevHourStart := hourNow - 3600
+	prevHourEnd := hourNow - 1
+	hourNowStr := strconv.FormatInt(hourNow, 10)
+
+	// Step A — record passes.
+	for _, it := range items {
+		if !it.Pass {
+			continue
+		}
+		key := uptrendPassHoursKeyPrefix + it.Symbol
+		// Idempotent: same hour bucket member ⇒ no-op on later scans this hour.
+		if err := c.rdb.ZAdd(ctx, key, redis.Z{Score: float64(hourNow), Member: hourNowStr}).Err(); err != nil {
+			c.log.Debug().Err(err).Str("symbol", it.Symbol).Msg("uptrend.history: ZAdd failed (non-fatal)")
+			continue
+		}
+		_ = c.rdb.Expire(ctx, key, uptrendPassHistoryTTL).Err()
+	}
+
+	// Step B — pipelined counts. ZRANGEBYSCORE strings: redis tolerates float
+	// score as integer Unix seconds; we pass strings to be unambiguous.
+	pipe := c.rdb.Pipeline()
+	count7dCmds := make([]*redis.IntCmd, len(items))
+	prevHourCmds := make([]*redis.IntCmd, len(items)) // only populated for passing items
+	sevenStr := strconv.FormatInt(sevenDaysAgo, 10)
+	prevStartStr := strconv.FormatInt(prevHourStart, 10)
+	prevEndStr := strconv.FormatInt(prevHourEnd, 10)
+	for i, it := range items {
+		key := uptrendPassHoursKeyPrefix + it.Symbol
+		count7dCmds[i] = pipe.ZCount(ctx, key, sevenStr, "+inf")
+		if it.Pass {
+			prevHourCmds[i] = pipe.ZCount(ctx, key, prevStartStr, prevEndStr)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		c.log.Debug().Err(err).Msg("uptrend.history: pipeline exec failed (non-fatal)")
+		return
+	}
+	for i := range items {
+		items[i].PassCount7d = int(count7dCmds[i].Val())
+		if items[i].Pass && prevHourCmds[i] != nil {
+			items[i].IsNewThisHour = prevHourCmds[i].Val() == 0
+		}
+	}
 }
 
 // USDT-margined perps only (drops SYMBOLUSDC / SYMBOL_240329 quarterlies etc).

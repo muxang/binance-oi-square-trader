@@ -503,6 +503,10 @@ export interface UptrendItem {
   pass: boolean
   signal_type: SignalType
   trigger_time: string    // RFC3339
+
+  // R.29: appearance tracking
+  is_new_this_hour: boolean   // pass=true this hour AND not in previous hour
+  pass_count_7d: number       // distinct hours symbol passed in trailing 7d (incl. this one)
 }
 
 export interface UptrendData {
