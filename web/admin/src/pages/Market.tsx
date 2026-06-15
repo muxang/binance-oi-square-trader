@@ -56,10 +56,13 @@ export default function Market() {
   const [selected, setSelected] = useState<string | null>(null)
   const [markFor,  setMarkFor]  = useState<{ symbol: string; price: number } | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['market', scope, sortBy, order, search, page, size],
     queryFn: () => fetchMarket({ scope, sort: sortBy, order, search: search || undefined, page, size }),
-    refetchInterval: 30_000,
+    // R.30: WSS feeds price every ~1s into Redis; overlay applies on each
+    // request. Refetch every 5s so prices visibly tick. OI/Square columns
+    // still pull from the 3-min cache, so heavier fields are cheap to refetch.
+    refetchInterval: 5_000,
     placeholderData: (prev) => prev,
   })
 
@@ -100,7 +103,11 @@ export default function Market() {
                 ))}
               </div>
             )}
-            {view === 'market' && data && <span className="text-xs text-gray-600">{data.total} symbols · 30s刷新</span>}
+            {view === 'market' && data && (
+              <span className="text-xs text-gray-600">
+                {data.total} symbols · {isFetching ? '刷新中…' : '5s 刷新(价格实时)'}
+              </span>
+            )}
           </div>
         </div>
 
