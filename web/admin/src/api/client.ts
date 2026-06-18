@@ -435,6 +435,15 @@ export interface AlphaSymbolsResponse {
 export const fetchAlphaSymbols = (): Promise<AlphaSymbolsResponse> =>
   api.get<AlphaSymbolsResponse>('/alpha-symbols').then(r => r.data)
 
+// ---- R.31 Stock-backed perpetuals ----
+
+export interface StockSymbolsResponse {
+  symbols: string[]
+}
+
+export const fetchStockSymbols = (): Promise<StockSymbolsResponse> =>
+  api.get<StockSymbolsResponse>('/stock-symbols').then(r => r.data)
+
 // ---- R.24 Uptrend Discovery (composite: baseTrend AND relStrength AND (breakout OR pullback)) ----
 
 export type SignalType = 'BREAKOUT' | 'PULLBACK' | 'BREAKOUT_AND_PULLBACK' | 'NONE'

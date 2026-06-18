@@ -268,6 +268,18 @@ func run() error {
 			log.Warn().Err(err).Msg("alpha startup kick failed (will retry on next cron)")
 		}
 	}()
+	// R.31: stock-backed perpetual set — hourly fetch exchangeInfo, filter
+	// underlyingType=EQUITY. Frontend SymbolLink shows 📈 badge.
+	stockCol := collector.NewStockSymbolsCollector(client, rdb, log)
+	if err := runner.Register(stockCol, "0 * * * *"); err != nil {
+		log.Fatal().Err(err).Msg("register stock_symbols collector")
+	}
+	go func() {
+		time.Sleep(25 * time.Second)
+		if err := stockCol.Run(ctx); err != nil {
+			log.Warn().Err(err).Msg("stock_symbols startup kick failed (will retry on next cron)")
+		}
+	}()
 	// R.23: uptrend discovery scan — top-200 USDⓈ-M perps, 6-rule trend filter,
 	// result cached in Redis for admin-api hot reads. Pure observability — no
 	// signal/decision integration yet (waits for observation-period validation).
