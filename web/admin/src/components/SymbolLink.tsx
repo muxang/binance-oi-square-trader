@@ -2,10 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import type { ReactNode, CSSProperties } from 'react'
 import { fetchAlphaSymbols, fetchStockSymbols } from '../api/client'
 
-// Binance USDⓈ-M perpetual contract page. /en/ prefix is locale-stable —
-// browser auto-redirects to the user's preferred locale if different.
+// Binance USDⓈ-M perpetual contract page. /zh-CN/ for native Chinese UI.
 export function binanceFuturesUrl(symbol: string) {
-  return `https://www.binance.com/en/futures/${symbol}`
+  return `https://www.binance.com/zh-CN/futures/${symbol}`
 }
 
 // Shared React Query hooks — single HTTP fetch dedupes across every
@@ -35,7 +34,7 @@ function useStockSymbolSet() {
 function AlphaBadge() {
   return (
     <a
-      href="https://www.binance.com/en/alpha/landing"
+      href="https://www.binance.com/zh-CN/alpha/landing"
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
