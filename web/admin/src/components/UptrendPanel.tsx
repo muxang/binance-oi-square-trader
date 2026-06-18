@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   fetchUptrend,
   fetchUptrendFavorites, addUptrendFavorite, removeUptrendFavorite,
+  fetchStockSymbols,
   type UptrendItem, type SignalType,
 } from '../api/client'
 import SymbolLink from './SymbolLink'
@@ -71,6 +72,9 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
   const [search, setSearch] = useState('')
   const [view, setView] = useState<ViewFilter>('pass')
   const [limit, setLimit] = useState(50)
+  // R.31 follow: stock-token filter. Defaults to showing them (less surprising
+  // default — user opts out when crypto-focused).
+  const [showStocks, setShowStocks] = useState(true)
   const qc = useQueryClient()
 
   // Favorites view always fetches the full evaluated set (passing=false) so
@@ -98,6 +102,16 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
   })
   const favSet = useMemo(() => new Set(favData?.symbols ?? []), [favData])
 
+  // R.31 follow: stock symbol set. Same queryKey as SymbolLink's internal hook
+  // so React Query dedupes — only one HTTP call across the tree.
+  const { data: stockData } = useQuery({
+    queryKey: ['stock-symbols'],
+    queryFn: fetchStockSymbols,
+    staleTime: 30 * 60 * 1000,
+    refetchInterval: 30 * 60 * 1000,
+  })
+  const stockSet = useMemo(() => new Set(stockData?.symbols ?? []), [stockData])
+
   const addFav = useMutation({
     mutationFn: (sym: string) => addUptrendFavorite(sym),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['uptrend-favorites'] }),
@@ -114,6 +128,11 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
   const items = useMemo(() => {
     if (!data) return []
     let arr = data.items
+    // R.31 follow: stock filter applies BEFORE view filter so favorites tab
+    // also hides stocks when toggle is off.
+    if (!showStocks && stockSet.size > 0) {
+      arr = arr.filter(it => !stockSet.has(it.symbol))
+    }
     if (view === 'favorites') {
       arr = arr.filter(it => favSet.has(it.symbol))
     }
@@ -124,7 +143,14 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
       if (ga !== gb) return gb - ga
       return b.rel_strength - a.rel_strength
     })
-  }, [data, view, favSet])
+  }, [data, view, favSet, showStocks, stockSet])
+
+  // Count how many stocks are currently in the raw scan result (regardless of
+  // current view/show toggle) — shows the user how many would be hidden.
+  const stocksInScan = useMemo(() => {
+    if (!data || stockSet.size === 0) return 0
+    return data.items.reduce((n, it) => (stockSet.has(it.symbol) ? n + 1 : n), 0)
+  }, [data, stockSet])
 
   return (
     <div className="space-y-3">
@@ -140,6 +166,13 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
             </button>
           ))}
         </div>
+        {/* R.31 follow: hide/show stock-backed perpetuals (📈). */}
+        <label className="flex items-center gap-1 text-xs text-gray-400 cursor-pointer select-none"
+               title={`Binance Futures 股票合约 (underlyingType=EQUITY), 共 ${stockSet.size} 个`}>
+          <input type="checkbox" checked={showStocks} onChange={e => setShowStocks(e.target.checked)}
+            className="accent-blue-600" />
+          📈 股票{stocksInScan > 0 ? ` (${stocksInScan})` : ''}
+        </label>
         {view !== 'favorites' && (
           <select value={limit} onChange={e => setLimit(Number(e.target.value))}
             className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 focus:outline-none ml-auto">
