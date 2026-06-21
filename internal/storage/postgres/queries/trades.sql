@@ -253,7 +253,14 @@ SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        ps.current_qty, ps.highest_price
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
-WHERE t.status IN ('open', 'partial')
+-- R.32: include 'closing' so stuck closes (exit_manager SELL fails with -2019
+-- when position already gone on Binance) get swept by orphan_sync. Without
+-- this, status='closing' trades that lost their backing Binance position
+-- (algo fired externally) loop SELL retries forever and trip 1h halt each
+-- failure (mu real bug: ESPORTSUSDT #334 stuck 81 hours, RCA #3524).
+-- Race-safety: orphan_sync uses 2-tick confirmation (R.8), and normal close
+-- flips 'closing'→'closed' in <2s — no false-positive sweep window.
+WHERE t.status IN ('open', 'partial', 'closing')
 ORDER BY t.entry_ts ASC;
 
 -- name: ListOpenTradesWithAlgo :many

@@ -596,7 +596,7 @@ SELECT t.id, t.signal_id, t.symbol, t.direction, t.entry_ts, t.entry_price,
        ps.current_qty, ps.highest_price
 FROM trades t
 LEFT JOIN position_states ps ON ps.trade_id = t.id
-WHERE t.status IN ('open', 'partial')
+WHERE t.status IN ('open', 'partial', 'closing')
 ORDER BY t.entry_ts ASC
 `
 
