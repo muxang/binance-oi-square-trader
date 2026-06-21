@@ -92,9 +92,12 @@ type ExitManagerDeps interface {
 }
 
 // ExitBinanceClient is the minimal binance surface for the close pipeline.
+// R.33: PlaceMarketOrderReduceOnly added; close path MUST use it to prevent
+// reverse-side accumulation when the position is gone externally.
 type ExitBinanceClient interface {
 	CancelAlgoOrder(ctx context.Context, symbol string, algoID int64) error
 	PlaceMarketOrder(ctx context.Context, symbol, side, quantity, clientOrderID string) (binance.OrderResult, error)
+	PlaceMarketOrderReduceOnly(ctx context.Context, symbol, side, quantity, clientOrderID string) (binance.OrderResult, error)
 	GetOrderByClientID(ctx context.Context, symbol, clientOrderID string) (binance.OrderResult, error)
 }
 
@@ -274,7 +277,10 @@ func (em *ExitManager) closePosition(ctx context.Context, t gen.ListOpenTradesFo
 	}
 	clientOrderID := fmt.Sprintf("exit_%d_%d", t.ID, em.nowFn().Unix())
 	sellStart := em.nowFn()
-	res, err := em.bc.PlaceMarketOrder(ctx, t.Symbol, "SELL", qty.String(), clientOrderID)
+	// R.33: reduceOnly guard. If Binance has 0 position (trail/disaster fired
+	// externally), this returns -2022 instead of opening a fresh SHORT. Loop
+	// keeps tripping halts but no longer accumulates reverse exposure.
+	res, err := em.bc.PlaceMarketOrderReduceOnly(ctx, t.Symbol, "SELL", qty.String(), clientOrderID)
 	metrics.ExitLatencySeconds.WithLabelValues("place_sell").Observe(em.nowFn().Sub(sellStart).Seconds())
 	if err != nil {
 		log.Error().Err(err).Msg("exit.sell.failed: position may still be open — halt + retry next tick")

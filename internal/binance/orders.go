@@ -131,19 +131,45 @@ func (c *Client) SetLeverage(ctx context.Context, symbol string, leverage int) (
 	return resp.Leverage, nil
 }
 
-// PlaceMarketOrder places a MARKET order (BUY or SELL) and returns fill details.
-// Uses newOrderRespType=RESULT so market fills return avgPrice immediately.
+// PlaceMarketOrder places a MARKET order WITHOUT reduceOnly. Used for entry
+// (BUY) — opens a new position. For close paths, ALWAYS use the reduceOnly
+// variant; see PlaceMarketOrderReduceOnly's doc for why.
 //
 // ref: references/binance/urls.md §「New Order」
 // docs: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api
 // fetched: 2026-05-11
 func (c *Client) PlaceMarketOrder(ctx context.Context, symbol, side, quantity, clientOrderID string) (OrderResult, error) {
+	return c.placeMarket(ctx, symbol, side, quantity, clientOrderID, false)
+}
+
+// PlaceMarketOrderReduceOnly places a MARKET order WITH reduceOnly=true. MUST
+// be used for close paths (exit_manager SELL, emergency_close SELL).
+//
+// R.33: without reduceOnly, a SELL on a position that has already been closed
+// externally (trail/disaster fired in between) is interpreted by Binance as
+// OPENING a new SHORT. If exit_manager keeps retrying (e.g. due to -2019 in
+// later attempts), each successful retry stacks more SHORT — until the account
+// runs out of margin. Real bug: ESPORTSUSDT #334 grew SHORT 572,523 over 81
+// hours of failed exit retries before being noticed.
+//
+// reduceOnly=true makes Binance reject the order if no opposing position
+// exists (-2022) instead of opening a new one. Same upstream API shape, just
+// adds reduceOnly=true to the form body.
+func (c *Client) PlaceMarketOrderReduceOnly(ctx context.Context, symbol, side, quantity, clientOrderID string) (OrderResult, error) {
+	return c.placeMarket(ctx, symbol, side, quantity, clientOrderID, true)
+}
+
+// placeMarket is the shared implementation. reduceOnly toggles the safety flag.
+func (c *Client) placeMarket(ctx context.Context, symbol, side, quantity, clientOrderID string, reduceOnly bool) (OrderResult, error) {
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("side", side)
 	params.Set("type", "MARKET")
 	params.Set("quantity", quantity)
 	params.Set("newOrderRespType", "RESULT")
+	if reduceOnly {
+		params.Set("reduceOnly", "true")
+	}
 	if clientOrderID != "" {
 		params.Set("newClientOrderId", clientOrderID)
 	}

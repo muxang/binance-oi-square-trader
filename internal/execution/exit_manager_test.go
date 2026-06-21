@@ -88,6 +88,12 @@ func (f *fakeExitBinance) PlaceMarketOrder(_ context.Context, symbol, _, qty, _ 
 	}
 	return f.sellResp, nil
 }
+
+// R.33: exit path uses the reduceOnly variant; share the same recording so
+// existing tests keep validating the SELL call count + qty.
+func (f *fakeExitBinance) PlaceMarketOrderReduceOnly(ctx context.Context, symbol, side, qty, cid string) (binance.OrderResult, error) {
+	return f.PlaceMarketOrder(ctx, symbol, side, qty, cid)
+}
 func (f *fakeExitBinance) GetOrderByClientID(_ context.Context, _, _ string) (binance.OrderResult, error) {
 	return binance.OrderResult{}, nil
 }

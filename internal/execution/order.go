@@ -721,7 +721,11 @@ func (e *Executor) emergencyClose(
 	reason string,
 	log zerolog.Logger,
 ) {
-	closeResult, err := e.bc.PlaceMarketOrder(ctx, symbol, "SELL", qty.String(), "")
+	// R.33: reduceOnly — emergencyClose runs when disaster-stop placement failed,
+	// so position state is fragile; reduceOnly prevents this MARKET SELL from
+	// accidentally opening a SHORT if the position has already exited via some
+	// other path (e.g. liquidation, manual close).
+	closeResult, err := e.bc.PlaceMarketOrderReduceOnly(ctx, symbol, "SELL", qty.String(), "")
 	now := e.nowFn()
 
 	actualPrice := approxPrice
