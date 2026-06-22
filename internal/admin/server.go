@@ -62,6 +62,8 @@ func (s *Server) Routes() http.Handler {
 	// R.23: uptrend discovery list — 6-rule trend filter populated by
 	// trader-side UptrendCollector → Redis (admin:market:uptrend:v1).
 	mux.HandleFunc("GET /api/admin/market/uptrend", s.handleUptrend)
+	// R.35: 7-day pass-count leaderboard + distribution histogram.
+	mux.HandleFunc("GET /api/admin/market/uptrend/leaderboard", s.handleUptrendLeaderboard)
 	// R.25: Binance Alpha symbol set — list of USDT perps whose base is on Alpha.
 	mux.HandleFunc("GET /api/admin/alpha-symbols", s.handleAlphaSymbols)
 	// R.31: stock-backed perpetual set (underlyingType=EQUITY in exchangeInfo).

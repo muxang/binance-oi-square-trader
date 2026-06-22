@@ -7,8 +7,9 @@ import {
   type UptrendItem, type SignalType,
 } from '../api/client'
 import SymbolLink from './SymbolLink'
+import UptrendLeaderboard from './UptrendLeaderboard'
 
-type ViewFilter = 'pass' | 'all' | 'favorites'
+type ViewFilter = 'pass' | 'all' | 'favorites' | 'leaderboard'
 
 // Defensive helpers: tolerate undefined/NaN/Infinity from stale cache or
 // schema-drift backend so the panel never crashes on render.
@@ -91,6 +92,8 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
     }),
     refetchInterval: 60_000,
     placeholderData: (prev) => prev,
+    // R.35: leaderboard view 不需要逐 symbol 表格数据,关闭这个 fetch.
+    enabled: view !== 'leaderboard',
   })
 
   // R.28: favorites — Redis-backed user watchlist, one HTTP call across the
@@ -155,25 +158,32 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
+        {view !== 'leaderboard' && (
         <input className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 w-28 focus:outline-none"
           placeholder="Symbol..." value={search}
           onChange={e => setSearch(e.target.value.toUpperCase())} />
+        )}
         <div className="flex gap-1 text-xs border border-[#3d3d3d] rounded p-0.5">
-          {(['pass','all','favorites'] as ViewFilter[]).map(v => (
+          {(['pass','all','favorites','leaderboard'] as ViewFilter[]).map(v => (
             <button key={v} onClick={() => setView(v)}
               className={`px-2 py-1 rounded ${view === v ? 'bg-blue-700 text-white' : 'text-gray-400 hover:text-white'}`}>
-              {v === 'pass' ? '通过' : v === 'all' ? '全部(调试)' : `★ 自选${favSet.size ? ` (${favSet.size})` : ''}`}
+              {v === 'pass' ? '通过'
+                : v === 'all' ? '全部(调试)'
+                : v === 'favorites' ? `★ 自选${favSet.size ? ` (${favSet.size})` : ''}`
+                : '🏆 7d 排行'}
             </button>
           ))}
         </div>
         {/* R.31 follow: hide/show stock-backed perpetuals (📈). */}
+        {view !== 'leaderboard' && (
         <label className="flex items-center gap-1 text-xs text-gray-400 cursor-pointer select-none"
                title={`Binance Futures 股票合约 (underlyingType=EQUITY), 共 ${stockSet.size} 个`}>
           <input type="checkbox" checked={showStocks} onChange={e => setShowStocks(e.target.checked)}
             className="accent-blue-600" />
           📈 股票{stocksInScan > 0 ? ` (${stocksInScan})` : ''}
         </label>
-        {view !== 'favorites' && (
+        )}
+        {view !== 'favorites' && view !== 'leaderboard' && (
           <select value={limit} onChange={e => setLimit(Number(e.target.value))}
             className="bg-[#252525] border border-[#3d3d3d] rounded px-2 py-1 text-xs text-gray-300 focus:outline-none ml-auto">
             <option value={50}>50</option>
@@ -181,7 +191,7 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
             <option value={200}>200</option>
           </select>
         )}
-        {data && (
+        {view !== 'leaderboard' && data && (
           <span className={`text-xs text-gray-500 ${view === 'favorites' ? 'ml-auto' : ''}`}>
             {view === 'favorites'
               ? `${items.length}/${favSet.size} 显示中 · ${isFetching ? '刷新中' : '60s 刷新'}`
@@ -190,6 +200,9 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
         )}
       </div>
 
+      {view === 'leaderboard' && <UptrendLeaderboard onSelect={onSelect} />}
+
+      {view !== 'leaderboard' && (<>
       <div className="text-[11px] text-gray-500 px-1 leading-relaxed">
         信号 = <b className="text-gray-300">baseTrend</b> &amp; <b className="text-gray-300">relStrength</b> &amp; (<b className="text-blue-400">breakout</b> OR <b className="text-orange-400">pullback</b>)
         <br/>
@@ -357,6 +370,7 @@ export default function UptrendPanel({ onSelect }: { onSelect?: (sym: string) =>
           </table>
         )}
       </div>
+      </>)}
     </div>
   )
 }

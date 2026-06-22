@@ -426,6 +426,31 @@ export const addUptrendFavorite = (symbol: string): Promise<{ ok: boolean }> =>
 export const removeUptrendFavorite = (symbol: string): Promise<{ ok: boolean }> =>
   api.delete<{ ok: boolean }>(`/uptrend/favorites/${encodeURIComponent(symbol)}`).then(r => r.data)
 
+// ---- R.35 Uptrend 7d leaderboard + histogram ----
+
+export interface UptrendLeaderboardItem {
+  symbol: string
+  count: number
+}
+
+export interface UptrendHistogramBucket {
+  label: string
+  min: number
+  max: number  // 0 = no upper bound
+  count: number
+}
+
+export interface UptrendLeaderboardResponse {
+  window_days: number
+  total_symbols: number
+  total_passes: number
+  leaderboard: UptrendLeaderboardItem[]
+  histogram: UptrendHistogramBucket[]
+}
+
+export const fetchUptrendLeaderboard = (limit = 100): Promise<UptrendLeaderboardResponse> =>
+  api.get<UptrendLeaderboardResponse>('/market/uptrend/leaderboard', { params: { limit: String(limit) } }).then(r => r.data)
+
 // ---- R.25 Binance Alpha symbols ----
 
 export interface AlphaSymbolsResponse {
