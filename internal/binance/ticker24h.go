@@ -37,10 +37,22 @@ func (c *Client) FetchAll24hTicker(ctx context.Context) ([]Ticker24hData, error)
 		return nil, fmt.Errorf("parse: %w", err)
 	}
 	out := make([]Ticker24hData, 0, len(raw))
-	for i, r := range raw {
+	for _, r := range raw {
+		// Tolerate empty quoteVolume (Binance returns "" for symbols that have
+		// not traded in the 24h window — common right after a new listing).
+		// Treat as zero; downstream callers (uptrend collector top-200 sort)
+		// naturally filter zero-volume symbols out via the volume ranking.
+		// Pre-R.34: empty string failed the whole response → uptrend collector
+		// stalled (mu observed: every uptrend scan errored, frontend empty).
+		if r.QuoteVolume == "" {
+			out = append(out, Ticker24hData{Symbol: r.Symbol, QuoteVolume: decimal.Zero})
+			continue
+		}
 		qv, err := decimal.NewFromString(r.QuoteVolume)
 		if err != nil {
-			return nil, fmt.Errorf("ticker[%d] quoteVolume: %w", i, err)
+			// Genuine parse error (non-empty but non-numeric). Skip this row
+			// rather than fail the whole batch — symbol just gets zero volume.
+			continue
 		}
 		out = append(out, Ticker24hData{Symbol: r.Symbol, QuoteVolume: qv})
 	}
