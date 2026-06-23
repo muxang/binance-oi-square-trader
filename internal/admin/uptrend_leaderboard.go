@@ -41,7 +41,11 @@ type UptrendLeaderboardResponse struct {
 // handleUptrendLeaderboard scans admin:uptrend:pass_hours:* and counts entries
 // inside the last 7d window. Query params:
 //
-//	limit=N (default 100)  cap leaderboard items in response (max 200)
+//	limit=N (default 100)         cap leaderboard items in response (max 200)
+//	exclude_stocks=1              filter out symbols in admin:stock:symbols:v1
+//	                              (Binance underlyingType=EQUITY); applied BEFORE
+//	                              the top-N cap and histogram so both reflect
+//	                              the filter consistently.
 func (s *Server) handleUptrendLeaderboard(w http.ResponseWriter, r *http.Request) {
 	empty := UptrendLeaderboardResponse{
 		WindowDays:  7,
@@ -52,12 +56,31 @@ func (s *Server) handleUptrendLeaderboard(w http.ResponseWriter, r *http.Request
 		s.writeJSON(w, http.StatusOK, empty)
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	excludeStocks := q.Get("exclude_stocks") == "1"
 
 	ctx := r.Context()
+
+	// Stock filter set — read once when requested. Failure is non-fatal:
+	// log + serve unfiltered, since the alternative (blocking the endpoint)
+	// is worse UX. R.31 caches this SET with 2h TTL via stock_symbols.go.
+	var stockSet map[string]struct{}
+	if excludeStocks {
+		members, err := s.rdb.SMembers(ctx, "admin:stock:symbols:v1").Result()
+		if err != nil {
+			s.log.Warn().Err(err).Msg("uptrend.leaderboard: stock SET fetch failed; serving unfiltered")
+		} else {
+			stockSet = make(map[string]struct{}, len(members))
+			for _, m := range members {
+				stockSet[m] = struct{}{}
+			}
+		}
+	}
+
 	symbols, err := scanUptrendPassHourKeys(ctx, s.rdb)
 	if err != nil {
 		s.log.Warn().Err(err).Msg("uptrend.leaderboard: SCAN failed")
@@ -90,6 +113,11 @@ func (s *Server) handleUptrendLeaderboard(w http.ResponseWriter, r *http.Request
 		c := int(cmds[i].Val())
 		if c <= 0 {
 			continue
+		}
+		if stockSet != nil {
+			if _, isStock := stockSet[sym]; isStock {
+				continue
+			}
 		}
 		items = append(items, UptrendLeaderboardItem{Symbol: sym, Count: c})
 		totalPasses += c

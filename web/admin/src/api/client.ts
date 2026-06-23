@@ -448,8 +448,14 @@ export interface UptrendLeaderboardResponse {
   histogram: UptrendHistogramBucket[]
 }
 
-export const fetchUptrendLeaderboard = (limit = 100): Promise<UptrendLeaderboardResponse> =>
-  api.get<UptrendLeaderboardResponse>('/market/uptrend/leaderboard', { params: { limit: String(limit) } }).then(r => r.data)
+export const fetchUptrendLeaderboard = (
+  limit = 100,
+  excludeStocks = false,
+): Promise<UptrendLeaderboardResponse> => {
+  const params: Record<string, string> = { limit: String(limit) }
+  if (excludeStocks) params.exclude_stocks = '1'
+  return api.get<UptrendLeaderboardResponse>('/market/uptrend/leaderboard', { params }).then(r => r.data)
+}
 
 // ---- R.25 Binance Alpha symbols ----
 
