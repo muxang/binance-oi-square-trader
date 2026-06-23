@@ -9,6 +9,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -67,16 +68,22 @@ func (s *Server) handleUptrendLeaderboard(w http.ResponseWriter, r *http.Request
 
 	// Stock filter set — read once when requested. Failure is non-fatal:
 	// log + serve unfiltered, since the alternative (blocking the endpoint)
-	// is worse UX. R.31 caches this SET with 2h TTL via stock_symbols.go.
+	// is worse UX. R.31 stores this as a STRING containing a JSON array
+	// (not a Redis SET) — must match stock_symbols.go's Get + json.Unmarshal.
 	var stockSet map[string]struct{}
 	if excludeStocks {
-		members, err := s.rdb.SMembers(ctx, "admin:stock:symbols:v1").Result()
+		b, err := s.rdb.Get(ctx, stockSymbolsCacheKey).Bytes()
 		if err != nil {
-			s.log.Warn().Err(err).Msg("uptrend.leaderboard: stock SET fetch failed; serving unfiltered")
+			s.log.Warn().Err(err).Msg("uptrend.leaderboard: stock list fetch failed; serving unfiltered")
 		} else {
-			stockSet = make(map[string]struct{}, len(members))
-			for _, m := range members {
-				stockSet[m] = struct{}{}
+			var symbols []string
+			if jerr := json.Unmarshal(b, &symbols); jerr != nil {
+				s.log.Warn().Err(jerr).Msg("uptrend.leaderboard: stock list parse failed; serving unfiltered")
+			} else {
+				stockSet = make(map[string]struct{}, len(symbols))
+				for _, sym := range symbols {
+					stockSet[sym] = struct{}{}
+				}
 			}
 		}
 	}
